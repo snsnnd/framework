@@ -2,11 +2,80 @@ cmake_minimum_required(VERSION 3.15)
 
 project(efw C)
 
-add_library(efw STATIC
-    src/algorithm/algorithms.c
-    src/core/registry.c
-    src/hal/hal_comm_registry.c
-)
+option(EFW_BUILD_APPLICATIONS "Build EFW application examples" OFF)
+option(EFW_ENABLE_HAL "Enable HAL registry" ON)
+option(EFW_ENABLE_COMM "Enable COMM registry" ON)
+option(EFW_ENABLE_MODULE "Enable module registry" ON)
+option(EFW_ENABLE_SENSOR "Enable sensor registry" ON)
+option(EFW_ENABLE_SENSOR_LINE_TRACKING "Enable line tracking sensor middleware" ON)
+option(EFW_ENABLE_SENSOR_IMU "Enable IMU sensor middleware" ON)
+option(EFW_ENABLE_SENSOR_ENCODER "Enable encoder sensor middleware" ON)
+option(EFW_ENABLE_SENSOR_ULTRASONIC "Enable ultrasonic sensor middleware" ON)
+option(EFW_ENABLE_SENSOR_CUSTOM "Enable custom sensor middleware" ON)
+option(EFW_ENABLE_ACTUATOR "Enable actuator registry" ON)
+option(EFW_ENABLE_ACTUATOR_MOTOR "Enable motor actuator helpers" ON)
+option(EFW_ENABLE_ALGORITHM "Enable algorithm registry" ON)
+option(EFW_ENABLE_ALGO_PID "Enable built-in PID algorithm" ON)
+option(EFW_ENABLE_ALGO_MOVING_AVG "Enable built-in moving average algorithm" ON)
+option(EFW_ENABLE_STATE_MACHINE "Enable state machine registry" ON)
+
+set(EFW_SOURCES src/core/init.c)
+
+if(EFW_ENABLE_HAL)
+    list(APPEND EFW_SOURCES src/hal/hal_registry.c)
+endif()
+
+if(EFW_ENABLE_COMM)
+    list(APPEND EFW_SOURCES src/comm/comm_registry.c)
+endif()
+
+if(EFW_ENABLE_MODULE)
+    list(APPEND EFW_SOURCES src/module/module_registry.c)
+endif()
+
+if(EFW_ENABLE_SENSOR)
+    list(APPEND EFW_SOURCES src/device/sensor_registry.c)
+    if(EFW_ENABLE_SENSOR_LINE_TRACKING)
+        list(APPEND EFW_SOURCES src/device/sensor/line_tracking.c)
+    endif()
+    if(EFW_ENABLE_SENSOR_IMU)
+        list(APPEND EFW_SOURCES src/device/sensor/imu.c)
+    endif()
+    if(EFW_ENABLE_SENSOR_ENCODER)
+        list(APPEND EFW_SOURCES src/device/sensor/encoder.c)
+    endif()
+    if(EFW_ENABLE_SENSOR_ULTRASONIC)
+        list(APPEND EFW_SOURCES src/device/sensor/ultrasonic.c)
+    endif()
+    if(EFW_ENABLE_SENSOR_CUSTOM)
+        list(APPEND EFW_SOURCES src/device/sensor/custom.c)
+    endif()
+endif()
+
+if(EFW_ENABLE_ACTUATOR)
+    list(APPEND EFW_SOURCES src/device/actuator_registry.c)
+    if(EFW_ENABLE_ACTUATOR_MOTOR)
+        list(APPEND EFW_SOURCES src/device/actuator/motor.c)
+    endif()
+endif()
+
+if(EFW_ENABLE_ALGORITHM)
+    list(APPEND EFW_SOURCES src/algorithm/algorithm_registry.c)
+endif()
+
+if(EFW_ENABLE_ALGO_PID)
+    list(APPEND EFW_SOURCES src/algorithm/control/pid.c)
+endif()
+
+if(EFW_ENABLE_ALGO_MOVING_AVG)
+    list(APPEND EFW_SOURCES src/algorithm/filter/moving_average.c)
+endif()
+
+if(EFW_ENABLE_STATE_MACHINE)
+    list(APPEND EFW_SOURCES src/state/state_machine_registry.c)
+endif()
+
+add_library(efw STATIC ${EFW_SOURCES})
 
 target_include_directories(efw PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -14,11 +83,33 @@ target_include_directories(efw PUBLIC
 
 target_compile_features(efw PUBLIC c_std_99)
 
-option(EFW_BUILD_EXAMPLES "Build EFW host examples" OFF)
+target_compile_definitions(efw PUBLIC
+    EFW_ENABLE_HAL=$<BOOL:${EFW_ENABLE_HAL}>
+    EFW_ENABLE_COMM=$<BOOL:${EFW_ENABLE_COMM}>
+    EFW_ENABLE_MODULE=$<BOOL:${EFW_ENABLE_MODULE}>
+    EFW_ENABLE_SENSOR=$<BOOL:${EFW_ENABLE_SENSOR}>
+    EFW_ENABLE_SENSOR_LINE_TRACKING=$<BOOL:${EFW_ENABLE_SENSOR_LINE_TRACKING}>
+    EFW_ENABLE_SENSOR_IMU=$<BOOL:${EFW_ENABLE_SENSOR_IMU}>
+    EFW_ENABLE_SENSOR_ENCODER=$<BOOL:${EFW_ENABLE_SENSOR_ENCODER}>
+    EFW_ENABLE_SENSOR_ULTRASONIC=$<BOOL:${EFW_ENABLE_SENSOR_ULTRASONIC}>
+    EFW_ENABLE_SENSOR_CUSTOM=$<BOOL:${EFW_ENABLE_SENSOR_CUSTOM}>
+    EFW_ENABLE_ACTUATOR=$<BOOL:${EFW_ENABLE_ACTUATOR}>
+    EFW_ENABLE_ACTUATOR_MOTOR=$<BOOL:${EFW_ENABLE_ACTUATOR_MOTOR}>
+    EFW_ENABLE_ALGORITHM=$<BOOL:${EFW_ENABLE_ALGORITHM}>
+    EFW_ENABLE_ALGO_PID=$<BOOL:${EFW_ENABLE_ALGO_PID}>
+    EFW_ENABLE_ALGO_MOVING_AVG=$<BOOL:${EFW_ENABLE_ALGO_MOVING_AVG}>
+    EFW_ENABLE_STATE_MACHINE=$<BOOL:${EFW_ENABLE_STATE_MACHINE}>
+)
 
-if(EFW_BUILD_EXAMPLES)
-    add_executable(efw_example_basic
-        examples/basic_baremetal_app.c
+if(EFW_BUILD_APPLICATIONS)
+    add_executable(efw_app_line_tracking_car
+        application/line_tracking_car/main.c
+        application/line_tracking_car/app_line_tracking_car.c
+        application/line_tracking_car/app_components.c
+        application/line_tracking_car/app_platform.c
     )
-    target_link_libraries(efw_example_basic PRIVATE efw)
+    target_include_directories(efw_app_line_tracking_car PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/application/line_tracking_car
+    )
+    target_link_libraries(efw_app_line_tracking_car PRIVATE efw)
 endif()

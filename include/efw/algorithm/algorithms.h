@@ -1,41 +1,32 @@
+/**
+ * @file    algorithms.h
+ * @brief   内置算法分发头文件
+ *
+ * 本文件本身不定义任何算法结构或函数，只做条件分发：
+ *   - 若 EFW_ENABLE_ALGO_PID=1      → 引入 efw/algorithm/control/pid.h
+ *   - 若 EFW_ENABLE_ALGO_MOVING_AVG=1 → 引入 efw/algorithm/filter/moving_average.h
+ *
+ * 这样做的好处：
+ *   用户只需 #include "efw/algorithm/algorithms.h" 即可获得所有启用的内置算法，
+ *   不需要关心每个算法具体在哪个子目录中。
+ *
+ * 添加新算法时：
+ *   ① 在 efw/algorithm/<类别>/ 下创建 xxx.h 和对应的 src/algorithm/<类别>/xxx.c
+ *   ② 在 config.h 中新增 EFW_ENABLE_ALGO_XXX 开关
+ *   ③ 在本文件中添加对应的 #if / #include
+ */
+
 #ifndef EFW_ALGORITHMS_H
 #define EFW_ALGORITHMS_H
 
-#include "efw/core/common.h"
+#include "efw/core/config.h"
 
-typedef struct {
-    float kp;
-    float ki;
-    float kd;
-    float integral;
-    float prev_error;
-    float out_min;
-    float out_max;
-} efw_pid_t;
+#if EFW_ENABLE_ALGO_PID
+#include "efw/algorithm/control/pid.h"        /**< PID 控制器 (位置式并行PID) */
+#endif
 
-typedef struct {
-    float setpoint;
-    float feedback;
-    float dt;
-} efw_pid_input_t;
-
-typedef struct {
-    float output;
-    float error;
-} efw_pid_output_t;
-
-typedef struct {
-    float *buffer;
-    uint16_t capacity;
-    uint16_t count;
-    uint16_t index;
-    float sum;
-} efw_moving_avg_t;
-
-void efw_pid_reset(efw_pid_t *pid);
-efw_status_t efw_pid_run(void *ctx, const void *in, void *out);
-
-void efw_moving_avg_reset(efw_moving_avg_t *avg);
-efw_status_t efw_moving_avg_run(void *ctx, const void *in, void *out);
+#if EFW_ENABLE_ALGO_MOVING_AVG
+#include "efw/algorithm/filter/moving_average.h" /**< 滑动均值滤波器 (O(1) 环形缓冲) */
+#endif
 
 #endif
