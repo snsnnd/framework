@@ -1,5 +1,4 @@
-#include "efw/hal_registry.h"
-#include "efw/comm_registry.h"
+#include "efw/efw.h"
 
 static efw_status_t uart_init(void *ctx) { (void)ctx; return EFW_OK; }
 static efw_status_t uart_read(void *ctx, void *buf, uint16_t len, uint16_t *actual) {
@@ -27,7 +26,7 @@ static efw_hal_ops_t uart1_hal = {
 };
 
 static efw_comm_ops_t dbg_uart = {
-    .name = "dbg_uart", .type = EFW_COMM_UART, .hal_binding = "uart1", .ctx = 0,
+    .name = "dbg_uart", .type = EFW_COMM_UART, .hal_name = "uart1", .ctx = 0,
     .open = comm_open, .close = comm_close, .send = comm_send, .recv = comm_recv
 };
 
