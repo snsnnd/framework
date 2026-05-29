@@ -9,6 +9,7 @@
 #include "core/init.c"
 #include "core/diagnostic.c"
 #include "app/runtime.c"
+#include "debug/pid_scope.c"
 
 #if EFW_ENABLE_EVENT
 #include "core/event.c"

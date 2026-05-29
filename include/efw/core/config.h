@@ -124,6 +124,10 @@
 #define EFW_ENABLE_EVENT 1
 #endif
 
+#ifndef EFW_ENABLE_PID_SCOPE
+#define EFW_ENABLE_PID_SCOPE 1
+#endif
+
 /* ==================================================================
  *  第2级：各注册表最大容量
  *

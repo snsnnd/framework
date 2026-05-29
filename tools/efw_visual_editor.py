@@ -15,13 +15,14 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-try:
+import importlib.util
+
+if importlib.util.find_spec("PyQt6") is not None:
     from PyQt6.QtCore import QPointF, Qt
     from PyQt6.QtGui import QBrush, QColor, QFont, QPen
     from PyQt6.QtWidgets import (
         QApplication,
         QFileDialog,
-        QFormLayout,
         QGraphicsItem,
         QGraphicsLineItem,
         QGraphicsRectItem,
@@ -44,41 +45,39 @@ try:
         QWidget,
     )
     QT_LIB = "PyQt6"
-except ImportError:  # pragma: no cover - depends on local desktop environment.
-    try:
-        from PyQt5.QtCore import QPointF, Qt
-        from PyQt5.QtGui import QBrush, QColor, QFont, QPen
-        from PyQt5.QtWidgets import (
-            QApplication,
-            QFileDialog,
-            QFormLayout,
-            QGraphicsItem,
-            QGraphicsLineItem,
-            QGraphicsRectItem,
-            QGraphicsScene,
-            QGraphicsSimpleTextItem,
-            QGraphicsView,
-            QHBoxLayout,
-            QInputDialog,
-            QLabel,
-            QListWidget,
-            QListWidgetItem,
-            QMainWindow,
-            QMessageBox,
-            QPushButton,
-            QPlainTextEdit,
-            QSplitter,
-            QTabWidget,
-            QToolBar,
-            QVBoxLayout,
-            QWidget,
-        )
-        QT_LIB = "PyQt5"
-    except ImportError:
-        QApplication = None
-        QGraphicsRectItem = object
-        QMainWindow = object
-        QT_LIB = "missing"
+elif importlib.util.find_spec("PyQt5") is not None:
+    from PyQt5.QtCore import QPointF, Qt
+    from PyQt5.QtGui import QBrush, QColor, QFont, QPen
+    from PyQt5.QtWidgets import (
+        QApplication,
+        QFileDialog,
+        QGraphicsItem,
+        QGraphicsLineItem,
+        QGraphicsRectItem,
+        QGraphicsScene,
+        QGraphicsSimpleTextItem,
+        QGraphicsView,
+        QHBoxLayout,
+        QInputDialog,
+        QLabel,
+        QListWidget,
+        QListWidgetItem,
+        QMainWindow,
+        QMessageBox,
+        QPushButton,
+        QPlainTextEdit,
+        QSplitter,
+        QTabWidget,
+        QToolBar,
+        QVBoxLayout,
+        QWidget,
+    )
+    QT_LIB = "PyQt5"
+else:
+    QApplication = None
+    QGraphicsRectItem = object
+    QMainWindow = object
+    QT_LIB = "missing"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT / "tools") not in sys.path:

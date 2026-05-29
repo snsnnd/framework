@@ -23,8 +23,9 @@ option(EFW_ENABLE_ALGO_ENCODER_SPEED "Enable encoder speed estimator" ON)
 option(EFW_ENABLE_ALGO_ATTITUDE_COMPLEMENTARY "Enable complementary attitude estimator" ON)
 option(EFW_ENABLE_STATE_MACHINE "Enable state machine registry" ON)
 option(EFW_ENABLE_EVENT "Enable lightweight topic event" ON)
+option(EFW_ENABLE_PID_SCOPE "Enable PID scope telemetry helpers" ON)
 
-set(EFW_SOURCES src/core/init.c src/core/diagnostic.c src/app/runtime.c)
+set(EFW_SOURCES src/core/init.c src/core/diagnostic.c src/app/runtime.c src/debug/pid_scope.c)
 
 if(EFW_ENABLE_EVENT)
     list(APPEND EFW_SOURCES src/core/event.c)
@@ -130,6 +131,7 @@ target_compile_definitions(efw PUBLIC
     EFW_ENABLE_ALGO_ATTITUDE_COMPLEMENTARY=$<BOOL:${EFW_ENABLE_ALGO_ATTITUDE_COMPLEMENTARY}>
     EFW_ENABLE_STATE_MACHINE=$<BOOL:${EFW_ENABLE_STATE_MACHINE}>
     EFW_ENABLE_EVENT=$<BOOL:${EFW_ENABLE_EVENT}>
+    EFW_ENABLE_PID_SCOPE=$<BOOL:${EFW_ENABLE_PID_SCOPE}>
 )
 
 if(EFW_BUILD_APPLICATIONS)

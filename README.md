@@ -89,6 +89,16 @@ python3 tools/efw_codegen.py examples/graphs/line_tracking_car.json \
 
 生成代码仍然只依赖 EFW 的 application runtime 和 bind/update 句柄模式；真实项目中主要修改生成的 `app_platform.c`，把 mock 读写替换为 STM32 HAL、ESP-IDF、MSPM0 DriverLib 或自有 BSP 调用。第二阶段增加 PyQt 编辑器：`python3 tools/efw_visual_editor.py`，可拖动卡片、编辑节点 JSON，并在 Code 区写自定义 `.c/.h` 文件，与可视化卡片一起生成 application。更多说明见 `docs/codegen.md`。
 
+## 地面站与数据可视化
+EFW 现在提供 PID Scope 地面站工具，用于串口遥测、实时曲线、CSV 导出、基础阶跃指标和 PID 写参。嵌入式端使用 `efw_pid_scope_encode_telemetry()` 打包 telemetry，桌面端运行：
+
+```bash
+pip install -r tools/requirements-ground-station.txt
+python3 tools/efw_ground_station.py
+```
+
+无硬件时可点击 **Start Simulation** 查看模拟曲线。详细协议、C 端示例和当前项目问题清单见 `docs/ground_station.md`。
+
 ## CMake 构建
 CMake 只用于主机侧编译验证或支持 CMake 的工程，不是裸机接入必需项。
 
