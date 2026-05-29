@@ -20,12 +20,8 @@ RUN apt-get update && apt-get install -y \
     tigervnc-common \
     novnc \
     websockify \
-    qtbase5-dev \
-    qtchooser \
-    qt5-qmake \
-    qtbase5-dev-tools \
-    qttools5-dev \
-    qttools5-dev-tools \
+    qt6-base-dev \
+    qt6-base-dev-tools \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
