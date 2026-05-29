@@ -27,7 +27,7 @@ EFW 是一个面向裸机和轻量 RTOS 的嵌入式 C 框架，可直接作为�
 - `include/efw/module/`：模块生命周期接口
 - `include/efw/state/`：状态机接口
 - `src/`：库源码，按功能分层，可按需加入 Keil、STM32CubeIDE、ESP-IDF 或 CMake 工程
-- `application/`：接近真实工程结构的应用示例
+- `application/`：接近真实工程结构的应用示例（`simple_blink/` 是最小例，`smart_environment_controller/` 展示多组件组合，`line_tracking_car/` 展示领域应用）
 - `docs/`：设计说明
 
 ## 快速接入
@@ -77,6 +77,11 @@ STATE：src/state/state_machine_registry.c
 5. 在 `main()` 初始化阶段调用 `efw_init()`，然后注册平台 HAL 和业务模块。
 
 如果裁剪某个功能，需要在 Keil 的 `C/C++ > Define` 中同步关闭对应宏，例如 `EFW_ENABLE_COMM=0`。使用 `src/efw_all.c` 时，关闭的模块不会被包含进编译单元。
+
+## Application 示例
+- `application/simple_blink/`：最小通用嵌入式应用，只包含 GPIO HAL、LED Actuator 和一个周期 Module，适合学习注册、初始化、主循环调度的最短路径。
+- `application/smart_environment_controller/`：复杂一点的环境控制器，组合 ADC/I2C/GPIO HAL、自定义温湿度传感器、IMU、滑动均值、互补滤波、事件总线、状态机、继电器和告警 LED，用来展示 EFW 作为通用嵌入式开发工具的组织方式。
+- `application/line_tracking_car/`：循迹车示例，保留为机器人/控制类项目的领域模板。
 
 ## 代码生成器第一阶段
 可视化蓝图系统的第一步已经落到 CLI：`tools/efw_codegen.py` 可读取图描述 JSON，并生成可复制到真实项目的 `application/` 目录。当前定位为通用嵌入式 application 生成工具：支持自定义 HAL/SENSOR/ACTUATOR/ALGORITHM/MODULE/TASK 卡片，也保留循迹车 LineFollower 作为一个内置示例 flow。
