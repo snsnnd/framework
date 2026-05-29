@@ -30,6 +30,7 @@
 #include "efw/core/common.h"
 #include "efw/core/config.h"
 #include "efw/core/diagnostic.h"
+#include "efw/core/ds.h"
 #include "efw/app/runtime.h"
 #if EFW_ENABLE_EVENT
 #include "efw/core/event.h"

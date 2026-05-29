@@ -1,0 +1,103 @@
+{
+  "project": {
+    "name": "generated_generic_embedded_app",
+    "tick_ms": 1
+  },
+  "nodes": [
+    {
+      "id": "system_core",
+      "type": "project.module",
+      "display_name": "系统核心",
+      "description": "通用嵌入式应用的模块分组"
+    },
+    {
+      "id": "uart_debug",
+      "type": "hal.custom",
+      "hal_type": "uart",
+      "bus_id": 1,
+      "ctx": "0",
+      "init": "app_uart_debug_init",
+      "write": "app_uart_debug_write",
+      "module": "system_core"
+    },
+    {
+      "id": "battery_sensor",
+      "type": "sensor.custom",
+      "sensor_type": "custom",
+      "channel_count": 1,
+      "hal_name": "uart_debug",
+      "ctx": "0",
+      "read": "app_battery_sensor_read",
+      "module": "system_core"
+    },
+    {
+      "id": "status_led",
+      "type": "actuator.custom",
+      "actuator_type": "led",
+      "ctx": "0",
+      "write": "app_status_led_write",
+      "module": "system_core"
+    },
+    {
+      "id": "health_service",
+      "type": "module.custom",
+      "module_type": "EFW_MODULE_SERVICE",
+      "ctx": "0",
+      "init": "app_health_service_init",
+      "poll": "app_health_service_poll",
+      "module": "system_core"
+    },
+    {
+      "id": "heartbeat_100ms",
+      "type": "task.periodic",
+      "period_ms": 100,
+      "call": "app_heartbeat_100ms",
+      "module": "system_core"
+    },
+    {
+      "id": "topic_battery",
+      "type": "event.topic",
+      "module": "system_core",
+      "topic_id": 1,
+      "payload_type": "float",
+      "description": "电池电压上报"
+    },
+    {
+      "id": "publish_battery",
+      "type": "event.publisher",
+      "module": "system_core",
+      "topic": "topic_battery",
+      "source": "battery_sensor",
+      "data_expr": "&battery_voltage",
+      "size_expr": "sizeof(battery_voltage)"
+    },
+    {
+      "id": "subscribe_battery",
+      "type": "event.subscriber",
+      "module": "system_core",
+      "topic": "topic_battery",
+      "target": "health_service",
+      "callback": "app_on_battery_topic",
+      "user": "0"
+    }
+  ],
+  "flows": [],
+  "tasks": [
+    {
+      "id": "battery_sample_20ms",
+      "type": "task.periodic",
+      "period_ms": 20,
+      "call": "app_battery_sample_20ms"
+    }
+  ],
+  "custom_files": [
+    {
+      "path": "app_custom.c",
+      "content": "#include \"efw/efw.h\"\n\nefw_status_t app_uart_debug_init(void *ctx) { EFW_UNUSED(ctx); return EFW_OK; }\nefw_status_t app_uart_debug_write(void *ctx, const void *buf, uint16_t len, uint16_t *actual) { EFW_UNUSED(ctx); EFW_UNUSED(buf); if (actual) *actual = len; return EFW_OK; }\nefw_status_t app_battery_sensor_read(void *ctx, void *out) { EFW_UNUSED(ctx); if (out) *(float *)out = 7.4f; return EFW_OK; }\nefw_status_t app_status_led_write(void *ctx, const void *cmd) { EFW_UNUSED(ctx); EFW_UNUSED(cmd); return EFW_OK; }\nefw_status_t app_health_service_init(void *ctx) { EFW_UNUSED(ctx); return EFW_OK; }\nefw_status_t app_health_service_poll(void *ctx) { EFW_UNUSED(ctx); return EFW_OK; }\nefw_status_t app_heartbeat_100ms(void) { return EFW_OK; }\nefw_status_t app_battery_sample_20ms(void) { return EFW_OK; }\nvoid app_on_battery_topic(uint16_t topic_id, const void *data, uint16_t size, void *user) { EFW_UNUSED(topic_id); EFW_UNUSED(data); EFW_UNUSED(size); EFW_UNUSED(user); }\n"
+    }
+  ],
+  "board": {
+    "profile": "generic-mock",
+    "pin_plan": []
+  }
+}
