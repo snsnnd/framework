@@ -144,6 +144,7 @@ typedef struct {
 /* ====== 执行器注册表 API ====== */
 
 efw_status_t efw_actuator_registry_init(void);
+efw_status_t efw_actuator_registry_init_pool(const efw_actuator_ops_t **pool, size_t capacity);
 efw_status_t efw_actuator_register(const efw_actuator_ops_t *ops);
 efw_status_t efw_actuator_get(const char *name, const efw_actuator_ops_t **out_ops);
 size_t efw_actuator_count_by_type(efw_actuator_type_t type);

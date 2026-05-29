@@ -84,6 +84,7 @@ typedef struct {
 /* ====== HAL 注册表 API ====== */
 
 efw_status_t efw_hal_registry_init(void);
+efw_status_t efw_hal_registry_init_pool(const efw_hal_ops_t **pool, size_t capacity);
 efw_status_t efw_hal_register(const efw_hal_ops_t *ops);
 efw_status_t efw_hal_get(const char *name, const efw_hal_ops_t **out_ops);
 size_t efw_hal_count_by_type(efw_hal_type_t type);

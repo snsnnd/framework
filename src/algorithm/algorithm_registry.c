@@ -27,12 +27,15 @@
 
 #include <string.h>
 #include "efw/core/config.h"
+#include "efw/core/diagnostic.h"
 #include "efw/algorithm/registry.h"
 
 #if EFW_ENABLE_ALGORITHM  /**< 编译开关 */
 
-static const efw_algo_ops_t *g_algos[EFW_MAX_ALGOS]; /**< Algorithm ops 指针数组 */
-static size_t g_algo_n;                              /**< 已注册算法数量 */
+static const efw_algo_ops_t *g_algo_default_pool[EFW_MAX_ALGOS];
+static const efw_algo_ops_t **g_algos = g_algo_default_pool;
+static size_t g_algo_cap = EFW_MAX_ALGOS;
+static size_t g_algo_n;
 
 static int same_name(const char *a, const char *b) {
     return a && b && strcmp(a, b) == 0;
@@ -40,14 +43,18 @@ static int same_name(const char *a, const char *b) {
 
 /* ====== 初始化 + 注册 ====== */
 
-efw_status_t efw_algo_registry_init(void) { g_algo_n = 0; return EFW_OK; }
+efw_status_t efw_algo_registry_init(void) { g_algos = g_algo_default_pool; g_algo_cap = EFW_MAX_ALGOS; g_algo_n = 0; return EFW_OK; }
+efw_status_t efw_algo_registry_init_pool(const efw_algo_ops_t **pool, size_t capacity) {
+    if (!pool || capacity == 0) { efw_diag_set(EFW_ERR_INVALID, "algo", 0, "invalid pool"); return EFW_ERR_INVALID; }
+    g_algos = pool; g_algo_cap = capacity; g_algo_n = 0; return EFW_OK;
+}
 
 efw_status_t efw_algo_register(const efw_algo_ops_t *ops) {
-    if (!ops || !ops->name || !ops->run) return EFW_ERR_INVALID;  /* run 必填 */
+    if (!ops || !ops->name || !ops->run) { efw_diag_set(EFW_ERR_INVALID, "algo", 0, "invalid ops"); return EFW_ERR_INVALID; }
     for (size_t i = 0; i < g_algo_n; ++i)
         if (same_name(g_algos[i]->name, ops->name))
-            return EFW_ERR_ALREADY_EXISTS;                          /* 名称冲突 */
-    if (g_algo_n >= EFW_MAX_ALGOS) return EFW_ERR_FULL;           /* 容量已满 */
+            { efw_diag_set(EFW_ERR_ALREADY_EXISTS, "algo", ops->name, "duplicate name"); return EFW_ERR_ALREADY_EXISTS; }
+    if (g_algo_n >= g_algo_cap) { efw_diag_set(EFW_ERR_FULL, "algo", ops->name, "pool full"); return EFW_ERR_FULL; }
     g_algos[g_algo_n++] = ops;                                      /* 存入 */
     return EFW_OK;
 }

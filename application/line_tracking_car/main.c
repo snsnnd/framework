@@ -8,9 +8,9 @@
  * 程序流程
  * =========================================================================
  *
- *   ① app_line_tracking_car_init()  — 初始化框架 + 注册全部硬件和算法
+ *   ① app_init()                    — 初始化框架 + 注册全部硬件和算法 + 绑定 handle
  *   ② 设置模拟数字循迹状态          — 模拟 5 路传感器的 0/1 输出
- *   ③ app_line_tracking_car_loop_1ms() — 执行一次完整的控制循环
+ *   ③ app_loop_1ms()                — 执行一次完整的控制循环
  *
  * =========================================================================
  * 模拟的传感器数据
@@ -36,16 +36,15 @@
  * =========================================================================
  *
  *   main()
- *     └─ app_line_tracking_car_init()
+ *     └─ app_init()
  *          ├─ efw_init()                     ← 初始化 7 个注册表
  *          ├─ app_platform_register()        ← 注册 ADC/传感器/电机
  *          └─ app_components_register()      ← 注册 PID
  *     └─ app_platform_set_line_state()      ← 设置模拟 0/1 循迹状态
- *     └─ app_line_tracking_car_loop_1ms()    ← 执行控制循环
- *          └─ efw_line_tracking_follow_diff() ← 框架高层 API (感知→决策→执行)
+ *     └─ app_loop_1ms()                ← 执行控制循环，无字符串查找
  */
 
-#include "app_line_tracking_car.h"
+#include "app_bootstrap.h"
 #include "app_platform.h"
 
 int main(void) {
@@ -53,13 +52,13 @@ int main(void) {
     const uint16_t centered_line[APP_LINE_CHANNELS] = { 0, 0, 1, 0, 0 };
 
     /* ① 初始化：框架 → 平台 → 组件 */
-    app_line_tracking_car_init();
+    app_init();
 
     /* ② 设置模拟数字循迹状态 */
     app_platform_set_line_state(centered_line);
 
     /* ③ 执行一次完整的控制循环 (真实项目中在 1ms 定时器中断中调用) */
-    app_line_tracking_car_loop_1ms();
+    app_loop_1ms();
 
     return 0;
 }

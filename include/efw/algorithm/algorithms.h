@@ -29,4 +29,20 @@
 #include "efw/algorithm/filter/moving_average.h" /**< 滑动均值滤波器 (O(1) 环形缓冲) */
 #endif
 
+#if EFW_ENABLE_ALGO_LOW_PASS
+#include "efw/algorithm/filter/low_pass.h"
+#endif
+
+#if EFW_ENABLE_ALGO_RAMP
+#include "efw/algorithm/control/ramp.h"
+#endif
+
+#if EFW_ENABLE_ALGO_ENCODER_SPEED
+#include "efw/algorithm/estimator/encoder_speed.h"
+#endif
+
+#if EFW_ENABLE_ALGO_ATTITUDE_COMPLEMENTARY
+#include "efw/algorithm/estimator/attitude_complementary.h"
+#endif
+
 #endif

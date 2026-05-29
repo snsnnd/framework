@@ -26,12 +26,15 @@
 
 #include <string.h>
 #include "efw/core/config.h"
+#include "efw/core/diagnostic.h"
 #include "efw/device/sensor.h"
 
 #if EFW_ENABLE_SENSOR  /**< 编译开关 */
 
-static const efw_sensor_ops_t *g_sensors[EFW_MAX_SENSORS]; /**< Sensor ops 指针数组 */
-static size_t g_sensor_n;                                   /**< 已注册传感器数量 */
+static const efw_sensor_ops_t *g_sensor_default_pool[EFW_MAX_SENSORS];
+static const efw_sensor_ops_t **g_sensors = g_sensor_default_pool;
+static size_t g_sensor_cap = EFW_MAX_SENSORS;
+static size_t g_sensor_n;
 
 static int same_name(const char *a, const char *b) {
     return a && b && strcmp(a, b) == 0;
@@ -39,12 +42,16 @@ static int same_name(const char *a, const char *b) {
 
 /* ====== 初始化 ====== */
 
-efw_status_t efw_sensor_registry_init(void) { g_sensor_n = 0; return EFW_OK; }
+efw_status_t efw_sensor_registry_init(void) { g_sensors = g_sensor_default_pool; g_sensor_cap = EFW_MAX_SENSORS; g_sensor_n = 0; return EFW_OK; }
+efw_status_t efw_sensor_registry_init_pool(const efw_sensor_ops_t **pool, size_t capacity) {
+    if (!pool || capacity == 0) { efw_diag_set(EFW_ERR_INVALID, "sensor", 0, "invalid pool"); return EFW_ERR_INVALID; }
+    g_sensors = pool; g_sensor_cap = capacity; g_sensor_n = 0; return EFW_OK;
+}
 
 /* ====== 注册 (含双重 IO 绑定校验) ====== */
 
 efw_status_t efw_sensor_register(const efw_sensor_ops_t *ops) {
-    if (!ops || !ops->name || !ops->read) return EFW_ERR_INVALID;  /* ① 参数 */
+    if (!ops || !ops->name || !ops->read) { efw_diag_set(EFW_ERR_INVALID, "sensor", 0, "invalid ops"); return EFW_ERR_INVALID; }
 
     /* ② ★ HAL 绑定校验 (注册时) */
     if (ops->hal_name) {
@@ -71,10 +78,10 @@ efw_status_t efw_sensor_register(const efw_sensor_ops_t *ops) {
     /* ④ 名称冲突 */
     for (size_t i = 0; i < g_sensor_n; ++i)
         if (same_name(g_sensors[i]->name, ops->name))
-            return EFW_ERR_ALREADY_EXISTS;
+            { efw_diag_set(EFW_ERR_ALREADY_EXISTS, "sensor", ops->name, "duplicate name"); return EFW_ERR_ALREADY_EXISTS; }
 
     /* ⑤ 容量 + ⑥ 存入 */
-    if (g_sensor_n >= EFW_MAX_SENSORS) return EFW_ERR_FULL;
+    if (g_sensor_n >= g_sensor_cap) { efw_diag_set(EFW_ERR_FULL, "sensor", ops->name, "pool full"); return EFW_ERR_FULL; }
     g_sensors[g_sensor_n++] = ops;
     return EFW_OK;
 }

@@ -9,6 +9,7 @@
 ## 2. 目录分层
 - `include/efw/efw.h` 是应用层聚合入口。
 - `include/efw/core/` 放公共类型和配置。
+- `include/efw/app/` 放通用 application runtime 和 manifest 类型。
 - `include/efw/hal/` 放底层外设抽象。
 - `include/efw/comm/` 放通信抽象。
 - `include/efw/device/` 放传感器等设备抽象。
@@ -67,7 +68,9 @@
 
 ## 11. Keil 工程接入
 - Keil 不使用 CMake 时，直接把 `include` 加入 Include Paths。
-- 必选源码只有 `src/core/init.c`。
+- 推荐只加入 `src/efw_all.c`，由 `EFW_ENABLE_*` 宏决定实际进入编译单元的模块。
+- 如果不用聚合入口，也可以按需手动加入下面的源码。
+- 必选源码包括 `src/core/init.c` 和 `src/core/diagnostic.c`。
 - 需要 HAL 时加入 `src/hal/hal_registry.c` 并保持 `EFW_ENABLE_HAL=1`。
 - 需要 COMM 时加入 `src/comm/comm_registry.c` 并保持 `EFW_ENABLE_COMM=1`。
 - 需要 SENSOR 时加入 `src/device/sensor_registry.c` 并保持 `EFW_ENABLE_SENSOR=1`。
@@ -81,12 +84,26 @@
 - 需要算法注册表时加入 `src/algorithm/algorithm_registry.c` 并保持 `EFW_ENABLE_ALGORITHM=1`。
 - 需要 PID 时加入 `src/algorithm/control/pid.c` 并保持 `EFW_ENABLE_ALGO_PID=1`。
 - 需要滑动均值时加入 `src/algorithm/filter/moving_average.c` 并保持 `EFW_ENABLE_ALGO_MOVING_AVG=1`。
+- 需要低通滤波时加入 `src/algorithm/filter/low_pass.c` 并保持 `EFW_ENABLE_ALGO_LOW_PASS=1`。
+- 需要斜坡限速时加入 `src/algorithm/control/ramp.c` 并保持 `EFW_ENABLE_ALGO_RAMP=1`。
+- 需要编码器测速时加入 `src/algorithm/estimator/encoder_speed.c` 并保持 `EFW_ENABLE_ALGO_ENCODER_SPEED=1`。
+- 需要互补滤波姿态时加入 `src/algorithm/estimator/attitude_complementary.c` 并保持 `EFW_ENABLE_ALGO_ATTITUDE_COMPLEMENTARY=1`。
 - 不用的功能不要加入 `.c` 文件，同时在 Keil Define 中设置对应 `EFW_ENABLE_* = 0`。
 
 ## 12. Application 目录
 - `application/` 用来放具体应用工程代码，不属于框架核心库。
 - `app_board_config.h` 放板级参数，例如 GPIO 端口/引脚、PWM 定时器通道、速度范围、控制周期。
+- `app_manifest.h` 放应用清单，例如启用功能、pool 容量、注册名称和控制策略。
+- `app_bootstrap.c` 连接通用 runtime 与具体应用，自动初始化 registry pool、注册平台/组件、绑定 handle，并提供 `app_init()`/`app_loop_1ms()`。
 - `app_platform.c` 放底层适配回调和硬件相关注册，例如 ADC、PWM、电机 GPIO。
 - `app_components.c` 放算法、传感器、执行器等组件注册。
 - `app_xxx.c` 放应用层业务逻辑。
 - 未知传感器使用 `EFW_SENSOR_CUSTOM` 注册，应用层可通过 `efw_custom_sensor_read()` 或自行定义新的中间层头文件读取。
+
+## 13. 高频路径规范
+- 字符串名称只用于注册、初始化绑定和调试输出。
+- 高频控制环使用 handle：`bind` 时查找一次，`update` 时直接使用缓存指针。
+- 字符串便捷 API 保留给低频和简单 demo，正式竞赛代码优先使用 handle。
+- 注册表可使用 application 提供的 pool，减少默认静态容量浪费。
+- 推荐由 `app_manifest.h` 统一声明容量，再由 `app_bootstrap.c` 静态分配 pool 和 handle；`main.c` 不手动声明指针。
+- 轻量 topic/event 只服务按键、模式切换、错误上报等低频事件，不用于 1ms 控制闭环。

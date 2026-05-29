@@ -3,6 +3,8 @@
  * @brief   电机执行器 —— 差速驱动、单电机控制、紧急停止、限速差速
  *
  * 本文件在 efw_actuator_write() 基础上提供了电机专用的便捷接口。
+ * 这些按名称查找的字符串 API 适合初始化、调试、低频动作和简单场景；
+ * 高频闭环控制优先使用已绑定的 handle API，避免每周期字符串查找。
  *
  * =========================================================================
  * 核心功能
@@ -52,7 +54,7 @@ efw_status_t efw_motor_set_speed(const char *name, float speed);
 efw_status_t efw_motor_stop(const char *name);
 
 /**
- * @brief 差速驱动 (无速度限制)
+ * @brief 差速驱动 (无速度限制，低频/简单场景 API)
  *
  * left = base_speed - turn, right = base_speed + turn
  * 不限制速度范围——turn 过大可能导致反转。
@@ -61,7 +63,7 @@ efw_status_t efw_motor_set_diff(const char *left_motor, const char *right_motor,
                                 float base_speed, float turn);
 
 /**
- * @brief 限速差速驱动 ★ 推荐使用的安全版本
+ * @brief 限速差速驱动 ★ 推荐使用的安全版本，仍属于按名称查找 API
  *
  * 在差速公式后对每轮速度单独做 clamp 限制：
  *   left  = clamp(base_speed - turn, min_speed, max_speed)

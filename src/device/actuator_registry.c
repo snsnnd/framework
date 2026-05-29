@@ -31,12 +31,15 @@
 
 #include <string.h>
 #include "efw/core/config.h"
+#include "efw/core/diagnostic.h"
 #include "efw/device/actuator.h"
 
 #if EFW_ENABLE_ACTUATOR  /**< 编译开关 */
 
-static const efw_actuator_ops_t *g_actuators[EFW_MAX_ACTUATORS]; /**< Actuator ops 数组 */
-static size_t g_actuator_n;                                       /**< 已注册执行器数量 */
+static const efw_actuator_ops_t *g_actuator_default_pool[EFW_MAX_ACTUATORS];
+static const efw_actuator_ops_t **g_actuators = g_actuator_default_pool;
+static size_t g_actuator_cap = EFW_MAX_ACTUATORS;
+static size_t g_actuator_n;
 
 static int same_name(const char *a, const char *b) {
     return a && b && strcmp(a, b) == 0;
@@ -44,10 +47,14 @@ static int same_name(const char *a, const char *b) {
 
 /* ====== 初始化 + 注册 ====== */
 
-efw_status_t efw_actuator_registry_init(void) { g_actuator_n = 0; return EFW_OK; }
+efw_status_t efw_actuator_registry_init(void) { g_actuators = g_actuator_default_pool; g_actuator_cap = EFW_MAX_ACTUATORS; g_actuator_n = 0; return EFW_OK; }
+efw_status_t efw_actuator_registry_init_pool(const efw_actuator_ops_t **pool, size_t capacity) {
+    if (!pool || capacity == 0) { efw_diag_set(EFW_ERR_INVALID, "actuator", 0, "invalid pool"); return EFW_ERR_INVALID; }
+    g_actuators = pool; g_actuator_cap = capacity; g_actuator_n = 0; return EFW_OK;
+}
 
 efw_status_t efw_actuator_register(const efw_actuator_ops_t *ops) {
-    if (!ops || !ops->name || !ops->write) return EFW_ERR_INVALID;  /* write 必填 */
+    if (!ops || !ops->name || !ops->write) { efw_diag_set(EFW_ERR_INVALID, "actuator", 0, "invalid ops"); return EFW_ERR_INVALID; }
 
     /* HAL 绑定校验 */
     if (ops->hal_name) {
@@ -73,8 +80,8 @@ efw_status_t efw_actuator_register(const efw_actuator_ops_t *ops) {
 
     for (size_t i = 0; i < g_actuator_n; ++i)
         if (same_name(g_actuators[i]->name, ops->name))
-            return EFW_ERR_ALREADY_EXISTS;                       /* 名称冲突 */
-    if (g_actuator_n >= EFW_MAX_ACTUATORS) return EFW_ERR_FULL; /* 容量已满 */
+            { efw_diag_set(EFW_ERR_ALREADY_EXISTS, "actuator", ops->name, "duplicate name"); return EFW_ERR_ALREADY_EXISTS; }
+    if (g_actuator_n >= g_actuator_cap) { efw_diag_set(EFW_ERR_FULL, "actuator", ops->name, "pool full"); return EFW_ERR_FULL; }
     g_actuators[g_actuator_n++] = ops;                           /* 存入 */
     return EFW_OK;
 }

@@ -17,9 +17,18 @@ option(EFW_ENABLE_ACTUATOR_MOTOR "Enable motor actuator helpers" ON)
 option(EFW_ENABLE_ALGORITHM "Enable algorithm registry" ON)
 option(EFW_ENABLE_ALGO_PID "Enable built-in PID algorithm" ON)
 option(EFW_ENABLE_ALGO_MOVING_AVG "Enable built-in moving average algorithm" ON)
+option(EFW_ENABLE_ALGO_LOW_PASS "Enable low-pass filter algorithm" ON)
+option(EFW_ENABLE_ALGO_RAMP "Enable ramp limiter algorithm" ON)
+option(EFW_ENABLE_ALGO_ENCODER_SPEED "Enable encoder speed estimator" ON)
+option(EFW_ENABLE_ALGO_ATTITUDE_COMPLEMENTARY "Enable complementary attitude estimator" ON)
 option(EFW_ENABLE_STATE_MACHINE "Enable state machine registry" ON)
+option(EFW_ENABLE_EVENT "Enable lightweight topic event" ON)
 
-set(EFW_SOURCES src/core/init.c)
+set(EFW_SOURCES src/core/init.c src/core/diagnostic.c src/app/runtime.c)
+
+if(EFW_ENABLE_EVENT)
+    list(APPEND EFW_SOURCES src/core/event.c)
+endif()
 
 if(EFW_ENABLE_HAL)
     list(APPEND EFW_SOURCES src/hal/hal_registry.c)
@@ -71,11 +80,28 @@ if(EFW_ENABLE_ALGO_MOVING_AVG)
     list(APPEND EFW_SOURCES src/algorithm/filter/moving_average.c)
 endif()
 
+if(EFW_ENABLE_ALGO_LOW_PASS)
+    list(APPEND EFW_SOURCES src/algorithm/filter/low_pass.c)
+endif()
+
+if(EFW_ENABLE_ALGO_RAMP)
+    list(APPEND EFW_SOURCES src/algorithm/control/ramp.c)
+endif()
+
+if(EFW_ENABLE_ALGO_ENCODER_SPEED)
+    list(APPEND EFW_SOURCES src/algorithm/estimator/encoder_speed.c)
+endif()
+
+if(EFW_ENABLE_ALGO_ATTITUDE_COMPLEMENTARY)
+    list(APPEND EFW_SOURCES src/algorithm/estimator/attitude_complementary.c)
+endif()
+
 if(EFW_ENABLE_STATE_MACHINE)
     list(APPEND EFW_SOURCES src/state/state_machine_registry.c)
 endif()
 
 add_library(efw STATIC ${EFW_SOURCES})
+target_link_libraries(efw PUBLIC m)
 
 target_include_directories(efw PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -98,13 +124,18 @@ target_compile_definitions(efw PUBLIC
     EFW_ENABLE_ALGORITHM=$<BOOL:${EFW_ENABLE_ALGORITHM}>
     EFW_ENABLE_ALGO_PID=$<BOOL:${EFW_ENABLE_ALGO_PID}>
     EFW_ENABLE_ALGO_MOVING_AVG=$<BOOL:${EFW_ENABLE_ALGO_MOVING_AVG}>
+    EFW_ENABLE_ALGO_LOW_PASS=$<BOOL:${EFW_ENABLE_ALGO_LOW_PASS}>
+    EFW_ENABLE_ALGO_RAMP=$<BOOL:${EFW_ENABLE_ALGO_RAMP}>
+    EFW_ENABLE_ALGO_ENCODER_SPEED=$<BOOL:${EFW_ENABLE_ALGO_ENCODER_SPEED}>
+    EFW_ENABLE_ALGO_ATTITUDE_COMPLEMENTARY=$<BOOL:${EFW_ENABLE_ALGO_ATTITUDE_COMPLEMENTARY}>
     EFW_ENABLE_STATE_MACHINE=$<BOOL:${EFW_ENABLE_STATE_MACHINE}>
+    EFW_ENABLE_EVENT=$<BOOL:${EFW_ENABLE_EVENT}>
 )
 
 if(EFW_BUILD_APPLICATIONS)
     add_executable(efw_app_line_tracking_car
         application/line_tracking_car/main.c
-        application/line_tracking_car/app_line_tracking_car.c
+        application/line_tracking_car/app_bootstrap.c
         application/line_tracking_car/app_components.c
         application/line_tracking_car/app_platform.c
     )

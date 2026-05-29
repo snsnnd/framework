@@ -100,8 +100,28 @@
 #define EFW_ENABLE_ALGO_MOVING_AVG 1 /**< 滑动均值滤波算法实现开关 */
 #endif
 
+#ifndef EFW_ENABLE_ALGO_LOW_PASS
+#define EFW_ENABLE_ALGO_LOW_PASS 1
+#endif
+
+#ifndef EFW_ENABLE_ALGO_RAMP
+#define EFW_ENABLE_ALGO_RAMP 1
+#endif
+
+#ifndef EFW_ENABLE_ALGO_ENCODER_SPEED
+#define EFW_ENABLE_ALGO_ENCODER_SPEED 1
+#endif
+
+#ifndef EFW_ENABLE_ALGO_ATTITUDE_COMPLEMENTARY
+#define EFW_ENABLE_ALGO_ATTITUDE_COMPLEMENTARY 1
+#endif
+
 #ifndef EFW_ENABLE_STATE_MACHINE
 #define EFW_ENABLE_STATE_MACHINE 1  /**< StateMachine 状态机注册表开关 */
+#endif
+
+#ifndef EFW_ENABLE_EVENT
+#define EFW_ENABLE_EVENT 1
 #endif
 
 /* ==================================================================
@@ -164,6 +184,10 @@
  */
 #ifndef EFW_MAX_ACTUATORS
 #define EFW_MAX_ACTUATORS 16
+#endif
+
+#ifndef EFW_MAX_TOPIC_SUBS
+#define EFW_MAX_TOPIC_SUBS 8
 #endif
 
 /**

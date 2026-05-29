@@ -17,13 +17,16 @@
 
 #include <string.h>
 #include "efw/core/config.h"
+#include "efw/core/diagnostic.h"
 #include "efw/hal/hal.h"
 
 #if EFW_ENABLE_HAL  /**< 编译开关：0 时整个文件被跳过 */
 
 /** HAL 注册表——全局静态指针数组，每个元素指向用户分配的 efw_hal_ops_t */
-static const efw_hal_ops_t *g_hals[EFW_MAX_HALS]; /**< HAL ops 指针数组 (容量 EFW_MAX_HALS) */
-static size_t g_hal_n;                            /**< 已注册 HAL 数量 (同时作为下一个空闲索引) */
+static const efw_hal_ops_t *g_hal_default_pool[EFW_MAX_HALS];
+static const efw_hal_ops_t **g_hals = g_hal_default_pool;
+static size_t g_hal_cap = EFW_MAX_HALS;
+static size_t g_hal_n;
 
 /**
  * @brief 安全字符串比较：两串非空且内容相同 → 1，否则 → 0
@@ -34,16 +37,20 @@ static int same_name(const char *a, const char *b) {
 
 /* ====== 初始化：计数归零即清空 ====== */
 
-efw_status_t efw_hal_registry_init(void) { g_hal_n = 0; return EFW_OK; }
+efw_status_t efw_hal_registry_init(void) { g_hals = g_hal_default_pool; g_hal_cap = EFW_MAX_HALS; g_hal_n = 0; return EFW_OK; }
+efw_status_t efw_hal_registry_init_pool(const efw_hal_ops_t **pool, size_t capacity) {
+    if (!pool || capacity == 0) { efw_diag_set(EFW_ERR_INVALID, "hal", 0, "invalid pool"); return EFW_ERR_INVALID; }
+    g_hals = pool; g_hal_cap = capacity; g_hal_n = 0; return EFW_OK;
+}
 
 /* ====== 注册：校验 → 查重 → 容量检查 → 存入 ====== */
 
 efw_status_t efw_hal_register(const efw_hal_ops_t *ops) {
-    if (!ops || !ops->name) return EFW_ERR_INVALID;          /* ① 参数校验 */
+    if (!ops || !ops->name) { efw_diag_set(EFW_ERR_INVALID, "hal", 0, "invalid ops"); return EFW_ERR_INVALID; }
     for (size_t i = 0; i < g_hal_n; ++i)                     /* ② 名称冲突检查 */
         if (same_name(g_hals[i]->name, ops->name))
-            return EFW_ERR_ALREADY_EXISTS;
-    if (g_hal_n >= EFW_MAX_HALS) return EFW_ERR_FULL;        /* ③ 容量检查 */
+            { efw_diag_set(EFW_ERR_ALREADY_EXISTS, "hal", ops->name, "duplicate name"); return EFW_ERR_ALREADY_EXISTS; }
+    if (g_hal_n >= g_hal_cap) { efw_diag_set(EFW_ERR_FULL, "hal", ops->name, "pool full"); return EFW_ERR_FULL; }
     g_hals[g_hal_n++] = ops;                                  /* ④ 存入数组尾部 */
     return EFW_OK;
 }

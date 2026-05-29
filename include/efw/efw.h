@@ -29,6 +29,11 @@
 /* 基础类型和配置 — 始终引入，无开关控制 */
 #include "efw/core/common.h"
 #include "efw/core/config.h"
+#include "efw/core/diagnostic.h"
+#include "efw/app/runtime.h"
+#if EFW_ENABLE_EVENT
+#include "efw/core/event.h"
+#endif
 
 /* 以下各层按 EFW_ENABLE_* 开关条件引入 */
 
@@ -75,7 +80,7 @@
 #endif
 
 /* 算法实现只在注册表启用 + 对应算法开关启用时才引入 */
-#if EFW_ENABLE_ALGO_PID || EFW_ENABLE_ALGO_MOVING_AVG
+#if EFW_ENABLE_ALGO_PID || EFW_ENABLE_ALGO_MOVING_AVG || EFW_ENABLE_ALGO_LOW_PASS || EFW_ENABLE_ALGO_RAMP || EFW_ENABLE_ALGO_ENCODER_SPEED || EFW_ENABLE_ALGO_ATTITUDE_COMPLEMENTARY
 #include "efw/algorithm/algorithms.h" /**< 内置算法分发 (→pid.h / →moving_average.h) */
 #endif
 

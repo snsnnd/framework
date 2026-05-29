@@ -41,6 +41,7 @@
  */
 
 #include "app_components.h"
+#include "app_manifest.h"
 
 /**
  * @brief 循迹 PID 实例 —— PD 控制器 (Ki=0)
@@ -68,7 +69,7 @@ static efw_pid_t g_line_pid = {
  * run=efw_pid_run — 使用框架内置的 PID 执行函数
  */
 static efw_algo_ops_t g_line_pid_algo = {
-    .name = "line_pid",             /**< 算法名称 (应用层通过此名引用) */
+    .name = APP_LINE_PID_NAME,       /**< 算法名称 (应用层通过此名引用) */
     .type = EFW_ALGO_CONTROL,       /**< 类型：控制算法 */
     .ctx = &g_line_pid,             /**< 上下文：指向 efw_pid_t 实例 */
     .run = efw_pid_run,             /**< 执行函数：框架内置 PID */

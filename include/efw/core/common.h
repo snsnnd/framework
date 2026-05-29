@@ -32,7 +32,9 @@ typedef enum {
     EFW_ERR_NOT_FOUND     = -3, /**< 按名称查找失败：未注册过该名称的组件 */
     EFW_ERR_ALREADY_EXISTS = -4, /**< 名称冲突：尝试注册一个已被使用的名称 */
     EFW_ERR_NOT_READY     = -5, /**< 设备未就绪：组件未初始化或未打开，不能执行操作 */
-    EFW_ERR_IO            = -6  /**< IO 错误：底层硬件读写失败 */
+    EFW_ERR_IO            = -6, /**< IO 错误：底层硬件读写失败 */
+    EFW_ERR_RANGE         = -7, /**< 参数越界 */
+    EFW_ERR_UNSUPPORTED   = -8  /**< 当前配置或平台不支持 */
 } efw_status_t;
 
 /**

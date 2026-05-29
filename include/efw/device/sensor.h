@@ -80,6 +80,7 @@ typedef struct {
 /* ====== 传感器注册表 API ====== */
 
 efw_status_t efw_sensor_registry_init(void);
+efw_status_t efw_sensor_registry_init_pool(const efw_sensor_ops_t **pool, size_t capacity);
 efw_status_t efw_sensor_register(const efw_sensor_ops_t *ops);
 efw_status_t efw_sensor_get(const char *name, const efw_sensor_ops_t **out_ops);
 size_t efw_sensor_count_by_type(efw_sensor_type_t type);

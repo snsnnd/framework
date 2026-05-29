@@ -35,7 +35,7 @@
  */
 
 #include "app_platform.h"
-#include "app_board_config.h"
+#include "app_manifest.h"
 
 /* ==================================================================
  *  硬件上下文结构体
@@ -115,7 +115,7 @@ static efw_status_t line_input_read(void *ctx, void *buf, uint16_t len, uint16_t
  */
 static efw_status_t line_sensor_read(void *ctx, void *out) {
     EFW_UNUSED(ctx);  /* 此传感器无私有上下文 */
-    return efw_hal_read("line_input", out, sizeof(efw_line_tracking_data_t), 0);
+    return efw_hal_read(APP_LINE_INPUT_HAL_NAME, out, sizeof(efw_line_tracking_data_t), 0);
 }
 
 /**

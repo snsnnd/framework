@@ -213,34 +213,51 @@ efw_status_t efw_line_follower_bind(efw_line_follower_t *follower,
                                     const char *left_motor, const char *right_motor,
                                     const float *weights, float base_speed,
                                     float min_speed, float max_speed, float dt) {
+    efw_line_follower_config_t config;
+
+    config.sensor_name = sensor_name;
+    config.pid_name = pid_name;
+    config.left_motor = left_motor;
+    config.right_motor = right_motor;
+    config.weights = weights;
+    config.base_speed = base_speed;
+    config.min_speed = min_speed;
+    config.max_speed = max_speed;
+    config.dt = dt;
+    config.active_value = 1u;
+    config.binary_mode = 0u;
+
+    return efw_line_follower_bind_config(follower, &config);
+}
+
+efw_status_t efw_line_follower_bind_config(efw_line_follower_t *follower,
+                                           const efw_line_follower_config_t *config) {
 #if EFW_ENABLE_ALGORITHM && EFW_ENABLE_ALGO_PID && EFW_ENABLE_ACTUATOR && EFW_ENABLE_ACTUATOR_MOTOR
     efw_status_t s;
 
-    if (!follower || !weights || dt <= 0.0f) return EFW_ERR_INVALID;
+    if (!follower || !config || !config->weights || config->dt <= 0.0f) return EFW_ERR_INVALID;
 
     /* 逐个查找并缓存 ops 指针 (注册时校验过的名称此时应全部存在) */
-    s = efw_sensor_get(sensor_name, &follower->sensor);
+    s = efw_sensor_get(config->sensor_name, &follower->sensor);
     if (s != EFW_OK) return s;
-    s = efw_algo_get(pid_name, &follower->pid);
+    s = efw_algo_get(config->pid_name, &follower->pid);
     if (s != EFW_OK) return s;
-    s = efw_actuator_get(left_motor, &follower->left_motor);
+    s = efw_actuator_get(config->left_motor, &follower->left_motor);
     if (s != EFW_OK) return s;
-    s = efw_actuator_get(right_motor, &follower->right_motor);
+    s = efw_actuator_get(config->right_motor, &follower->right_motor);
     if (s != EFW_OK) return s;
 
     /* 缓存运行参数 */
-    follower->weights = weights;
-    follower->active_value = 1u;      /* 默认高电平有效 (数字量模式) */
-    follower->base_speed = base_speed;
-    follower->min_speed = min_speed;
-    follower->max_speed = max_speed;
-    follower->dt = dt;
+    follower->weights = config->weights;
+    follower->active_value = config->active_value;
+    follower->binary_mode = config->binary_mode;
+    follower->base_speed = config->base_speed;
+    follower->min_speed = config->min_speed;
+    follower->max_speed = config->max_speed;
+    follower->dt = config->dt;
     return EFW_OK;
 #else
-    EFW_UNUSED(follower); EFW_UNUSED(sensor_name); EFW_UNUSED(pid_name);
-    EFW_UNUSED(left_motor); EFW_UNUSED(right_motor); EFW_UNUSED(weights);
-    EFW_UNUSED(base_speed); EFW_UNUSED(min_speed); EFW_UNUSED(max_speed);
-    EFW_UNUSED(dt);
+    EFW_UNUSED(follower); EFW_UNUSED(config);
     return EFW_ERR_INVALID;
 #endif
 }
@@ -274,8 +291,12 @@ efw_status_t efw_line_follower_update(efw_line_follower_t *follower, float *out_
     s = follower->sensor->read(follower->sensor->ctx, &data);
     if (s != EFW_OK) return s;
 
-    /* ② 加权误差计算 */
-    error = efw_line_tracking_error_weighted(&data, follower->weights);
+    /* ② 误差计算：数字模块用二值误差，模拟模块用加权误差 */
+    if (follower->binary_mode) {
+        error = efw_line_tracking_error_binary(&data, follower->weights, follower->active_value);
+    } else {
+        error = efw_line_tracking_error_weighted(&data, follower->weights);
+    }
 
     /* ③ PID 计算 */
     pid_in.setpoint = 0.0f;

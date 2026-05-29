@@ -75,6 +75,9 @@
 
 #include "efw/core/common.h"
 #include "efw/core/config.h"
+#include "efw/device/sensor.h"
+#include "efw/algorithm/registry.h"
+#include "efw/device/actuator.h"
 
 /**
  * @brief 循迹传感器数据结构
@@ -112,11 +115,29 @@ typedef struct {
     const efw_actuator_ops_t *right_motor;/**< 右电机 ops (bind 时缓存) */
     const float *weights;                 /**< 权重数组 (bind 时传入) */
     uint16_t active_value;                /**< 数字循迹有效电平 (0 或 1) */
+    uint8_t binary_mode;                  /**< 1=数字二值误差, 0=模拟加权误差 */
     float base_speed;                     /**< 基础巡航速度 */
     float min_speed;                      /**< 最小速度限制 */
     float max_speed;                      /**< 最大速度限制 */
     float dt;                             /**< 控制周期 (秒) */
 } efw_line_follower_t;
+
+/**
+ * @brief 巡线跟随器配置 —— 推荐使用，避免 bind 参数过长
+ */
+typedef struct {
+    const char *sensor_name;
+    const char *pid_name;
+    const char *left_motor;
+    const char *right_motor;
+    const float *weights;
+    float base_speed;
+    float min_speed;
+    float max_speed;
+    float dt;
+    uint16_t active_value;
+    uint8_t binary_mode;
+} efw_line_follower_config_t;
 
 /* ====== 传感器读取 ====== */
 
@@ -165,7 +186,7 @@ float efw_line_tracking_error_binary(const efw_line_tracking_data_t *data,
 /* ====== 高层 API ====== */
 
 /**
- * @brief 一步循迹差速控制 (旧版 API，推荐迁移到 efw_line_follower_*)
+ * @brief 一步循迹差速控制 (低频/简单场景 API，推荐迁移到 efw_line_follower_*)
  *
  * 内部执行：read → error_weighted → PID → motor_set_diff
  * 使用 set_diff (无速度限制)。
@@ -174,6 +195,14 @@ efw_status_t efw_line_tracking_follow_diff(const char *sensor_name, const char *
                                            const char *left_motor, const char *right_motor,
                                            const float *weights, float base_speed, float dt,
                                            float *out_error, float *out_turn);
+
+/**
+ * @brief 配置式绑定巡线跟随器 ★ 推荐 API
+ *
+ * 初始化阶段按名称查找一次并缓存 ops 指针；控制循环调用 update 时不再查字符串。
+ */
+efw_status_t efw_line_follower_bind_config(efw_line_follower_t *follower,
+                                           const efw_line_follower_config_t *config);
 
 /**
  * @brief 绑定巡线跟随器 ★ 新版推荐 API
