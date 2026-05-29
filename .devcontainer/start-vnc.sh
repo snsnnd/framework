@@ -29,7 +29,7 @@ vncserver -kill :1 >/dev/null 2>&1 || true
 pkill -f "websockify.*6080" >/dev/null 2>&1 || true
 
 # 启动 VNC 桌面
-vncserver :1 -geometry 1280x720 -depth 24 -localhost no
+vncserver :1 -geometry 2800x1840 -depth 24 -localhost no
 
 # 启动 noVNC
 websockify --web=/usr/share/novnc/ 6080 localhost:5901
