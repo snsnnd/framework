@@ -58,5 +58,9 @@
       "path": "app_custom.c",
       "content": "#include \"efw/efw.h\"\n\nefw_status_t app_uart_debug_init(void *ctx) { EFW_UNUSED(ctx); return EFW_OK; }\nefw_status_t app_uart_debug_write(void *ctx, const void *buf, uint16_t len, uint16_t *actual) { EFW_UNUSED(ctx); EFW_UNUSED(buf); if (actual) *actual = len; return EFW_OK; }\nefw_status_t app_battery_sensor_read(void *ctx, void *out) { EFW_UNUSED(ctx); if (out) *(float *)out = 7.4f; return EFW_OK; }\nefw_status_t app_status_led_write(void *ctx, const void *cmd) { EFW_UNUSED(ctx); EFW_UNUSED(cmd); return EFW_OK; }\nefw_status_t app_health_service_init(void *ctx) { EFW_UNUSED(ctx); return EFW_OK; }\nefw_status_t app_health_service_poll(void *ctx) { EFW_UNUSED(ctx); return EFW_OK; }\nefw_status_t app_heartbeat_100ms(void) { return EFW_OK; }\nefw_status_t app_battery_sample_20ms(void) { return EFW_OK; }\n"
     }
-  ]
+  ],
+  "board": {
+    "profile": "generic-mock",
+    "pin_plan": []
+  }
 }

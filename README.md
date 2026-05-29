@@ -104,6 +104,8 @@ python3 tools/efw_project_manager.py
 
 `examples/projects/generic_embedded_app.efw_project.json` 是一个项目管理界面可直接打开的示例项目文件。仓库还包含 `.devcontainer/`，在 GitHub Codespaces 中可通过 6080 端口打开 noVNC 桌面来运行 PyQt 项目管理器，并可用 `bash .devcontainer/check-vnc.sh` 自检 VNC/noVNC/PyQt；详见 `docs/environment.md`。
 
+可视化工作台已全面中文化，并新增项目创建向导、属性表单、端口拖线连线、实时校验面板、Board Profile / Pin Planner、模板库入口、代码生成映射视图和自动布局。生成 application 时如果输出目录非空会先确认覆盖，项目管理器会把 Board Profile 注入 Graph 后再生成。
+
 ## CMake 构建
 CMake 只用于主机侧编译验证或支持 CMake 的工程，不是裸机接入必需项。
 

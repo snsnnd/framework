@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ if importlib.util.find_spec("PyQt6") is not None:
         QFileDialog,
         QFormLayout,
         QHBoxLayout,
+        QInputDialog,
         QLabel,
         QLineEdit,
         QListWidget,
@@ -41,6 +43,7 @@ elif importlib.util.find_spec("PyQt5") is not None:
         QFileDialog,
         QFormLayout,
         QHBoxLayout,
+        QInputDialog,
         QLabel,
         QLineEdit,
         QListWidget,
@@ -116,7 +119,7 @@ def save_recent_projects(paths: list[str]) -> None:
 class ProjectManagerWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle(f"EFW Project Manager ({QT_LIB})")
+        self.setWindowTitle(f"EFW 可视化项目工作台 ({QT_LIB})")
         self.resize(1120, 680)
         self.project_path: Path | None = None
         self.project = default_project()
@@ -126,22 +129,23 @@ class ProjectManagerWindow(QMainWindow):
         self.load_project_to_form()
 
     def _build_ui(self) -> None:
-        toolbar = QToolBar("Project")
+        toolbar = QToolBar("项目工具栏")
         self.addToolBar(toolbar)
-        toolbar.addAction("New", self.new_project)
-        toolbar.addAction("Open", self.open_project)
-        toolbar.addAction("Save", self.save_project)
-        toolbar.addAction("Save As", self.save_project_as)
-        toolbar.addAction("Validate Graph", self.validate_current_graph)
-        toolbar.addAction("Generate", self.generate_application)
-        toolbar.addAction("Open Graph Editor", self.open_graph_editor)
+        toolbar.addAction("新建", self.new_project)
+        toolbar.addAction("项目创建向导", self.project_wizard)
+        toolbar.addAction("打开", self.open_project)
+        toolbar.addAction("保存", self.save_project)
+        toolbar.addAction("另存为", self.save_project_as)
+        toolbar.addAction("实时校验", self.validate_current_graph)
+        toolbar.addAction("生成", self.generate_application)
+        toolbar.addAction("打开蓝图编辑", self.open_graph_editor)
 
         splitter = QSplitter()
         self.setCentralWidget(splitter)
 
         left = QWidget()
         left_layout = QVBoxLayout(left)
-        left_layout.addWidget(QLabel("Recent Projects"))
+        left_layout.addWidget(QLabel("最近项目"))
         self.recent_list = QListWidget()
         self.recent_list.itemDoubleClicked.connect(self.open_recent_project)
         left_layout.addWidget(self.recent_list)
@@ -154,20 +158,20 @@ class ProjectManagerWindow(QMainWindow):
         self.graph_edit = QLineEdit()
         self.output_edit = QLineEdit()
         self.board_edit = QLineEdit()
-        form.addRow("Project name", self.name_edit)
+        form.addRow("项目名", self.name_edit)
         form.addRow("Graph JSON", self._path_row(self.graph_edit, self.choose_graph_path))
-        form.addRow("Output application", self._path_row(self.output_edit, self.choose_output_dir))
-        form.addRow("Board profile", self.board_edit)
+        form.addRow("输出 application", self._path_row(self.output_edit, self.choose_output_dir))
+        form.addRow("Board Profile", self.board_edit)
         root.addLayout(form)
-        root.addWidget(QLabel("Notes / handoff checklist"))
+        root.addWidget(QLabel("说明 / 交接清单"))
         self.notes_edit = QPlainTextEdit()
         root.addWidget(self.notes_edit)
 
         buttons = QHBoxLayout()
         for text, callback in [
-            ("Validate", self.validate_current_graph),
-            ("Generate Application", self.generate_application),
-            ("Open Graph Editor", self.open_graph_editor),
+            ("实时校验", self.validate_current_graph),
+            ("生成 application", self.generate_application),
+            ("打开蓝图编辑", self.open_graph_editor),
         ]:
             button = QPushButton(text)
             button.clicked.connect(callback)
@@ -181,7 +185,7 @@ class ProjectManagerWindow(QMainWindow):
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(edit)
-        button = QPushButton("Browse")
+        button = QPushButton("浏览")
         button.clicked.connect(callback)
         layout.addWidget(button)
         return widget
@@ -219,8 +223,33 @@ class ProjectManagerWindow(QMainWindow):
         self.project = default_project()
         self.load_project_to_form()
 
+    def project_wizard(self) -> None:
+        templates = {
+            "通用嵌入式应用": ("generic_embedded_app", "examples/graphs/generic_embedded_app.json", "application/generated_generic_embedded_app", "generic-mock"),
+            "循迹小车": ("line_tracking_car", "examples/graphs/line_tracking_car.json", "application/generated_line_tracking_car", "robot-line-tracking"),
+            "循迹 + 自定义代码": ("line_tracking_car_custom", "examples/graphs/line_tracking_car_with_custom_code.json", "application/generated_line_tracking_car_custom", "robot-line-tracking"),
+        }
+        choice, ok = QInputDialog.getItem(self, "项目创建向导", "选择项目模板", list(templates), 0, False)
+        if not ok or not choice:
+            return
+        name, graph_path, output_dir, board = templates[choice]
+        custom_name, ok = QInputDialog.getText(self, "项目创建向导", "项目名", text=name)
+        if ok and custom_name:
+            name = custom_name
+            output_dir = f"application/generated_{custom_name}"
+        self.project_path = None
+        self.project = {
+            "schema_version": PROJECT_SCHEMA_VERSION,
+            "name": name,
+            "graph_path": graph_path,
+            "output_dir": output_dir,
+            "board_profile": board,
+            "notes": "由项目创建向导生成。建议先打开蓝图编辑器检查卡片、Board Profile 和 Pin Planner，再生成 application/。",
+        }
+        self.load_project_to_form()
+
     def open_project(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Open EFW project", str(REPO_ROOT), f"EFW Project (*{PROJECT_SUFFIX});;JSON (*.json)")
+        path, _ = QFileDialog.getOpenFileName(self, "打开 EFW 项目", str(REPO_ROOT), f"EFW Project (*{PROJECT_SUFFIX});;JSON (*.json)")
         if path:
             self.load_project_file(Path(path))
 
@@ -230,7 +259,7 @@ class ProjectManagerWindow(QMainWindow):
     def load_project_file(self, path: Path) -> None:
         data = json.loads(path.read_text(encoding="utf-8"))
         if not isinstance(data, dict):
-            QMessageBox.warning(self, "Invalid project", "Project file must contain a JSON object.")
+            QMessageBox.warning(self, "项目无效", "项目文件必须是 JSON 对象。")
             return
         self.project_path = path
         merged = default_project()
@@ -249,19 +278,19 @@ class ProjectManagerWindow(QMainWindow):
 
     def save_project_as(self) -> None:
         default_name = f"{self.name_edit.text().strip() or 'efw_project'}{PROJECT_SUFFIX}"
-        path, _ = QFileDialog.getSaveFileName(self, "Save EFW project", str(REPO_ROOT / default_name), f"EFW Project (*{PROJECT_SUFFIX});;JSON (*.json)")
+        path, _ = QFileDialog.getSaveFileName(self, "保存 EFW 项目", str(REPO_ROOT / default_name), f"EFW Project (*{PROJECT_SUFFIX});;JSON (*.json)")
         if not path:
             return
         self.project_path = Path(path)
         self.save_project()
 
     def choose_graph_path(self) -> None:
-        path, _ = QFileDialog.getOpenFileName(self, "Select graph JSON", str(REPO_ROOT / "examples" / "graphs"), "JSON (*.json)")
+        path, _ = QFileDialog.getOpenFileName(self, "选择 Graph JSON", str(REPO_ROOT / "examples" / "graphs"), "JSON (*.json)")
         if path:
             self.graph_edit.setText(display_path(Path(path)))
 
     def choose_output_dir(self) -> None:
-        path = QFileDialog.getExistingDirectory(self, "Select output application directory", str(REPO_ROOT / "application"))
+        path = QFileDialog.getExistingDirectory(self, "选择输出 application 目录", str(REPO_ROOT / "application"))
         if path:
             self.output_edit.setText(display_path(Path(path)))
 
@@ -271,16 +300,27 @@ class ProjectManagerWindow(QMainWindow):
     def output_dir(self) -> Path:
         return rel_or_abs(self.output_edit.text().strip())
 
+    def project_graph(self) -> dict[str, Any]:
+        graph_path = self.graph_path()
+        graph = json.loads(graph_path.read_text(encoding="utf-8"))
+        if not isinstance(graph, dict):
+            raise ValueError("Graph JSON root must be an object")
+        board = graph.setdefault("board", {})
+        if not isinstance(board, dict):
+            raise ValueError("graph.board must be an object")
+        board["profile"] = self.project.get("board_profile", "generic-mock")
+        return graph
+
     def validate_current_graph(self) -> bool:
         self.apply_form_to_project()
         graph_path = self.graph_path()
-        graph = json.loads(graph_path.read_text(encoding="utf-8"))
         try:
+            graph = self.project_graph()
             validate_graph(graph)
         except Exception as exc:  # noqa: BLE001 - UI validation dialog should show exact validator message.
-            QMessageBox.warning(self, "Graph invalid", str(exc))
+            QMessageBox.warning(self, "Graph 无效", str(exc))
             return False
-        QMessageBox.information(self, "Graph valid", f"Graph is valid:\n{display_path(graph_path)}")
+        QMessageBox.information(self, "Graph 有效", f"Graph 校验通过：\n{display_path(graph_path)}")
         return True
 
     def generate_application(self) -> None:
@@ -288,11 +328,25 @@ class ProjectManagerWindow(QMainWindow):
         graph_path = self.graph_path()
         out_dir = self.output_dir()
         try:
-            generate(graph_path, out_dir, force=True)
+            graph = self.project_graph()
+            force = False
+            if out_dir.exists() and any(out_dir.iterdir()):
+                answer = QMessageBox.question(self, "覆盖确认", f"输出目录已存在且非空：\n{display_path(out_dir)}\n是否清空并重新生成？")
+                yes = QMessageBox.StandardButton.Yes if hasattr(QMessageBox, "StandardButton") else QMessageBox.Yes
+                if answer != yes:
+                    return
+                force = True
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
+                json.dump(graph, tmp, ensure_ascii=False, indent=2)
+                tmp_path = Path(tmp.name)
+            try:
+                generate(tmp_path, out_dir, force=force)
+            finally:
+                tmp_path.unlink(missing_ok=True)
         except Exception as exc:  # noqa: BLE001 - UI generation dialog should show exact generator message.
-            QMessageBox.warning(self, "Generate failed", str(exc))
+            QMessageBox.warning(self, "生成失败", str(exc))
             return
-        QMessageBox.information(self, "Generated", f"Generated application:\n{display_path(out_dir)}")
+        QMessageBox.information(self, "已生成", f"已生成 application:\n{display_path(out_dir)}")
 
     def open_graph_editor(self) -> None:
         graph_path = self.graph_path()
@@ -308,7 +362,7 @@ class ProjectManagerWindow(QMainWindow):
 
 def main() -> int:
     if QApplication is None:
-        print("PyQt is not installed. Install PyQt6 or PyQt5, then run tools/efw_project_manager.py.", file=sys.stderr)
+        print("未安装 PyQt。请安装 PyQt6 或 PyQt5 后再运行 tools/efw_project_manager.py。", file=sys.stderr)
         return 1
     app = QApplication(sys.argv)
     window = ProjectManagerWindow()

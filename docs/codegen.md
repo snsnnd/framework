@@ -203,3 +203,29 @@ efw_status_t app_line_custom_pid_run(void *ctx, const void *in, void *out);
 3. 自定义 sensor/algorithm/module/task 的真实逻辑放在 `custom_files`，板级 glue 放在 `board_adapters`。
 
 生成器会拒绝 `custom_files` / `board_adapters` 覆盖 `app_bootstrap.c`、`app_platform.c` 等核心生成文件，也会拒绝绝对路径、`..`、重复文件路径、缺失回调、不匹配签名和常见生成符号冲突。
+
+## 可视化工作台近期增强
+
+最新版本把项目管理器作为中文入口，建议优先运行：
+
+```bash
+python3 tools/efw_project_manager.py
+```
+
+它提供：
+
+- **项目创建向导**：从通用嵌入式应用、循迹小车、循迹 + 自定义代码等模板创建 `.efw_project.json`。
+- **统一项目入口**：项目名、Graph JSON、输出目录、Board Profile、notes、Validate、Generate 和蓝图编辑入口集中在一个窗口里，`tools/efw_visual_editor.py` 保留为高级直接编辑入口。
+- **覆盖保护**：项目管理器和蓝图编辑器生成 application 时，如果输出目录已经存在且非空，会先弹出覆盖确认，不再无条件 `force=True`。
+- **Board Profile 注入**：项目的 `board_profile` 会写入临时 Graph 的 `board.profile` 后再生成；蓝图编辑器的 Board Profile / Pin Planner 会把配置写回 `graph.board.profile` 和 `graph.board.pin_plan`。
+
+蓝图编辑器也从“JSON 编辑器”增强为更接近蓝图的工作流：
+
+- **属性表单**：选中卡片后优先显示键值表单；高级用户仍可切到原始 JSON 编辑复杂字段。
+- **端口连线**：卡片左右两侧显示输入/输出端口，可从输出端口拖线到输入端口；不兼容方向或类型的连接会高亮提示。
+- **实时校验面板**：保存/刷新时运行 `validate_graph()` 并显示错误或生成摘要，减少手动运行 CLI 的次数。
+- **代码生成映射视图**：展示每个节点、flow、task 会映射到哪些生成文件，方便排查“卡片为什么生成了这些 C 代码”。
+- **自动布局**：将节点按类型粗略分列排列，适合导入 JSON 后快速整理画布。
+- **模板库 / 组件市场感**：左侧面板以中文类型名展示 HAL、Sensor、Actuator、Algorithm、Module、Task 和自定义卡片模板，后续可以继续扩展成插件式市场。
+
+> Code 面板目前仍是普通文本编辑器，适合先承载自定义算法、BSP glue 和临时代码。后续可以再增强为带语法高亮、符号索引和 LSP 的代码区。

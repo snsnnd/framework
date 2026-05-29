@@ -201,6 +201,21 @@ def validate_graph(graph):
     tick_ms = int(project.get("tick_ms", 1))
     require(tick_ms > 0, "project.tick_ms must be > 0")
 
+    board = graph.get("board", {})
+    require(isinstance(board, dict), "board must be an object when present")
+    if "profile" in board:
+        require(isinstance(board.get("profile"), str), "board.profile must be a string")
+    pin_plan = board.get("pin_plan", [])
+    require(isinstance(pin_plan, list), "board.pin_plan must be an array when present")
+    seen_board_pins = set()
+    for index, pin in enumerate(pin_plan):
+        require(isinstance(pin, dict), f"board.pin_plan[{index}] must be an object")
+        require(isinstance(pin.get("node"), str) and pin.get("node"), f"board.pin_plan[{index}].node must be a non-empty string")
+        require(isinstance(pin.get("usage", ""), str), f"board.pin_plan[{index}].usage must be a string")
+        key = (pin.get("node"), pin.get("usage"), str(pin.get("port", "")), str(pin.get("pin", "")), str(pin.get("channel", "")))
+        require(key not in seen_board_pins, f"duplicate board pin plan entry: {key}")
+        seen_board_pins.add(key)
+
     raw_nodes = graph.get("nodes")
     raw_flows = graph.get("flows", [])
     raw_tasks = graph.get("tasks", [])
@@ -292,6 +307,7 @@ def validate_graph(graph):
     custom_files, board_adapters = validate_custom_files(graph)
     ctx = {
         "project": project,
+        "board": board,
         "nodes": raw_nodes,
         "nodes_by_id": nodes_by_id,
         "flows": flows,
@@ -322,6 +338,8 @@ def write_file(out_dir: Path, name: str, content: str) -> None:
 def render_board_config(ctx):
     line_inputs = nodes_of(ctx, "hal.gpio_line_input")
     motors = nodes_of(ctx, "actuator.motor")
+    board = ctx.get("board", {})
+    board_profile = board.get("profile") or ctx["project"].get("board_profile") or "generic-mock"
     lines = ["""
 /**
  * @file    app_board_config.h
@@ -347,6 +365,15 @@ typedef struct {
 #define APP_GPIO_PORT_B 1u
 #define APP_GPIO_PORT_C 2u
 """]
+    lines.append(f"#define APP_BOARD_PROFILE {c_str(board_profile)}\n")
+    for entry in board.get("pin_plan", []):
+        macro = macro_ident(f"{entry.get('node', 'node')}_{entry.get('usage', 'pin')}")
+        if entry.get("timer") not in (None, "") or entry.get("channel") not in (None, ""):
+            lines.append(f"#define APP_PINPLAN_{macro}_TIMER {int(entry.get('timer', 0) or 0)}u\n")
+            lines.append(f"#define APP_PINPLAN_{macro}_CHANNEL {int(entry.get('channel', 0) or 0)}u\n")
+        if entry.get("port") not in (None, "") and entry.get("pin") not in (None, ""):
+            lines.append(f"#define APP_PINPLAN_{macro}_PORT {c_str(str(entry.get('port')).upper())}\n")
+            lines.append(f"#define APP_PINPLAN_{macro}_PIN {int(entry.get('pin', 0) or 0)}u\n")
     for node in line_inputs:
         macro = macro_ident(node["id"])
         pins = ",\n    ".join(pin_expr(pin) for pin in node["pins"])

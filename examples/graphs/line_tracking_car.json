@@ -9,11 +9,26 @@
       "type": "hal.gpio_line_input",
       "channels": 5,
       "pins": [
-        { "port": "A", "pin": 0 },
-        { "port": "A", "pin": 1 },
-        { "port": "A", "pin": 2 },
-        { "port": "A", "pin": 3 },
-        { "port": "A", "pin": 4 }
+        {
+          "port": "A",
+          "pin": 0
+        },
+        {
+          "port": "A",
+          "pin": 1
+        },
+        {
+          "port": "A",
+          "pin": 2
+        },
+        {
+          "port": "A",
+          "pin": 3
+        },
+        {
+          "port": "A",
+          "pin": 4
+        }
       ]
     },
     {
@@ -24,14 +39,26 @@
     {
       "id": "left_motor",
       "type": "actuator.motor",
-      "pwm": { "timer": 1, "channel": 1 },
-      "dir_pin": { "port": "B", "pin": 0 }
+      "pwm": {
+        "timer": 1,
+        "channel": 1
+      },
+      "dir_pin": {
+        "port": "B",
+        "pin": 0
+      }
     },
     {
       "id": "right_motor",
       "type": "actuator.motor",
-      "pwm": { "timer": 1, "channel": 2 },
-      "dir_pin": { "port": "B", "pin": 1 }
+      "pwm": {
+        "timer": 1,
+        "channel": 2
+      },
+      "dir_pin": {
+        "port": "B",
+        "pin": 1
+      }
     },
     {
       "id": "line_pid",
@@ -55,7 +82,13 @@
       "pid": "line_pid",
       "left_motor": "left_motor",
       "right_motor": "right_motor",
-      "weights": [-2.0, -1.0, 0.0, 1.0, 2.0],
+      "weights": [
+        -2.0,
+        -1.0,
+        0.0,
+        1.0,
+        2.0
+      ],
       "base_speed": 65.0,
       "min_speed": 0.0,
       "max_speed": 100.0,
@@ -63,5 +96,9 @@
       "active_value": 1,
       "binary_mode": true
     }
-  ]
+  ],
+  "board": {
+    "profile": "robot-line-tracking",
+    "pin_plan": []
+  }
 }
