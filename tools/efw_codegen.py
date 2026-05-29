@@ -20,6 +20,20 @@ SUPPORTED_NODE_TYPES = {
     "sensor.line_tracking",
     "actuator.motor",
     "algorithm.pid",
+    "custom.code",
+}
+
+GENERATED_FILES = {
+    "app_board_config.h",
+    "app_manifest.h",
+    "app_components.h",
+    "app_components.c",
+    "app_platform.h",
+    "app_platform.c",
+    "app_bootstrap.h",
+    "app_bootstrap.c",
+    "main.c",
+    "CMakeLists.generated.txt",
 }
 SUPPORTED_FLOW_TYPES = {"control.line_follower"}
 
@@ -65,6 +79,31 @@ def get_single(nodes_by_id, node_type):
     matches = [node for node in nodes_by_id.values() if node.get("type") == node_type]
     require(len(matches) == 1, f"expected exactly one {node_type} node, got {len(matches)}")
     return matches[0]
+
+
+def validate_custom_files(graph):
+    custom_files = graph.get("custom_files", [])
+    require(isinstance(custom_files, list), "custom_files must be an array when present")
+
+    result = []
+    seen = set()
+    for item in custom_files:
+        require(isinstance(item, dict), "each custom_files item must be an object")
+        rel_path = item.get("path")
+        content = item.get("content", "")
+        require(isinstance(rel_path, str) and rel_path, "custom file path must be a non-empty string")
+        require(isinstance(content, str), f"custom file content must be a string: {rel_path}")
+
+        path = Path(rel_path)
+        require(not path.is_absolute(), f"custom file path must be relative: {rel_path}")
+        require(".." not in path.parts, f"custom file path must not contain '..': {rel_path}")
+        normalized = path.as_posix()
+        require(normalized not in GENERATED_FILES, f"custom file must not overwrite generated file: {normalized}")
+        require(normalized not in seen, f"duplicate custom file path: {normalized}")
+        seen.add(normalized)
+        result.append({"path": normalized, "content": content})
+
+    return result
 
 
 def validate_graph(graph):
@@ -116,6 +155,7 @@ def validate_graph(graph):
         "right_motor": right_motor,
         "flow": flow,
         "channels": channels,
+        "custom_files": validate_custom_files(graph),
     }
 
 
@@ -569,6 +609,8 @@ int main(void) {{
 
 def render_cmake(ctx):
     target = c_ident(ctx["project"].get("name", "generated_line_tracking_car"))
+    custom_c_files = [item["path"] for item in ctx["custom_files"] if item["path"].endswith(".c")]
+    custom_sources = "".join(f"    {path}\n" for path in custom_c_files)
     return f"""
 # Optional generated-app CMake snippet.
 # From the repository root, this app is already buildable by compiling the four
@@ -578,7 +620,7 @@ add_executable(efw_app_{target}
     app_bootstrap.c
     app_components.c
     app_platform.c
-)
+{custom_sources})
 target_include_directories(efw_app_{target} PRIVATE ${{CMAKE_CURRENT_LIST_DIR}})
 target_link_libraries(efw_app_{target} PRIVATE efw)
 """
@@ -601,6 +643,10 @@ def generate(graph_path: Path, out_dir: Path, force: bool) -> None:
     write_file(out_dir, "app_bootstrap.h", render_bootstrap_h())
     write_file(out_dir, "app_bootstrap.c", render_bootstrap_c(ctx))
     write_file(out_dir, "main.c", render_main_c(ctx))
+
+    for item in ctx["custom_files"]:
+        write_file(out_dir, item["path"], item["content"])
+
     write_file(out_dir, "CMakeLists.generated.txt", render_cmake(ctx))
 
 

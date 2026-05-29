@@ -87,7 +87,7 @@ python3 tools/efw_codegen.py examples/graphs/line_tracking_car.json \
   --force
 ```
 
-生成代码仍然只依赖 EFW 的 application runtime 和 bind/update 句柄模式；真实项目中主要修改生成的 `app_platform.c`，把 mock 读写替换为 STM32 HAL、ESP-IDF、MSPM0 DriverLib 或自有 BSP 调用。更多说明见 `docs/codegen.md`。
+生成代码仍然只依赖 EFW 的 application runtime 和 bind/update 句柄模式；真实项目中主要修改生成的 `app_platform.c`，把 mock 读写替换为 STM32 HAL、ESP-IDF、MSPM0 DriverLib 或自有 BSP 调用。第二阶段增加 PyQt 编辑器：`python3 tools/efw_visual_editor.py`，可拖动卡片、编辑节点 JSON，并在 Code 区写自定义 `.c/.h` 文件，与可视化卡片一起生成 application。更多说明见 `docs/codegen.md`。
 
 ## CMake 构建
 CMake 只用于主机侧编译验证或支持 CMake 的工程，不是裸机接入必需项。
