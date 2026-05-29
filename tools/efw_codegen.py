@@ -17,9 +17,11 @@ from pathlib import Path
 
 SUPPORTED_NODE_TYPES = {
     "hal.gpio_line_input",
+    "hal.custom",
     "sensor.line_tracking",
     "sensor.custom",
     "actuator.motor",
+    "actuator.custom",
     "algorithm.pid",
     "algorithm.custom",
     "module.custom",
@@ -138,12 +140,16 @@ def validate_graph(graph):
             require(channels > 0, f"{node['id']}.channels must be > 0")
             require(channels <= 8, f"{node['id']}.channels must be <= EFW_LINE_TRACKING_MAX_CHANNELS default 8")
             require(len(node.get("pins", [])) == channels, f"{node['id']}.pins length must equal channels")
+        elif node_type_name == "hal.custom":
+            require(node.get("init") or node.get("read") or node.get("write") or node.get("ioctl"), f"{node['id']} needs at least one HAL callback")
         elif node_type_name == "sensor.line_tracking":
             require(node.get("input") in nodes_by_id, f"{node['id']}.input must reference a HAL node")
             require(node_type(nodes_by_id, node.get("input")) == "hal.gpio_line_input", f"{node['id']}.input must be hal.gpio_line_input")
         elif node_type_name == "actuator.motor":
             require(isinstance(node.get("pwm"), dict), f"{node['id']}.pwm must be an object")
             require(isinstance(node.get("dir_pin"), dict), f"{node['id']}.dir_pin must be an object")
+        elif node_type_name == "actuator.custom":
+            require(node.get("write"), f"{node['id']}.write must name a custom write callback")
         elif node_type_name == "sensor.custom":
             require(node.get("read"), f"{node['id']}.read must name a custom read callback")
         elif node_type_name == "algorithm.custom":
@@ -256,18 +262,18 @@ def render_manifest(ctx):
 
 #include "app_board_config.h"
 
-#define APP_USE_HAL                 {c_bool(len(nodes_of(ctx, 'hal.gpio_line_input')))}
+#define APP_USE_HAL                 {c_bool(len(nodes_of(ctx, 'hal.gpio_line_input') + nodes_of(ctx, 'hal.custom')))}
 #define APP_USE_SENSOR              {c_bool(len(nodes_of(ctx, 'sensor.line_tracking') + nodes_of(ctx, 'sensor.custom')))}
 #define APP_USE_LINE_TRACKING       {c_bool(len(nodes_of(ctx, 'sensor.line_tracking')))}
-#define APP_USE_ACTUATOR            {c_bool(len(nodes_of(ctx, 'actuator.motor')))}
-#define APP_USE_MOTOR               {c_bool(len(nodes_of(ctx, 'actuator.motor')))}
+#define APP_USE_ACTUATOR            {c_bool(len(nodes_of(ctx, 'actuator.motor') + nodes_of(ctx, 'actuator.custom')))}
+#define APP_USE_MOTOR               {c_bool(len(nodes_of(ctx, 'actuator.motor') + nodes_of(ctx, 'actuator.custom')))}
 #define APP_USE_ALGORITHM           {c_bool(len(nodes_of(ctx, 'algorithm.pid') + nodes_of(ctx, 'algorithm.custom')))}
 #define APP_USE_PID                 {c_bool(len(nodes_of(ctx, 'algorithm.pid')))}
 #define APP_USE_MODULE              {c_bool(len(nodes_of(ctx, 'module.custom')))}
 
-#define APP_HAL_COUNT               {len(nodes_of(ctx, 'hal.gpio_line_input'))}
+#define APP_HAL_COUNT               {len(nodes_of(ctx, 'hal.gpio_line_input') + nodes_of(ctx, 'hal.custom'))}
 #define APP_SENSOR_COUNT            {len(nodes_of(ctx, 'sensor.line_tracking') + nodes_of(ctx, 'sensor.custom'))}
-#define APP_ACTUATOR_COUNT          {len(nodes_of(ctx, 'actuator.motor'))}
+#define APP_ACTUATOR_COUNT          {len(nodes_of(ctx, 'actuator.motor') + nodes_of(ctx, 'actuator.custom'))}
 #define APP_ALGO_COUNT              {len(nodes_of(ctx, 'algorithm.pid') + nodes_of(ctx, 'algorithm.custom'))}
 #define APP_MODULE_COUNT            {len(nodes_of(ctx, 'module.custom'))}
 
@@ -390,6 +396,31 @@ void app_platform_set_line_state(const char *input_name, const uint16_t *values,
 """
 
 
+def hal_type_expr(node):
+    mapping = {
+        "gpio": "EFW_HAL_GPIO",
+        "i2c": "EFW_HAL_I2C",
+        "spi": "EFW_HAL_SPI",
+        "uart": "EFW_HAL_UART",
+        "timer": "EFW_HAL_TIMER",
+        "pwm": "EFW_HAL_PWM",
+        "adc": "EFW_HAL_ADC",
+        "custom": "EFW_HAL_CUSTOM",
+    }
+    return mapping.get(str(node.get("hal_type", "custom")), str(node.get("hal_type", "EFW_HAL_CUSTOM")))
+
+
+def actuator_type_expr(node):
+    mapping = {
+        "motor": "EFW_ACTUATOR_MOTOR",
+        "servo": "EFW_ACTUATOR_SERVO",
+        "relay": "EFW_ACTUATOR_RELAY",
+        "led": "EFW_ACTUATOR_LED",
+        "custom": "EFW_ACTUATOR_CUSTOM",
+    }
+    return mapping.get(str(node.get("actuator_type", "custom")), str(node.get("actuator_type", "EFW_ACTUATOR_CUSTOM")))
+
+
 def sensor_type_expr(node):
     mapping = {
         "line_tracking": "EFW_SENSOR_LINE_TRACKING",
@@ -403,9 +434,11 @@ def sensor_type_expr(node):
 
 def render_platform_c(ctx):
     line_inputs = nodes_of(ctx, "hal.gpio_line_input")
+    custom_hals = nodes_of(ctx, "hal.custom")
     line_sensors = nodes_of(ctx, "sensor.line_tracking")
     custom_sensors = nodes_of(ctx, "sensor.custom")
     motors = nodes_of(ctx, "actuator.motor")
+    custom_actuators = nodes_of(ctx, "actuator.custom")
     parts = ["""
 /**
  * @file    app_platform.c
@@ -419,18 +452,13 @@ def render_platform_c(ctx):
 #define EFW_NULL_NAME 0
 #endif
 
-typedef struct {
+"""]
+    if line_inputs:
+        parts.append("""typedef struct {
     uint16_t channel[EFW_LINE_TRACKING_MAX_CHANNELS];
     uint8_t channel_count;
     const app_gpio_pin_t *pins;
 } app_line_input_ctx_t;
-
-typedef struct {
-    app_pwm_channel_t pwm;
-    app_gpio_pin_t dir_pin;
-    float last_speed;
-    float last_direction;
-} app_motor_ctx_t;
 
 static uint8_t app_name_eq(const char *a, const char *b) {
     if (!a || !b) return 0u;
@@ -454,9 +482,20 @@ static efw_status_t line_input_read(void *ctx, void *buf, uint16_t len, uint16_t
     return EFW_OK;
 }
 
-static efw_status_t line_sensor_read(void *ctx, void *out) {
+""")
+    if line_sensors:
+        parts.append("""static efw_status_t line_sensor_read(void *ctx, void *out) {
     return efw_hal_read((const char *)ctx, out, sizeof(efw_line_tracking_data_t), 0);
 }
+
+""")
+    if motors:
+        parts.append("""typedef struct {
+    app_pwm_channel_t pwm;
+    app_gpio_pin_t dir_pin;
+    float last_speed;
+    float last_direction;
+} app_motor_ctx_t;
 
 static efw_status_t motor_write(void *ctx, const void *cmd) {
     app_motor_ctx_t *motor = (app_motor_ctx_t *)ctx;
@@ -468,7 +507,19 @@ static efw_status_t motor_write(void *ctx, const void *cmd) {
     return EFW_OK;
 }
 
-"""]
+""")
+    for node in custom_hals:
+        for cb, sig in [("init", "void *ctx"), ("read", "void *ctx, void *buf, uint16_t len, uint16_t *actual"), ("write", "void *ctx, const void *buf, uint16_t len, uint16_t *actual"), ("ioctl", "void *ctx, uint32_t cmd, void *arg")]:
+            if node.get(cb):
+                parts.append(f"extern efw_status_t {c_ident(node[cb])}({sig});\n")
+    for node in custom_actuators:
+        parts.append(f"extern efw_status_t {c_ident(node['write'])}(void *ctx, const void *cmd);\n")
+        if node.get("init"):
+            parts.append(f"extern efw_status_t {c_ident(node['init'])}(void *ctx);\n")
+        if node.get("enable"):
+            parts.append(f"extern efw_status_t {c_ident(node['enable'])}(void *ctx);\n")
+        if node.get("disable"):
+            parts.append(f"extern efw_status_t {c_ident(node['disable'])}(void *ctx);\n")
     for node in custom_sensors:
         parts.append(f"extern efw_status_t {c_ident(node['read'])}(void *ctx, void *out);\n")
         if node.get("init"):
@@ -487,6 +538,20 @@ static efw_hal_ops_t g_{ident}_hal = {{
     .bus_id = {int(node.get('bus_id', 0))},
     .ctx = &g_{ident}_ctx,
     .read = line_input_read,
+}};
+
+""")
+    for node in custom_hals:
+        ident = c_ident(node["id"])
+        parts.append(f"""static efw_hal_ops_t g_{ident}_hal = {{
+    .name = {c_str(node['id'])},
+    .type = {hal_type_expr(node)},
+    .bus_id = {int(node.get('bus_id', 0))},
+    .ctx = {node.get('ctx', '0')},
+    .init = {c_ident(node['init']) if node.get('init') else '0'},
+    .read = {c_ident(node['read']) if node.get('read') else '0'},
+    .write = {c_ident(node['write']) if node.get('write') else '0'},
+    .ioctl = {c_ident(node['ioctl']) if node.get('ioctl') else '0'},
 }};
 
 """)
@@ -533,13 +598,28 @@ static efw_actuator_ops_t g_{ident}_motor = {{
 }};
 
 """)
+    for node in custom_actuators:
+        ident = c_ident(node["id"])
+        parts.append(f"""static efw_actuator_ops_t g_{ident}_actuator = {{
+    .name = {c_str(node['id'])},
+    .type = {actuator_type_expr(node)},
+    .ctx = {node.get('ctx', '0')},
+    .init = {c_ident(node['init']) if node.get('init') else '0'},
+    .enable = {c_ident(node['enable']) if node.get('enable') else '0'},
+    .disable = {c_ident(node['disable']) if node.get('disable') else '0'},
+    .write = {c_ident(node['write'])},
+}};
+
+""")
     parts.append("efw_status_t app_platform_register(void) {\n    efw_status_t s;\n")
-    for node in line_inputs:
+    for node in line_inputs + custom_hals:
         parts.append(f"    s = efw_hal_register(&g_{c_ident(node['id'])}_hal);\n    if (s != EFW_OK) return s;\n")
     for node in line_sensors + custom_sensors:
         parts.append(f"    s = efw_sensor_register(&g_{c_ident(node['id'])}_sensor);\n    if (s != EFW_OK) return s;\n")
     for node in motors:
         parts.append(f"    s = efw_actuator_register(&g_{c_ident(node['id'])}_motor);\n    if (s != EFW_OK) return s;\n")
+    for node in custom_actuators:
+        parts.append(f"    s = efw_actuator_register(&g_{c_ident(node['id'])}_actuator);\n    if (s != EFW_OK) return s;\n")
     parts.append("    return EFW_OK;\n}\n\n")
     parts.append("void app_platform_set_line_state(const char *input_name, const uint16_t *values, uint8_t count) {\n    if (!input_name || !values) return;\n")
     for node in line_inputs:

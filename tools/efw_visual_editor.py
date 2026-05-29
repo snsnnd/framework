@@ -99,6 +99,15 @@ NODE_TEMPLATES: dict[str, dict[str, Any]] = {
             {"port": "A", "pin": 4},
         ],
     },
+    "hal.custom": {
+        "id": "uart_debug",
+        "type": "hal.custom",
+        "hal_type": "uart",
+        "bus_id": 1,
+        "ctx": "0",
+        "init": "app_uart_debug_init",
+        "write": "app_uart_debug_write",
+    },
     "sensor.line_tracking": {
         "id": "line_sensor_5ch",
         "type": "sensor.line_tracking",
@@ -109,6 +118,13 @@ NODE_TEMPLATES: dict[str, dict[str, Any]] = {
         "type": "actuator.motor",
         "pwm": {"timer": 1, "channel": 1},
         "dir_pin": {"port": "B", "pin": 0},
+    },
+    "actuator.custom": {
+        "id": "status_led",
+        "type": "actuator.custom",
+        "actuator_type": "led",
+        "ctx": "0",
+        "write": "app_status_led_write",
     },
     "algorithm.pid": {
         "id": "line_pid",
@@ -202,9 +218,31 @@ efw_status_t app_custom_algo_run(void *ctx, const void *in, void *out) {
     return EFW_OK;
 }
 
-efw_status_t app_custom_sensor_read(void *ctx, void *out) {
+efw_status_t app_uart_debug_init(void *ctx) {
     EFW_UNUSED(ctx);
-    EFW_UNUSED(out);
+    return EFW_OK;
+}
+
+efw_status_t app_uart_debug_write(void *ctx, const void *buf, uint16_t len, uint16_t *actual) {
+    EFW_UNUSED(ctx);
+    EFW_UNUSED(buf);
+    if (actual) *actual = len;
+    return EFW_OK;
+}
+
+efw_status_t app_battery_sensor_read(void *ctx, void *out) {
+    EFW_UNUSED(ctx);
+    if (out) *(float *)out = 7.4f;
+    return EFW_OK;
+}
+
+efw_status_t app_custom_sensor_read(void *ctx, void *out) {
+    return app_battery_sensor_read(ctx, out);
+}
+
+efw_status_t app_status_led_write(void *ctx, const void *cmd) {
+    EFW_UNUSED(ctx);
+    EFW_UNUSED(cmd);
     return EFW_OK;
 }
 
@@ -219,6 +257,14 @@ efw_status_t app_custom_module_poll(void *ctx) {
 }
 
 efw_status_t app_custom_task_10ms(void) {
+    return EFW_OK;
+}
+
+efw_status_t app_heartbeat_100ms(void) {
+    return EFW_OK;
+}
+
+efw_status_t app_battery_sample_20ms(void) {
     return EFW_OK;
 }
 """
@@ -287,25 +333,28 @@ class VisualEditorWindow(QMainWindow):
 
     def default_graph(self) -> dict[str, Any]:
         return {
-            "project": {"name": "generated_line_tracking_car", "tick_ms": 1},
+            "project": {"name": "generated_generic_embedded_app", "tick_ms": 1},
             "nodes": [
-                copy.deepcopy(NODE_TEMPLATES["hal.gpio_line_input"]),
-                copy.deepcopy(NODE_TEMPLATES["sensor.line_tracking"]),
-                {**copy.deepcopy(NODE_TEMPLATES["actuator.motor"]), "id": "left_motor"},
-                {**copy.deepcopy(NODE_TEMPLATES["actuator.motor"]), "id": "right_motor", "pwm": {"timer": 1, "channel": 2}, "dir_pin": {"port": "B", "pin": 1}},
-                copy.deepcopy(NODE_TEMPLATES["algorithm.pid"]),
+                copy.deepcopy(NODE_TEMPLATES["hal.custom"]),
+                {**copy.deepcopy(NODE_TEMPLATES["sensor.custom"]), "id": "battery_sensor", "hal_name": "uart_debug", "read": "app_battery_sensor_read"},
+                copy.deepcopy(NODE_TEMPLATES["actuator.custom"]),
+                {**copy.deepcopy(NODE_TEMPLATES["module.custom"]), "id": "health_service", "module_type": "EFW_MODULE_SERVICE"},
+                {**copy.deepcopy(NODE_TEMPLATES["task.periodic"]), "id": "heartbeat_100ms", "period_ms": 100, "call": "app_heartbeat_100ms"},
             ],
-            "flows": [copy.deepcopy(DEFAULT_FLOW)],
+            "flows": [],
+            "tasks": [
+                {"id": "battery_sample_20ms", "type": "task.periodic", "period_ms": 20, "call": "app_battery_sample_20ms"},
+            ],
             "custom_files": [
                 {"path": "app_custom.c", "content": DEFAULT_CUSTOM_C},
             ],
             "ui": {
                 "positions": {
-                    "line_input": [20, 80],
-                    "line_sensor_5ch": [240, 80],
-                    "line_pid": [240, 210],
-                    "left_motor": [500, 40],
-                    "right_motor": [500, 170],
+                    "uart_debug": [20, 80],
+                    "battery_sensor": [250, 60],
+                    "status_led": [250, 180],
+                    "health_service": [500, 80],
+                    "heartbeat_100ms": [500, 200],
                 }
             },
         }

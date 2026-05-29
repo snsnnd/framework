@@ -79,11 +79,11 @@ STATE：src/state/state_machine_registry.c
 如果裁剪某个功能，需要在 Keil 的 `C/C++ > Define` 中同步关闭对应宏，例如 `EFW_ENABLE_COMM=0`。使用 `src/efw_all.c` 时，关闭的模块不会被包含进编译单元。
 
 ## 代码生成器第一阶段
-可视化蓝图系统的第一步已经落到 CLI：`tools/efw_codegen.py` 可读取图描述 JSON，并生成可复制到真实项目的 `application/` 目录。当前支持 GPIO 循迹输入、循迹传感器、PID、左右电机、多个 LineFollower flow、周期任务以及自定义 sensor/algorithm/module 卡片。
+可视化蓝图系统的第一步已经落到 CLI：`tools/efw_codegen.py` 可读取图描述 JSON，并生成可复制到真实项目的 `application/` 目录。当前定位为通用嵌入式 application 生成工具：支持自定义 HAL/SENSOR/ACTUATOR/ALGORITHM/MODULE/TASK 卡片，也保留循迹车 LineFollower 作为一个内置示例 flow。
 
 ```bash
-python3 tools/efw_codegen.py examples/graphs/line_tracking_car.json \
-  -o application/generated_line_tracking_car \
+python3 tools/efw_codegen.py examples/graphs/generic_embedded_app.json \
+  -o application/generated_generic_embedded_app \
   --force
 ```
 

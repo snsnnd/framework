@@ -20,7 +20,15 @@ python3 tools/efw_codegen.py examples/graphs/line_tracking_car.json \
   --force
 ```
 
-带自定义算法、模块和周期任务的示例：
+通用嵌入式应用示例（没有循迹车依赖，只包含自定义 HAL/SENSOR/ACTUATOR/MODULE/TASK）：
+
+```bash
+python3 tools/efw_codegen.py examples/graphs/generic_embedded_app.json \
+  -o application/generated_generic_embedded_app \
+  --force
+```
+
+带自定义算法、模块和周期任务的循迹示例：
 
 ```bash
 python3 tools/efw_codegen.py examples/graphs/line_tracking_car_with_custom_code.json \
@@ -58,7 +66,7 @@ python3 tools/efw_visual_editor.py
 
 ## Graph JSON 结构
 
-示例文件在 `examples/graphs/line_tracking_car.json` 和 `examples/graphs/line_tracking_car_with_custom_code.json`。顶层包含：
+示例文件在 `examples/graphs/generic_embedded_app.json`、`examples/graphs/line_tracking_car.json` 和 `examples/graphs/line_tracking_car_with_custom_code.json`。顶层包含：
 
 - `project`：项目名和周期等元数据。
 - `nodes`：蓝图节点列表。
@@ -71,9 +79,11 @@ python3 tools/efw_visual_editor.py
 | 类型 | 作用 |
 | ---- | ---- |
 | `hal.gpio_line_input` | 多路 GPIO/比较器循迹输入 |
+| `hal.custom` | 通用 HAL 外设卡片，init/read/write/ioctl 回调由 `custom_files` 实现 |
 | `sensor.line_tracking` | 绑定到输入 HAL 的循迹传感器 |
 | `sensor.custom` | 自定义传感器，read/init 回调由 `custom_files` 实现 |
 | `actuator.motor` | 电机执行器 |
+| `actuator.custom` | 自定义执行器，write/init/enable/disable 回调由 `custom_files` 实现 |
 | `algorithm.pid` | 内置 PID 控制器 |
 | `algorithm.custom` | 自定义算法，run 回调由 `custom_files` 实现并注册为 `efw_algo_ops_t` |
 | `module.custom` | 自定义模块，init/start/stop/poll 回调由 `custom_files` 实现并注册为 `efw_module_ops_t` |
@@ -145,7 +155,7 @@ python3 tools/efw_visual_editor.py
 
 ## 生成代码的边界
 
-生成器只生成 application 层，不修改 EFW 核心库。真实板卡移植时通常保留生成的注册结构，然后修改 `app_platform.c` 中的 mock 读写：
+生成器只生成 application 层，不修改 EFW 核心库。它既可以生成循迹车，也可以生成普通嵌入式项目（例如 UART 调试、传感器采样、LED/继电器执行器、后台服务和周期任务）。真实板卡移植时通常保留生成的注册结构，然后修改 `app_platform.c` 中的 mock 读写：
 
 1. `line_input_read()`：把 mock 数组读取替换为 GPIO/ADC/DMA 数据读取。
 2. `motor_write()`：把速度和方向写入替换为 PWM 占空比和 GPIO 方向控制。
