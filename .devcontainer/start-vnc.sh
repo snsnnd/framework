@@ -2,49 +2,115 @@
 set -euo pipefail
 
 export DISPLAY="${DISPLAY:-:1}"
-export VNC_GEOMETRY="${VNC_GEOMETRY:-1440x900}"
+export VNC_GEOMETRY="${VNC_GEOMETRY:-1920x1260}"
 export VNC_DEPTH="${VNC_DEPTH:-24}"
-export VNC_PASSWORD="${VNC_PASSWORD:-codespaces}"
+export VNC_PASSWORD="${VNC_PASSWORD:-123456}"
 export VNC_PORT="${VNC_PORT:-5901}"
 export NOVNC_PORT="${NOVNC_PORT:-6080}"
+
+# 可选：xterm 或 xfce
+# 目前建议先用 xterm，因为你已经验证成功
+export VNC_SESSION="${VNC_SESSION:-xterm}"
+
+need_cmd() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "[FAIL] missing command: $1"
+    echo "Please install it or rebuild the container."
+    exit 1
+  }
+}
+
+need_cmd vncserver
+need_cmd vncpasswd
+need_cmd websockify
+
+if [ "$VNC_SESSION" = "xterm" ]; then
+  need_cmd xterm
+fi
+
+if [ "$VNC_SESSION" = "xfce" ]; then
+  need_cmd xfce4-session
+  need_cmd dbus-launch
+fi
 
 mkdir -p "$HOME/.vnc"
 chmod 700 "$HOME/.vnc"
 
-# TigerVNC supports a non-interactive password mode via `vncpasswd -f`.
-# Regenerate the password on each container start so changing VNC_PASSWORD takes effect.
+# 设置 VNC 密码
 printf '%s\n' "$VNC_PASSWORD" | vncpasswd -f > "$HOME/.vnc/passwd"
 chmod 600 "$HOME/.vnc/passwd"
 
-cat > "$HOME/.vnc/xstartup" <<'EOF'
+# 生成 xstartup
+if [ "$VNC_SESSION" = "xfce" ]; then
+  cat > "$HOME/.vnc/xstartup" <<'EOF'
 #!/usr/bin/env bash
 unset SESSION_MANAGER
 unset DBUS_SESSION_BUS_ADDRESS
+
+export XDG_SESSION_TYPE=x11
+export XDG_CURRENT_DESKTOP=XFCE
+export DESKTOP_SESSION=xfce
+
 xrdb "$HOME/.Xresources" 2>/dev/null || true
-startxfce4 &
+
+exec dbus-launch --exit-with-session xfce4-session
 EOF
+else
+  cat > "$HOME/.vnc/xstartup" <<'EOF'
+#!/usr/bin/env bash
+unset SESSION_MANAGER
+unset DBUS_SESSION_BUS_ADDRESS
+
+exec xterm
+EOF
+fi
+
 chmod +x "$HOME/.vnc/xstartup"
 
+echo "[INFO] Stopping old VNC/noVNC processes..."
 vncserver -kill "$DISPLAY" >/dev/null 2>&1 || true
+pkill -f "websockify.*${NOVNC_PORT}" >/dev/null 2>&1 || true
+
 rm -f "/tmp/.X${DISPLAY#:}-lock" "/tmp/.X11-unix/X${DISPLAY#:}" 2>/dev/null || true
 
-vncserver "$DISPLAY" \
+echo "[INFO] Starting TigerVNC on display ${DISPLAY}, port ${VNC_PORT}, geometry ${VNC_GEOMETRY}..."
+
+if ! vncserver "$DISPLAY" \
   -geometry "$VNC_GEOMETRY" \
   -depth "$VNC_DEPTH" \
   -localhost no \
   -rfbport "$VNC_PORT" \
   -SecurityTypes VncAuth \
-  > /tmp/efw-vncserver.log 2>&1
+  > /tmp/efw-vncserver.log 2>&1; then
 
-pkill -f "websockify.*${NOVNC_PORT}.*localhost:${VNC_PORT}" >/dev/null 2>&1 || true
+  echo "[FAIL] vncserver failed"
+  echo "--- /tmp/efw-vncserver.log ---"
+  cat /tmp/efw-vncserver.log || true
+
+  echo "--- ~/.vnc logs ---"
+  cat "$HOME"/.vnc/*.log 2>/dev/null || true
+
+  exit 1
+fi
+
+echo "[INFO] Starting noVNC on port ${NOVNC_PORT}..."
+
 if [ -d /usr/share/novnc ]; then
   websockify --web=/usr/share/novnc "$NOVNC_PORT" "localhost:${VNC_PORT}" > /tmp/efw-novnc.log 2>&1 &
 else
   websockify "$NOVNC_PORT" "localhost:${VNC_PORT}" > /tmp/efw-novnc.log 2>&1 &
 fi
 
-# Fail early in Codespaces if the desktop or noVNC proxy did not come up.
-bash .devcontainer/check-vnc.sh --quick
+sleep 2
 
-echo "EFW VNC desktop is running. Open forwarded port ${NOVNC_PORT}; VNC password: ${VNC_PASSWORD}"
-echo "noVNC URL path: /vnc.html?host=localhost&port=${NOVNC_PORT}"
+echo "[INFO] Current VNC sessions:"
+vncserver -list || true
+
+echo
+echo "[OK] VNC/noVNC started."
+echo "Open forwarded port: ${NOVNC_PORT}"
+echo "VNC password: ${VNC_PASSWORD}"
+echo "noVNC page: /vnc.html"
+echo
+echo "If you run GUI apps from VS Code terminal, use:"
+echo "export DISPLAY=${DISPLAY}"
