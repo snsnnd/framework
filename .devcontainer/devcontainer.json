@@ -1,0 +1,40 @@
+{
+  "name": "EFW Qt/VNC Codespace",
+  "build": {
+    "dockerfile": "Dockerfile",
+    "context": ".."
+  },
+  "remoteUser": "vscode",
+  "containerEnv": {
+    "DISPLAY": ":1",
+    "QT_QPA_PLATFORM": "xcb",
+    "VNC_GEOMETRY": "1440x900",
+    "VNC_DEPTH": "24"
+  },
+  "forwardPorts": [6080, 5901],
+  "portsAttributes": {
+    "6080": {
+      "label": "noVNC desktop for PyQt tools",
+      "onAutoForward": "openBrowser"
+    },
+    "5901": {
+      "label": "Raw VNC desktop",
+      "onAutoForward": "silent"
+    }
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "postStartCommand": "bash .devcontainer/start-vnc.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cmake-tools",
+        "ms-vscode.cpptools",
+        "ms-python.python"
+      ],
+      "settings": {
+        "cmake.configureOnOpen": false,
+        "terminal.integrated.defaultProfile.linux": "bash"
+      }
+    }
+  }
+}
