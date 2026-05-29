@@ -34,7 +34,9 @@
 
 #if EFW_ENABLE_MODULE  /**< 编译开关 */
 
-static const efw_module_ops_t *g_modules[EFW_MAX_MODULES]; /**< Module ops 指针数组 */
+static const efw_module_ops_t *g_module_default_pool[EFW_MAX_MODULES]; /**< 默认 Module ops 指针数组 */
+static const efw_module_ops_t **g_modules = g_module_default_pool;
+static size_t g_module_cap = EFW_MAX_MODULES;
 static size_t g_module_n;                                  /**< 已注册模块数量 */
 
 static int same_name(const char *a, const char *b) {
@@ -50,14 +52,21 @@ static efw_status_t module_call(const efw_module_ops_t *ops, efw_status_t (*fn)(
 
 /* ====== 初始化 + 注册 ====== */
 
-efw_status_t efw_module_registry_init(void) { g_module_n = 0; return EFW_OK; }
+efw_status_t efw_module_registry_init(void) { g_modules = g_module_default_pool; g_module_cap = EFW_MAX_MODULES; g_module_n = 0; return EFW_OK; }
+efw_status_t efw_module_registry_init_pool(const efw_module_ops_t **pool, size_t capacity) {
+    if (!pool || capacity == 0) return EFW_ERR_INVALID;
+    g_modules = pool;
+    g_module_cap = capacity;
+    g_module_n = 0;
+    return EFW_OK;
+}
 
 efw_status_t efw_module_register(const efw_module_ops_t *ops) {
     if (!ops || !ops->name) return EFW_ERR_INVALID;             /* 参数校验 */
     for (size_t i = 0; i < g_module_n; ++i)
         if (same_name(g_modules[i]->name, ops->name))
             return EFW_ERR_ALREADY_EXISTS;                       /* 名称冲突 */
-    if (g_module_n >= EFW_MAX_MODULES) return EFW_ERR_FULL;    /* 容量已满 */
+    if (g_module_n >= g_module_cap) return EFW_ERR_FULL;    /* 容量已满 */
     g_modules[g_module_n++] = ops;                               /* 存入 */
     return EFW_OK;
 }

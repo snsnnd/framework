@@ -1,0 +1,39 @@
+FROM mcr.microsoft.com/devcontainers/cpp:1-ubuntu-24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends \
+        cmake \
+        ninja-build \
+        python3 \
+        python3-pip \
+        python3-venv \
+        python3-pyqt6 \
+        pyqt6-dev-tools \
+        libgl1 \
+        libegl1 \
+        libxkbcommon-x11-0 \
+        libxcb-cursor0 \
+        libxcb-icccm4 \
+        libxcb-image0 \
+        libxcb-keysyms1 \
+        libxcb-randr0 \
+        libxcb-render-util0 \
+        libxcb-shape0 \
+        libxcb-xinerama0 \
+        libxcb-xinput0 \
+        dbus-x11 \
+        xauth \
+        x11-xserver-utils \
+        xfce4 \
+        xfce4-terminal \
+        tigervnc-standalone-server \
+        tigervnc-common \
+        novnc \
+        websockify \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+
+USER vscode
+WORKDIR /workspaces/framework

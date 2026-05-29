@@ -73,6 +73,7 @@ typedef struct {
 /* ====== 模块生命周期 API ====== */
 
 efw_status_t efw_module_registry_init(void);
+efw_status_t efw_module_registry_init_pool(const efw_module_ops_t **pool, size_t capacity);
 efw_status_t efw_module_register(const efw_module_ops_t *ops);
 efw_status_t efw_module_get(const char *name, const efw_module_ops_t **out_ops);
 

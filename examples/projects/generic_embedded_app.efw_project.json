@@ -1,0 +1,8 @@
+{
+  "schema_version": 1,
+  "name": "generic_embedded_app",
+  "graph_path": "examples/graphs/generic_embedded_app.json",
+  "output_dir": "application/generated_generic_embedded_app",
+  "board_profile": "generic-mock",
+  "notes": "Open with tools/efw_project_manager.py. Generate application/, then replace or add board-specific glue through graph.board_adapters for the real board."
+}

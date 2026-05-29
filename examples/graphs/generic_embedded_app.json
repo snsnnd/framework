@@ -1,0 +1,66 @@
+{
+  "project": {
+    "name": "generated_generic_embedded_app",
+    "tick_ms": 1
+  },
+  "nodes": [
+    {
+      "id": "uart_debug",
+      "type": "hal.custom",
+      "hal_type": "uart",
+      "bus_id": 1,
+      "ctx": "0",
+      "init": "app_uart_debug_init",
+      "write": "app_uart_debug_write"
+    },
+    {
+      "id": "battery_sensor",
+      "type": "sensor.custom",
+      "sensor_type": "custom",
+      "channel_count": 1,
+      "hal_name": "uart_debug",
+      "ctx": "0",
+      "read": "app_battery_sensor_read"
+    },
+    {
+      "id": "status_led",
+      "type": "actuator.custom",
+      "actuator_type": "led",
+      "ctx": "0",
+      "write": "app_status_led_write"
+    },
+    {
+      "id": "health_service",
+      "type": "module.custom",
+      "module_type": "EFW_MODULE_SERVICE",
+      "ctx": "0",
+      "init": "app_health_service_init",
+      "poll": "app_health_service_poll"
+    },
+    {
+      "id": "heartbeat_100ms",
+      "type": "task.periodic",
+      "period_ms": 100,
+      "call": "app_heartbeat_100ms"
+    }
+  ],
+  "flows": [],
+  "tasks": [
+    {
+      "id": "battery_sample_20ms",
+      "type": "task.periodic",
+      "period_ms": 20,
+      "call": "app_battery_sample_20ms"
+    }
+  ],
+  "custom_files": [
+    {
+      "path": "app_custom.c",
+      "content": "#include \"efw/efw.h\"\n\nefw_status_t app_uart_debug_init(void *ctx) { EFW_UNUSED(ctx); return EFW_OK; }\nefw_status_t app_uart_debug_write(void *ctx, const void *buf, uint16_t len, uint16_t *actual) { EFW_UNUSED(ctx); EFW_UNUSED(buf); if (actual) *actual = len; return EFW_OK; }\nefw_status_t app_battery_sensor_read(void *ctx, void *out) { EFW_UNUSED(ctx); if (out) *(float *)out = 7.4f; return EFW_OK; }\nefw_status_t app_status_led_write(void *ctx, const void *cmd) { EFW_UNUSED(ctx); EFW_UNUSED(cmd); return EFW_OK; }\nefw_status_t app_health_service_init(void *ctx) { EFW_UNUSED(ctx); return EFW_OK; }\nefw_status_t app_health_service_poll(void *ctx) { EFW_UNUSED(ctx); return EFW_OK; }\nefw_status_t app_heartbeat_100ms(void) { return EFW_OK; }\nefw_status_t app_battery_sample_20ms(void) { return EFW_OK; }\n"
+    }
+  ],
+  "board": {
+    "profile": "generic-mock",
+    "pin_plan": []
+  }
+}
