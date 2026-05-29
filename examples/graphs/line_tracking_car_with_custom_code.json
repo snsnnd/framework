@@ -9,11 +9,26 @@
       "type": "hal.gpio_line_input",
       "channels": 5,
       "pins": [
-        { "port": "A", "pin": 0 },
-        { "port": "A", "pin": 1 },
-        { "port": "A", "pin": 2 },
-        { "port": "A", "pin": 3 },
-        { "port": "A", "pin": 4 }
+        {
+          "port": "A",
+          "pin": 0
+        },
+        {
+          "port": "A",
+          "pin": 1
+        },
+        {
+          "port": "A",
+          "pin": 2
+        },
+        {
+          "port": "A",
+          "pin": 3
+        },
+        {
+          "port": "A",
+          "pin": 4
+        }
       ]
     },
     {
@@ -24,14 +39,26 @@
     {
       "id": "left_motor",
       "type": "actuator.motor",
-      "pwm": { "timer": 1, "channel": 1 },
-      "dir_pin": { "port": "B", "pin": 0 }
+      "pwm": {
+        "timer": 1,
+        "channel": 1
+      },
+      "dir_pin": {
+        "port": "B",
+        "pin": 0
+      }
     },
     {
       "id": "right_motor",
       "type": "actuator.motor",
-      "pwm": { "timer": 1, "channel": 2 },
-      "dir_pin": { "port": "B", "pin": 1 }
+      "pwm": {
+        "timer": 1,
+        "channel": 2
+      },
+      "dir_pin": {
+        "port": "B",
+        "pin": 1
+      }
     },
     {
       "id": "line_pid",
@@ -47,9 +74,30 @@
       "anti_windup": true
     },
     {
-      "id": "custom_speed_policy",
-      "type": "custom.code",
-      "note": "The source for this custom card lives in custom_files/app_custom.c."
+      "id": "custom_speed_limiter",
+      "type": "algorithm.custom",
+      "algo_type": "EFW_ALGO_CUSTOM",
+      "ctx": "0",
+      "run": "app_custom_algo_run"
+    },
+    {
+      "id": "custom_health_module",
+      "type": "module.custom",
+      "module_type": "EFW_MODULE_SERVICE",
+      "ctx": "0",
+      "init": "app_custom_module_init",
+      "poll": "app_custom_module_poll"
+    },
+    {
+      "id": "custom_task_10ms",
+      "type": "task.periodic",
+      "period_ms": 10,
+      "call": "app_custom_task_10ms"
+    },
+    {
+      "id": "custom_note",
+      "type": "custom.card",
+      "note": "Cards can describe custom logic while implementation lives in custom_files."
     }
   ],
   "flows": [
@@ -60,19 +108,34 @@
       "pid": "line_pid",
       "left_motor": "left_motor",
       "right_motor": "right_motor",
-      "weights": [-2.0, -1.0, 0.0, 1.0, 2.0],
+      "weights": [
+        -2.0,
+        -1.0,
+        0.0,
+        1.0,
+        2.0
+      ],
       "base_speed": 65.0,
       "min_speed": 0.0,
       "max_speed": 100.0,
       "dt": 0.001,
       "active_value": 1,
-      "binary_mode": true
+      "binary_mode": true,
+      "period_ms": 1
+    }
+  ],
+  "tasks": [
+    {
+      "id": "battery_service_20ms",
+      "type": "task.periodic",
+      "period_ms": 20,
+      "call": "app_custom_task_20ms"
     }
   ],
   "custom_files": [
     {
       "path": "app_custom.c",
-      "content": "/**\n * @file    app_custom.c\n * @brief   Example custom code generated beside visual cards.\n */\n\n#include \"efw/efw.h\"\n\nfloat app_custom_limit_speed(float speed) {\n    if (speed < 0.0f) return 0.0f;\n    if (speed > 100.0f) return 100.0f;\n    return speed;\n}\n"
+      "content": "/**\n * @file    app_custom.c\n * @brief   Example custom code generated beside visual cards.\n */\n\n#include \"efw/efw.h\"\n\nefw_status_t app_custom_algo_run(void *ctx, const void *in, void *out) {\n    EFW_UNUSED(ctx);\n    EFW_UNUSED(in);\n    EFW_UNUSED(out);\n    return EFW_OK;\n}\n\nefw_status_t app_custom_module_init(void *ctx) {\n    EFW_UNUSED(ctx);\n    return EFW_OK;\n}\n\nefw_status_t app_custom_module_poll(void *ctx) {\n    EFW_UNUSED(ctx);\n    return EFW_OK;\n}\n\nefw_status_t app_custom_task_10ms(void) {\n    return EFW_OK;\n}\n\nefw_status_t app_custom_task_20ms(void) {\n    return EFW_OK;\n}\n"
     }
   ]
 }

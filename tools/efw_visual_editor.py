@@ -123,6 +123,44 @@ NODE_TEMPLATES: dict[str, dict[str, Any]] = {
         "out_max": 60.0,
         "anti_windup": True,
     },
+    "sensor.custom": {
+        "id": "custom_sensor",
+        "type": "sensor.custom",
+        "sensor_type": "custom",
+        "channel_count": 1,
+        "hal_name": "",
+        "comm_name": "",
+        "ctx": "0",
+        "read": "app_custom_sensor_read",
+    },
+    "algorithm.custom": {
+        "id": "custom_algo",
+        "type": "algorithm.custom",
+        "algo_type": "EFW_ALGO_CUSTOM",
+        "ctx": "0",
+        "run": "app_custom_algo_run",
+    },
+    "module.custom": {
+        "id": "custom_module",
+        "type": "module.custom",
+        "module_type": "EFW_MODULE_CUSTOM",
+        "ctx": "0",
+        "init": "app_custom_module_init",
+        "start": "",
+        "stop": "",
+        "poll": "app_custom_module_poll",
+    },
+    "task.periodic": {
+        "id": "custom_task_10ms",
+        "type": "task.periodic",
+        "period_ms": 10,
+        "call": "app_custom_task_10ms",
+    },
+    "custom.card": {
+        "id": "custom_note",
+        "type": "custom.card",
+        "note": "Documentation-only card for hardware, tuning notes, or future generator templates.",
+    },
     "custom.code": {
         "id": "custom_code_note",
         "type": "custom.code",
@@ -157,8 +195,31 @@ DEFAULT_CUSTOM_C = """/**
 
 #include "efw/efw.h"
 
-void app_custom_user_hook(void) {
-    /* TODO: add custom code that complements the visual cards. */
+efw_status_t app_custom_algo_run(void *ctx, const void *in, void *out) {
+    EFW_UNUSED(ctx);
+    EFW_UNUSED(in);
+    EFW_UNUSED(out);
+    return EFW_OK;
+}
+
+efw_status_t app_custom_sensor_read(void *ctx, void *out) {
+    EFW_UNUSED(ctx);
+    EFW_UNUSED(out);
+    return EFW_OK;
+}
+
+efw_status_t app_custom_module_init(void *ctx) {
+    EFW_UNUSED(ctx);
+    return EFW_OK;
+}
+
+efw_status_t app_custom_module_poll(void *ctx) {
+    EFW_UNUSED(ctx);
+    return EFW_OK;
+}
+
+efw_status_t app_custom_task_10ms(void) {
+    return EFW_OK;
 }
 """
 
@@ -357,14 +418,18 @@ class VisualEditorWindow(QMainWindow):
         for edge in self.edge_items:
             self.scene.removeItem(edge)
         self.edge_items = []
-        flow = (self.graph.get("flows") or [{}])[0]
-        pairs = [
-            (self._line_input_id(), flow.get("sensor")),
-            (flow.get("sensor"), flow.get("left_motor")),
-            (flow.get("sensor"), flow.get("right_motor")),
-            (flow.get("pid"), flow.get("left_motor")),
-            (flow.get("pid"), flow.get("right_motor")),
-        ]
+        pairs = []
+        for flow in self.graph.get("flows", []):
+            if flow.get("type") == "control.line_follower":
+                sensor = flow.get("sensor")
+                sensor_node = self._find_node(sensor)
+                pairs.extend([
+                    (sensor_node.get("input") if sensor_node else self._line_input_id(), sensor),
+                    (sensor, flow.get("left_motor")),
+                    (sensor, flow.get("right_motor")),
+                    (flow.get("pid"), flow.get("left_motor")),
+                    (flow.get("pid"), flow.get("right_motor")),
+                ])
         for src, dst in pairs:
             if src in self.node_items and dst in self.node_items:
                 line = QGraphicsLineItem()
