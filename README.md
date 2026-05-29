@@ -102,7 +102,7 @@ python3 -m pip install -r tools/requirements-visual.txt
 python3 tools/efw_project_manager.py
 ```
 
-`examples/projects/generic_embedded_app.efw_project.json` 是一个项目管理界面可直接打开的示例项目文件。仓库还包含 `.devcontainer/`，在 GitHub Codespaces 中可通过 6080 端口打开 noVNC 桌面来运行 PyQt 项目管理器；详见 `docs/environment.md`。
+`examples/projects/generic_embedded_app.efw_project.json` 是一个项目管理界面可直接打开的示例项目文件。仓库还包含 `.devcontainer/`，在 GitHub Codespaces 中可通过 6080 端口打开 noVNC 桌面来运行 PyQt 项目管理器，并可用 `bash .devcontainer/check-vnc.sh` 自检 VNC/noVNC/PyQt；详见 `docs/environment.md`。
 
 ## CMake 构建
 CMake 只用于主机侧编译验证或支持 CMake 的工程，不是裸机接入必需项。

@@ -51,13 +51,14 @@ python3 tools/efw_codegen.py examples/graphs/generic_embedded_app.json \
 
 1. 在 Codespaces 的 **Ports** 面板打开 `6080`，浏览器会进入 noVNC。
 2. VNC 默认密码是 `codespaces`；如需修改，可在 Codespaces Secrets 或环境变量里设置 `VNC_PASSWORD`。
-3. 进入桌面后打开终端，运行：
+3. 如果 VNC 页面打不开，先在 Codespaces 终端运行 `bash .devcontainer/check-vnc.sh` 查看 TigerVNC/noVNC/PyQt 自检结果。
+4. 进入桌面后打开终端，运行：
 
 ```bash
 python3 tools/efw_project_manager.py
 ```
 
-如果只需要命令行生成，不需要 VNC 桌面，可以直接在 Codespaces 终端运行 `tools/efw_codegen.py`。
+如果只需要命令行生成，不需要 VNC 桌面，可以直接在 Codespaces 终端运行 `tools/efw_codegen.py`。`start-vnc.sh` 每次容器启动都会运行 `check-vnc.sh --quick`，确保 5901/6080 端口已经监听且 noVNC 页面能返回。
 
 ## 主机侧验证
 

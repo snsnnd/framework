@@ -5,14 +5,16 @@ export DISPLAY="${DISPLAY:-:1}"
 export VNC_GEOMETRY="${VNC_GEOMETRY:-1440x900}"
 export VNC_DEPTH="${VNC_DEPTH:-24}"
 export VNC_PASSWORD="${VNC_PASSWORD:-codespaces}"
+export VNC_PORT="${VNC_PORT:-5901}"
+export NOVNC_PORT="${NOVNC_PORT:-6080}"
 
 mkdir -p "$HOME/.vnc"
 chmod 700 "$HOME/.vnc"
 
-if [ ! -f "$HOME/.vnc/passwd" ]; then
-  printf '%s\n%s\n\n' "$VNC_PASSWORD" "$VNC_PASSWORD" | vncpasswd > /dev/null
-  chmod 600 "$HOME/.vnc/passwd"
-fi
+# TigerVNC supports a non-interactive password mode via `vncpasswd -f`.
+# Regenerate the password on each container start so changing VNC_PASSWORD takes effect.
+printf '%s\n' "$VNC_PASSWORD" | vncpasswd -f > "$HOME/.vnc/passwd"
+chmod 600 "$HOME/.vnc/passwd"
 
 cat > "$HOME/.vnc/xstartup" <<'EOF'
 #!/usr/bin/env bash
@@ -30,14 +32,19 @@ vncserver "$DISPLAY" \
   -geometry "$VNC_GEOMETRY" \
   -depth "$VNC_DEPTH" \
   -localhost no \
+  -rfbport "$VNC_PORT" \
   -SecurityTypes VncAuth \
-  >/tmp/efw-vncserver.log 2>&1
+  > /tmp/efw-vncserver.log 2>&1
 
-pkill -f "websockify.*6080" >/dev/null 2>&1 || true
+pkill -f "websockify.*${NOVNC_PORT}.*localhost:${VNC_PORT}" >/dev/null 2>&1 || true
 if [ -d /usr/share/novnc ]; then
-  websockify --web=/usr/share/novnc 6080 localhost:5901 >/tmp/efw-novnc.log 2>&1 &
+  websockify --web=/usr/share/novnc "$NOVNC_PORT" "localhost:${VNC_PORT}" > /tmp/efw-novnc.log 2>&1 &
 else
-  websockify 6080 localhost:5901 >/tmp/efw-novnc.log 2>&1 &
+  websockify "$NOVNC_PORT" "localhost:${VNC_PORT}" > /tmp/efw-novnc.log 2>&1 &
 fi
 
-echo "EFW VNC desktop is running. Open forwarded port 6080; VNC password: ${VNC_PASSWORD}"
+# Fail early in Codespaces if the desktop or noVNC proxy did not come up.
+bash .devcontainer/check-vnc.sh --quick
+
+echo "EFW VNC desktop is running. Open forwarded port ${NOVNC_PORT}; VNC password: ${VNC_PASSWORD}"
+echo "noVNC URL path: /vnc.html?host=localhost&port=${NOVNC_PORT}"
