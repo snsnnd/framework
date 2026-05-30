@@ -109,6 +109,11 @@ from efw_studio_core import (  # noqa: E402
     can_connect_ports,
     discover_framework_templates,
     node_summary,
+    page_for_node,
+    page_hint,
+    page_title,
+    root_page,
+    visible_nodes_for_page,
     property_choices as core_property_choices,
 )
 from efw_visual_model import BOARD_PROFILES, GENERATED_APPLICATION_TREE, NODE_GENERATION_STATUS, VISUAL_NODE_CATEGORIES  # noqa: E402
@@ -448,7 +453,21 @@ TYPE_LABELS = {
     "custom.code": "代码卡片",
 }
 
-NODE_CATEGORIES = [(name, FRAMEWORK_SCAN_ORDER if name == "框架库扫描" else types) for name, types in VISUAL_NODE_CATEGORIES]
+def framework_scan_categories() -> list[tuple[str, list[str]]]:
+    grouped: dict[str, list[str]] = {}
+    labels = {"hal": "框架扫描 · HAL", "sensor": "框架扫描 · 传感器", "actuator": "框架扫描 · 执行器", "algorithm": "框架扫描 · 算法", "module": "框架扫描 · 模块", "event": "框架扫描 · 通信", "state": "框架扫描 · 状态机"}
+    for key in FRAMEWORK_SCAN_ORDER:
+        module = str(NODE_TEMPLATES.get(key, {}).get("library_module", "other"))
+        grouped.setdefault(module, []).append(key)
+    return [(labels.get(module, f"框架扫描 · {module}"), keys) for module, keys in grouped.items()]
+
+
+NODE_CATEGORIES = []
+for name, types in VISUAL_NODE_CATEGORIES:
+    if name == "框架库扫描":
+        NODE_CATEGORIES.extend(framework_scan_categories())
+    else:
+        NODE_CATEGORIES.append((name, types))
 
 
 def display_label(template_key: str) -> str:
@@ -519,6 +538,12 @@ class GraphNodeItem(QGraphicsRectItem):
     HEIGHT = 70
 
     def __init__(self, node: dict[str, Any], editor: "VisualEditorWindow"):
+        summary_text = node_summary(node)
+        title_text = node.get("id", "node")
+        label_text = TYPE_LABELS.get(node.get("type"), node.get("type", "unknown"))
+        self.WIDTH = max(190, min(360, 58 + max(len(str(title_text)), len(str(label_text)), len(summary_text)) * 7))
+        port_count = max(len(PORT_RULES.get(node.get("type"), {}).get("in", [])), len(PORT_RULES.get(node.get("type"), {}).get("out", [])))
+        self.HEIGHT = max(82, 62 + port_count * 14 + (18 if summary_text else 0))
         super().__init__(0, 0, self.WIDTH, self.HEIGHT)
         self.node = node
         self.editor = editor
@@ -541,18 +566,18 @@ class GraphNodeItem(QGraphicsRectItem):
         accent = QGraphicsRectItem(0, 0, self.WIDTH, 7, self)
         accent.setBrush(QBrush(QColor(theme["accent"])))
         accent.setPen(QPen(QColor(theme["accent"]), 0))
-        title = QGraphicsSimpleTextItem(node.get("id", "node"), self)
+        title = QGraphicsSimpleTextItem(str(title_text), self)
         title.setBrush(QBrush(QColor("#ffffff")))
         bold_weight = QFont.Weight.Bold if hasattr(QFont, "Weight") else QFont.Bold
         title.setFont(QFont("Sans", 10, bold_weight))
         title.setPos(8, 8)
-        label = TYPE_LABELS.get(node.get("type"), node.get("type", "unknown"))
+        label = label_text
         subtitle = QGraphicsSimpleTextItem(label, self)
         subtitle.setBrush(QBrush(QColor("#d7e6ec")))
         subtitle.setPos(8, 29)
-        summary_text = node_summary(node)
         if summary_text:
-            summary = QGraphicsSimpleTextItem(summary_text[:34], self)
+            max_chars = max(28, int((self.WIDTH - 18) / 7))
+            summary = QGraphicsSimpleTextItem(summary_text[:max_chars], self)
             summary.setBrush(QBrush(QColor("#b8cad1")))
             summary.setPos(8, 49)
         self.ports: list[PortItem] = []
@@ -577,8 +602,9 @@ class GraphNodeItem(QGraphicsRectItem):
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event):
-        if self.node.get("type") == "project.module":
-            self.editor.enter_module(self.node.get("id"))
+        page = page_for_node(self.node)
+        if page:
+            self.editor.open_page(page)
             event.accept()
             return
         super().mouseDoubleClickEvent(event)
@@ -598,6 +624,8 @@ class VisualEditorWindow(QMainWindow):
         self.drag_port: PortItem | None = None
         self.validation_messages: list[str] = []
         self.active_module_id: str | None = None
+        self.open_pages = [root_page()]
+        self.active_page_key = "root"
         self.graph = self.default_graph()
         self.setStyleSheet(WORKBENCH_STYLESHEET)
         self._build_ui()
@@ -652,9 +680,6 @@ class VisualEditorWindow(QMainWindow):
         toolbar.addAction("另存为", self.save_graph_as)
         toolbar.addAction("实时校验", self.validate_current_graph)
         toolbar.addAction("生成", self.generate_application)
-        toolbar.addAction("连接选中", self.connect_selected_cards)
-        toolbar.addAction("自动布局", self.auto_layout)
-        toolbar.addAction("返回根模块", self.exit_module)
 
         root_splitter = QSplitter()
         self.setCentralWidget(root_splitter)
@@ -683,6 +708,22 @@ class VisualEditorWindow(QMainWindow):
 
         canvas = QWidget()
         canvas_layout = QVBoxLayout(canvas)
+        self.page_tabs = QTabWidget()
+        self.page_tabs.setTabsClosable(True)
+        self.page_tabs.currentChanged.connect(self.switch_page_tab)
+        self.page_tabs.tabCloseRequested.connect(self.close_page_tab)
+        canvas_layout.addWidget(self.page_tabs)
+        page_controls = QHBoxLayout()
+        connect_btn = QPushButton("连接选中")
+        connect_btn.clicked.connect(self.connect_selected_cards)
+        layout_btn = QPushButton("自动布局")
+        layout_btn.clicked.connect(self.auto_layout)
+        root_btn = QPushButton("返回根项目")
+        root_btn.clicked.connect(self.exit_module)
+        page_controls.addWidget(connect_btn)
+        page_controls.addWidget(layout_btn)
+        page_controls.addWidget(root_btn)
+        canvas_layout.addLayout(page_controls)
         self.module_scope_label = QLabel("当前视图：根项目")
         canvas_layout.addWidget(self.module_scope_label)
         self.scene = QGraphicsScene()
@@ -827,6 +868,7 @@ class VisualEditorWindow(QMainWindow):
         return widget
 
     def refresh_all(self) -> None:
+        self.refresh_page_tabs()
         self.refresh_scene()
         self.refresh_json_editor()
         self.refresh_code_list()
@@ -838,25 +880,60 @@ class VisualEditorWindow(QMainWindow):
         self.refresh_validation_panel(show_dialog=False)
         self.select_node(self.current_node_id)
 
+    def active_page(self) -> dict[str, str]:
+        return next((page for page in self.open_pages if page.get("key") == self.active_page_key), self.open_pages[0])
+
     def visible_nodes(self) -> list[dict[str, Any]]:
-        if not self.active_module_id:
-            return self.graph.get("nodes", [])
-        return [node for node in self.graph.get("nodes", []) if node.get("id") == self.active_module_id or node.get("module") == self.active_module_id]
+        return visible_nodes_for_page(self.graph, self.active_page())
+
+    def open_page(self, page: dict[str, str]) -> None:
+        if not any(item.get("key") == page.get("key") for item in self.open_pages):
+            self.open_pages.append(page)
+        self.active_page_key = page.get("key", "root")
+        self.refresh_all()
 
     def enter_module(self, module_id: str | None) -> None:
         if not module_id:
             return
-        self.active_module_id = module_id
-        self.refresh_all()
+        node = self._find_node(module_id)
+        page = page_for_node(node or {"id": module_id, "type": "project.module"})
+        if page:
+            self.open_page(page)
 
     def exit_module(self) -> None:
-        self.active_module_id = None
+        self.active_page_key = "root"
         self.refresh_all()
+
+    def switch_page_tab(self, index: int) -> None:
+        if 0 <= index < len(self.open_pages):
+            self.active_page_key = self.open_pages[index].get("key", "root")
+            self.refresh_scene()
+
+    def close_page_tab(self, index: int) -> None:
+        if index <= 0 or index >= len(self.open_pages):
+            return
+        closing = self.open_pages[index].get("key")
+        del self.open_pages[index]
+        if self.active_page_key == closing:
+            self.active_page_key = self.open_pages[max(0, index - 1)].get("key", "root")
+        self.refresh_all()
+
+    def refresh_page_tabs(self) -> None:
+        if not hasattr(self, "page_tabs"):
+            return
+        self.page_tabs.blockSignals(True)
+        self.page_tabs.clear()
+        for page in self.open_pages:
+            tab = QWidget()
+            self.page_tabs.addTab(tab, page_title(page))
+        active_index = next((i for i, page in enumerate(self.open_pages) if page.get("key") == self.active_page_key), 0)
+        self.page_tabs.setCurrentIndex(active_index)
+        self.page_tabs.setTabEnabled(0, True)
+        self.page_tabs.blockSignals(False)
 
     def refresh_scene(self) -> None:
         if hasattr(self, "module_scope_label"):
-            label = "根项目" if not self.active_module_id else f"模块：{self.active_module_id}"
-            self.module_scope_label.setText(f"当前视图：{label}（模块卡片可维护 inputs/outputs；当前版本仍在同一 Graph 内显示子图）")
+            self.module_scope_label.setText(page_hint(self.active_page()))
         self.scene.clear()
         self.node_items.clear()
         self.edge_items.clear()
@@ -1311,23 +1388,33 @@ class VisualEditorWindow(QMainWindow):
         return ok
 
     def auto_layout(self) -> None:
-        columns = {
-            "project": 20,
-            "hal": 250,
-            "sensor": 480,
-            "algorithm": 710,
-            "module": 940,
-            "actuator": 940,
-            "event": 1170,
-            "task": 1170,
-            "custom": 1170,
-        }
+        page = self.active_page()
+        if page.get("kind") == "state":
+            columns = {"state.machine": 40, "state.state": 330, "state.transition": 620}
+        elif page.get("kind") == "comm":
+            columns = {"event.topic": 360, "event.publisher": 80, "event.subscriber": 660, "module.custom": 930, "sensor.custom": 80, "sensor.line_tracking": 80}
+        elif page.get("kind") == "module":
+            columns = {"project.module": 40, "hal": 300, "sensor": 540, "algorithm": 780, "module": 1020, "task": 1260, "event": 1260, "actuator": 1020}
+        else:
+            columns = {
+                "project": 20,
+                "hal": 250,
+                "sensor": 480,
+                "algorithm": 710,
+                "module": 940,
+                "actuator": 940,
+                "event": 1170,
+                "task": 1170,
+                "custom": 1170,
+            }
         counters = {key: 0 for key in columns}
         positions = self.graph.setdefault("ui", {}).setdefault("positions", {})
-        for node in self.graph.get("nodes", []):
-            family = str(node.get("type", "custom")).split(".")[0]
-            x = columns.get(family, columns["custom"])
-            y = 50 + counters.get(family, 0) * 110
+        for node in self.visible_nodes():
+            node_type = str(node.get("type", "custom"))
+            family = node_type.split(".")[0]
+            x = columns.get(node_type, columns.get(family, columns.get("custom", 1170)))
+            y = 50 + counters.get(node_type, counters.get(family, 0)) * 120
+            counters[node_type] = counters.get(node_type, 0) + 1
             counters[family] = counters.get(family, 0) + 1
             positions[node.get("id")] = [x, y]
         self.refresh_all()

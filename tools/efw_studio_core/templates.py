@@ -7,13 +7,21 @@ from pathlib import Path
 from typing import Any
 
 
+def _extract_enable_macros(text: str) -> list[str]:
+    return sorted(set(__import__("re").findall(r"EFW_ENABLE_[A-Z0-9_]+", text)))
+
+
 def _annotate_scan_template(template: dict[str, Any], header: Path, repo_root: Path, library_module: str, callbacks: list[str]) -> None:
+    text = header.read_text(encoding="utf-8", errors="ignore")
     template["framework_header"] = header.relative_to(repo_root).as_posix()
     template["library_module"] = library_module
     template["scan_quality"] = "inferred-from-header-path"
     template["callbacks"] = callbacks
+    template["includes"] = [template["framework_header"]]
+    template["requires_macros"] = _extract_enable_macros(text)
     template["schema_fields"] = sorted(key for key in template if key not in {"id", "type"})
     template["generation"] = "当前 schema 可生成注册 glue；具体业务回调仍由 custom_files/board_adapters 实现。"
+    template["scan_warning"] = "路径/头文件元数据推断，尚未解析完整 C AST；复杂依赖请补组件描述文件。"
     template.setdefault("requires", [])
     template.setdefault("note", f"从框架头文件 {template['framework_header']} 自动扫描得到；字段/回调为保守推断，生成时仍会按 schema 校验。")
 

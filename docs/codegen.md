@@ -333,3 +333,10 @@ python3 tools/efw_studio.py
 - `project.module` 已显式包含 `inputs`、`outputs`、`subgraph` 字段，当前 UI 仍以同一 Graph 的模块视图方式呈现，模块内部独立子图和跨模块接口编译会作为下一阶段继续强化。
 - “一键创建条件函数”会单独为 `state.transition`、`logic.if`、`logic.loop` 的 `condition` 生成 `int condition(void)` stub；“一键生成缺失回调”仍负责完整回调 stub。
 - 框架库扫描会附带 `framework_header`、`library_module`、`callbacks`、`schema_fields`、`scan_quality`、`generation` 等元数据；它仍是头文件路径推断，不等价于完整 C 反射，因此复杂依赖宏/回调契约仍需后续用组件描述文件补齐。
+
+### 页面化蓝图与专用视图
+
+- 画布顶部新增类似 VS Code 的页面标签：根项目、模块、状态机、通信 Topic 都可以作为独立页面打开，双击 `project.module`、`state.machine`、`event.topic` 会切换到对应专用页面。
+- 模块页面当前展示模块接口与内部节点，后续可把 `project.module.subgraph` 升级为真正独立子图编译；状态机页面按 State / Transition 端口表达状态跳转；通信页面围绕 Topic 展示 Publisher / Subscriber。
+- 顶部工具栏只保留项目级操作，连接、自动布局、返回根项目移动到画布页面控制区，避免菜单重复。
+- 卡片宽高会根据标题、类型、摘要和端口数量自适应；状态机/通信页面的自动布局也按专用视图分别排列。
