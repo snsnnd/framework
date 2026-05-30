@@ -152,7 +152,8 @@ def apply_pair_semantics(src: dict[str, Any], dst: dict[str, Any], graph: dict[s
         set_field(dst, "module", src.get("id"))
         return True
     if src_type == "project.module" and dst_type == "project.module":
-        set_field(dst, "parent", src.get("id"))
+        # Module-to-module edges describe public interface/data-flow at root level.
+        # Submodule ownership is assigned by page ownership when adding cards, not by connecting modules.
         return True
     if src_type == "event.topic" and dst_type in {"event.publisher", "event.subscriber"}:
         set_field(dst, "topic", src.get("id"))

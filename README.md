@@ -109,7 +109,7 @@ python3 tools/efw_studio.py
 ## 基础数据结构
 EFW 现在通过 `efw/efw.h` 直接暴露无动态内存的数据结构 API：`efw_ringbuf_t`、`efw_queue_t`、`efw_stack_t`，适合 UART 缓冲、事件/命令队列、解析器栈等裸机场景。实现位于 `include/efw/core/ds.h`，由调用方提供存储数组，不依赖 OS。
 
-可视化工具已开始让 UI 节点能力与 codegen 同步：左侧模板库会递归扫描 `include/efw` 形成“框架库扫描”分组，属性面板对常见引用字段提供下拉选择，`project.module` 支持 inputs/outputs/subgraph 元数据和模块视图，Board Profile 数据库位于 `examples/board_profiles/board_profiles.json`，状态机与基本 if/loop 节点已经生成轻量 C glue，生成前会显示 create/backup+overwrite/same/preserve 摘要，并且覆盖时会把旧生成文件备份到 `.efw_backup/`、保留额外用户文件。Studio 的纯逻辑已开始拆入 `tools/efw_studio_core/`，端口连接语义由 UI 和 codegen 共享；画布顶部支持类似 VS Code 的页面标签，双击模块、状态机或通信 Topic 可进入专用页面，顶部工具栏也精简为项目级操作。
+可视化工具已开始让 UI 节点能力与 codegen 同步：左侧模板库会递归扫描 `include/efw` 形成“框架库扫描”分组，属性面板对常见引用字段提供下拉选择，`project.module` 支持 inputs/outputs/subgraph 元数据和模块视图，Board Profile 数据库位于 `examples/board_profiles/board_profiles.json`，状态机与基本 if/loop 节点已经生成轻量 C glue，生成前会显示 create/backup+overwrite/same/preserve 摘要，并且覆盖时会把旧生成文件备份到 `.efw_backup/`、保留额外用户文件。Studio 的纯逻辑已开始拆入 `tools/efw_studio_core/`，端口连接语义由 UI 和 codegen 共享；画布顶部支持类似 VS Code 的页面标签，双击模块、状态机或通信 Topic 可进入专用页面，根页面只展示模块/顶层 Topic/顶层状态机，模块内部节点只在对应页面显示，顶部工具栏也精简为项目级操作。
 
 ## CMake 构建
 CMake 只用于主机侧编译验证或支持 CMake 的工程，不是裸机接入必需项。

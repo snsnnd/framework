@@ -13,6 +13,8 @@ from efw_studio_core import (  # noqa: F401
     can_connect_ports,
     discover_framework_templates,
     node_summary,
+    is_root_visible_node,
+    node_display_name,
     page_for_node,
     page_hint,
     page_key,

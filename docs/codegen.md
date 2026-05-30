@@ -340,3 +340,11 @@ python3 tools/efw_studio.py
 - 模块页面当前展示模块接口与内部节点，后续可把 `project.module.subgraph` 升级为真正独立子图编译；状态机页面按 State / Transition 端口表达状态跳转；通信页面围绕 Topic 展示 Publisher / Subscriber。
 - 顶部工具栏只保留项目级操作，连接、自动布局、返回根项目移动到画布页面控制区，避免菜单重复。
 - 卡片宽高会根据标题、类型、摘要和端口数量自适应；状态机/通信页面的自动布局也按专用视图分别排列。
+
+### 模块化页面语义补强
+
+- 根页面现在只展示顶层 `project.module`、顶层 `state.machine`、顶层 `event.topic` 和 root 说明卡片；模块内部 HAL/Sensor/Algorithm/Actuator/Task 不再平铺到根页面。
+- 添加卡片会按当前页面自动归属：模块页写入 `module` / `parent`，状态机页写入 `machine`，通信页写入 `topic`；根页面禁止直接添加普通内部组件。
+- 页面位置改为优先写入 `ui.positions_by_page[page_key]`，避免根页面、模块页、状态机页和通信页互相覆盖布局。
+- 修改卡片 `id` 时会同步 `module`、`parent`、`machine`、`topic`、flow、edge、task 和 UI 位置引用，并刷新打开的页面标签。
+- 根页面模块之间的连线表示 `module_data_flow`，用于表达模块接口关系，而不是把一个模块设置成另一个模块的子模块。

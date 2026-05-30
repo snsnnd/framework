@@ -111,6 +111,7 @@ from efw_studio_core import (  # noqa: E402
     node_summary,
     page_for_node,
     page_hint,
+    page_key,
     page_title,
     root_page,
     visible_nodes_for_page,
@@ -623,7 +624,6 @@ class VisualEditorWindow(QMainWindow):
         self.drag_line: QGraphicsLineItem | None = None
         self.drag_port: PortItem | None = None
         self.validation_messages: list[str] = []
-        self.active_module_id: str | None = None
         self.open_pages = [root_page()]
         self.active_page_key = "root"
         self.graph = self.default_graph()
@@ -868,6 +868,7 @@ class VisualEditorWindow(QMainWindow):
         return widget
 
     def refresh_all(self) -> None:
+        self.refresh_open_page_metadata()
         self.refresh_page_tabs()
         self.refresh_scene()
         self.refresh_json_editor()
@@ -878,6 +879,9 @@ class VisualEditorWindow(QMainWindow):
         self.refresh_file_tree_view()
         self.refresh_schedule_view()
         self.refresh_validation_panel(show_dialog=False)
+        visible_ids = {node.get("id") for node in self.visible_nodes()}
+        if self.current_node_id not in visible_ids:
+            self.current_node_id = None
         self.select_node(self.current_node_id)
 
     def active_page(self) -> dict[str, str]:
@@ -886,10 +890,29 @@ class VisualEditorWindow(QMainWindow):
     def visible_nodes(self) -> list[dict[str, Any]]:
         return visible_nodes_for_page(self.graph, self.active_page())
 
+    def page_source_node(self, page: dict[str, str] | None = None) -> dict[str, Any] | None:
+        page = page or self.active_page()
+        if page.get("kind") == "root":
+            return None
+        return self._find_node(page.get("id"))
+
+    def refresh_open_page_metadata(self) -> None:
+        refreshed = [root_page()]
+        for page in self.open_pages[1:]:
+            source = self._find_node(page.get("id"))
+            next_page = page_for_node(source) if source else None
+            if next_page:
+                refreshed.append(next_page)
+        self.open_pages = refreshed
+        if not any(page.get("key") == self.active_page_key for page in self.open_pages):
+            self.active_page_key = "root"
+
     def open_page(self, page: dict[str, str]) -> None:
-        if not any(item.get("key") == page.get("key") for item in self.open_pages):
-            self.open_pages.append(page)
-        self.active_page_key = page.get("key", "root")
+        source = self._find_node(page.get("id"))
+        refreshed = page_for_node(source) if source else page
+        if not any(item.get("key") == refreshed.get("key") for item in self.open_pages):
+            self.open_pages.append(refreshed)
+        self.active_page_key = refreshed.get("key", "root")
         self.refresh_all()
 
     def enter_module(self, module_id: str | None) -> None:
@@ -931,13 +954,23 @@ class VisualEditorWindow(QMainWindow):
         self.page_tabs.setTabEnabled(0, True)
         self.page_tabs.blockSignals(False)
 
+    def page_positions(self) -> dict[str, list[float]]:
+        ui = self.graph.setdefault("ui", {})
+        by_page = ui.setdefault("positions_by_page", {})
+        page_key_value = self.active_page().get("key", "root")
+        page_positions = by_page.setdefault(page_key_value, {})
+        legacy = ui.get("positions", {})
+        for node_id, position in legacy.items():
+            page_positions.setdefault(node_id, position)
+        return page_positions
+
     def refresh_scene(self) -> None:
         if hasattr(self, "module_scope_label"):
             self.module_scope_label.setText(page_hint(self.active_page()))
         self.scene.clear()
         self.node_items.clear()
         self.edge_items.clear()
-        positions = self.graph.setdefault("ui", {}).setdefault("positions", {})
+        positions = self.page_positions()
         visible_nodes = self.visible_nodes()
         for index, node in enumerate(visible_nodes):
             item = GraphNodeItem(node, self)
@@ -1000,12 +1033,17 @@ class VisualEditorWindow(QMainWindow):
     def select_node(self, node_id: str | None) -> None:
         self.current_node_id = node_id
         node = self._find_node(node_id) if node_id else None
+        if not node and node_id is None:
+            node = self.page_source_node()
+            if node:
+                self.current_node_id = node.get("id")
         if not node:
             self.selected_label.setText("未选择卡片")
             self.node_json_editor.clear()
             self.property_table.setRowCount(0)
             return
-        self.selected_label.setText(f"已选择: {node.get('id')} ({TYPE_LABELS.get(node.get('type'), node.get('type'))})")
+        prefix = "页面属性" if node.get("id") == self.active_page().get("id") else "已选择"
+        self.selected_label.setText(f"{prefix}: {node.get('id')} ({TYPE_LABELS.get(node.get('type'), node.get('type'))})")
         self.node_json_editor.setPlainText(json.dumps(node, ensure_ascii=False, indent=2))
         self.populate_property_form(node)
 
@@ -1018,8 +1056,52 @@ class VisualEditorWindow(QMainWindow):
     def update_node_position(self, node_id: str | None, pos: QPointF) -> None:
         if not node_id:
             return
-        self.graph.setdefault("ui", {}).setdefault("positions", {})[node_id] = [round(pos.x(), 1), round(pos.y(), 1)]
+        self.page_positions()[node_id] = [round(pos.x(), 1), round(pos.y(), 1)]
         self.refresh_json_editor()
+
+    def apply_page_ownership(self, template: dict[str, Any]) -> bool:
+        page = self.active_page()
+        kind = page.get("kind")
+        owner_id = page.get("id")
+        node_type = template.get("type")
+        if kind == "root":
+            allowed = {"project.module", "state.machine", "event.topic", "custom.card"}
+            if node_type not in allowed:
+                QMessageBox.warning(self, "不能添加到根页面", "根页面只显示顶层模块、状态机、Topic 和说明卡片；请进入模块页面后再添加 HAL/Sensor/Algorithm/Actuator/Task。")
+                return False
+            if node_type == "custom.card":
+                template.setdefault("scope", "root")
+            return True
+        if kind == "module":
+            if node_type == "project.module":
+                template["parent"] = owner_id
+            elif node_type != "custom.card":
+                template["module"] = owner_id
+            else:
+                template["scope"] = f"module:{owner_id}"
+                template["module"] = owner_id
+            return True
+        if kind == "state":
+            allowed = {"state.state", "state.transition", "custom.card"}
+            if node_type not in allowed:
+                QMessageBox.warning(self, "页面类型不匹配", "状态机页面只建议添加 State / Transition / 说明卡片。")
+                return False
+            if node_type != "custom.card":
+                template["machine"] = owner_id
+            else:
+                template["scope"] = f"state:{owner_id}"
+            return True
+        if kind == "comm":
+            allowed = {"event.publisher", "event.subscriber", "custom.card"}
+            if node_type not in allowed:
+                QMessageBox.warning(self, "页面类型不匹配", "通信页面只建议添加 Publisher / Subscriber / 说明卡片。")
+                return False
+            if node_type != "custom.card":
+                template["topic"] = owner_id
+            else:
+                template["scope"] = f"comm:{owner_id}"
+            return True
+        return True
 
     def add_selected_card(self) -> None:
         item = self.palette.currentItem()
@@ -1030,6 +1112,8 @@ class VisualEditorWindow(QMainWindow):
         if node_type not in NODE_TEMPLATES:
             return
         template = copy.deepcopy(NODE_TEMPLATES[node_type])
+        if not self.apply_page_ownership(template):
+            return
         base_id = template["id"]
         existing = {node.get("id") for node in self.graph.get("nodes", [])}
         suffix = 1
@@ -1038,13 +1122,60 @@ class VisualEditorWindow(QMainWindow):
             suffix += 1
             new_id = f"{base_id}_{suffix}"
         template["id"] = new_id
-        if self.active_module_id and template.get("type") != "project.module":
-            template.setdefault("module", self.active_module_id)
         self.graph.setdefault("nodes", []).append(template)
-        self.graph.setdefault("ui", {}).setdefault("positions", {})[new_id] = [80, 80]
+        self.page_positions()[new_id] = [80, 80]
         self.current_node_id = new_id
         self.refresh_all()
 
+
+
+    def update_open_pages_after_rename(self, old_id: str, new_id: str) -> None:
+        old_keys = {page_key(kind, old_id) for kind in ["module", "state", "comm"]}
+        key_map = {page_key(kind, old_id): page_key(kind, new_id) for kind in ["module", "state", "comm"]}
+        positions_by_page = self.graph.setdefault("ui", {}).setdefault("positions_by_page", {})
+        for old_key, new_key in key_map.items():
+            if old_key in positions_by_page and new_key not in positions_by_page:
+                positions_by_page[new_key] = positions_by_page.pop(old_key)
+        for page in self.open_pages:
+            if page.get("id") == old_id:
+                kind = page.get("kind", "root")
+                page["id"] = new_id
+                page["key"] = page_key(kind, new_id)
+        if self.active_page_key in old_keys:
+            active = next((page for page in self.open_pages if page.get("id") == new_id), None)
+            self.active_page_key = active.get("key", "root") if active else "root"
+
+    def rename_node_references(self, old_id: str, new_id: str) -> None:
+        if not old_id or not new_id or old_id == new_id:
+            return
+        reference_keys = {
+            "module", "parent", "machine", "from", "to", "topic", "source", "target",
+            "input", "hal_name", "comm_name", "sensor", "pid", "left_motor", "right_motor", "flow",
+        }
+        for node in self.graph.get("nodes", []):
+            for key in reference_keys:
+                if node.get(key) == old_id:
+                    node[key] = new_id
+        for edge in self.graph.get("edges", []):
+            if edge.get("from") == old_id:
+                edge["from"] = new_id
+            if edge.get("to") == old_id:
+                edge["to"] = new_id
+        for flow in self.graph.get("flows", []):
+            for key in reference_keys:
+                if flow.get(key) == old_id:
+                    flow[key] = new_id
+        for task in self.graph.get("tasks", []):
+            if task.get("flow") == old_id:
+                task["flow"] = new_id
+        ui = self.graph.setdefault("ui", {})
+        positions = ui.setdefault("positions", {})
+        if old_id in positions:
+            positions[new_id] = positions.pop(old_id)
+        for page_positions in ui.setdefault("positions_by_page", {}).values():
+            if old_id in page_positions:
+                page_positions[new_id] = page_positions.pop(old_id)
+        self.update_open_pages_after_rename(old_id, new_id)
 
     def property_choices(self, node: dict[str, Any], key: str) -> list[str]:
         return core_property_choices(self.graph, node, key, NODE_TEMPLATES)
@@ -1074,6 +1205,7 @@ class VisualEditorWindow(QMainWindow):
         node = self._find_node(self.current_node_id)
         if not node:
             return
+        old_id = str(node.get("id", self.current_node_id))
         updated: dict[str, Any] = {}
         for row in range(self.property_table.rowCount()):
             key_item = self.property_table.item(row, 0)
@@ -1089,11 +1221,14 @@ class VisualEditorWindow(QMainWindow):
             else:
                 raw_value = value_item.text() if value_item else ""
             updated[key] = parse_form_value(raw_value)
+        new_id = str(updated.get("id", old_id))
+        if new_id != old_id:
+            self.rename_node_references(old_id, new_id)
         nodes = self.graph.get("nodes", [])
         for idx, item in enumerate(nodes):
-            if item.get("id") == self.current_node_id:
+            if item.get("id") == old_id or item.get("id") == new_id:
                 nodes[idx] = updated
-                self.current_node_id = str(updated.get("id", self.current_node_id))
+                self.current_node_id = new_id
                 break
         self.refresh_all()
 
@@ -1267,6 +1402,10 @@ class VisualEditorWindow(QMainWindow):
         dst_id = dst.get("id")
         if not src_id or not dst_id:
             return
+        if self.active_page().get("kind") == "root" and src.get("type") == "project.module" and dst.get("type") == "project.module":
+            kind = "module_data_flow"
+            out_port = out_port if out_port not in {"selected", "out"} else "module_output"
+            in_port = in_port if in_port not in {"selected", "in"} else "module_input"
         for edge in edges:
             if edge.get("from") == src_id and edge.get("to") == dst_id and edge.get("from_port") == out_port and edge.get("to_port") == in_port:
                 return
@@ -1408,7 +1547,7 @@ class VisualEditorWindow(QMainWindow):
                 "custom": 1170,
             }
         counters = {key: 0 for key in columns}
-        positions = self.graph.setdefault("ui", {}).setdefault("positions", {})
+        positions = self.page_positions()
         for node in self.visible_nodes():
             node_type = str(node.get("type", "custom"))
             family = node_type.split(".")[0]
@@ -1502,11 +1641,15 @@ class VisualEditorWindow(QMainWindow):
             updated = json.loads(self.node_json_editor.toPlainText())
             if not isinstance(updated, dict):
                 raise ValueError("card JSON must be an object")
+            old_id = str(self.current_node_id)
+            new_id = str(updated.get("id", old_id))
+            if new_id != old_id:
+                self.rename_node_references(old_id, new_id)
             nodes = self.graph.get("nodes", [])
             for idx, node in enumerate(nodes):
-                if node.get("id") == self.current_node_id:
+                if node.get("id") == old_id or node.get("id") == new_id:
                     nodes[idx] = updated
-                    self.current_node_id = updated.get("id")
+                    self.current_node_id = new_id
                     break
             self.refresh_all()
         except Exception as exc:  # noqa: BLE001 - UI needs a simple error dialog.
@@ -1516,7 +1659,10 @@ class VisualEditorWindow(QMainWindow):
         if not self.current_node_id:
             return
         self.graph["nodes"] = [node for node in self.graph.get("nodes", []) if node.get("id") != self.current_node_id]
-        self.graph.get("ui", {}).get("positions", {}).pop(self.current_node_id, None)
+        ui = self.graph.get("ui", {})
+        ui.get("positions", {}).pop(self.current_node_id, None)
+        for page_positions in ui.get("positions_by_page", {}).values():
+            page_positions.pop(self.current_node_id, None)
         self.current_node_id = None
         self.refresh_all()
 

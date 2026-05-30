@@ -20,17 +20,21 @@ def root_page() -> Page:
     return {"key": "root", "kind": "root", "id": "", "title": "根项目", "mode": "blueprint"}
 
 
+def node_display_name(node: dict[str, Any]) -> str:
+    return str(node.get("display_name") or node.get("description") or node.get("id") or "未命名")
+
+
 def page_for_node(node: dict[str, Any]) -> Page | None:
     node_type = node.get("type")
     node_id = str(node.get("id", ""))
     if not node_id:
         return None
     if node_type == "project.module":
-        return {"key": page_key("module", node_id), "kind": "module", "id": node_id, "title": f"模块:{node_id}", "mode": "module"}
+        return {"key": page_key("module", node_id), "kind": "module", "id": node_id, "title": f"模块:{node_display_name(node)}", "mode": "module"}
     if node_type == "state.machine":
-        return {"key": page_key("state", node_id), "kind": "state", "id": node_id, "title": f"状态机:{node_id}", "mode": "state_machine"}
+        return {"key": page_key("state", node_id), "kind": "state", "id": node_id, "title": f"状态机:{node_display_name(node)}", "mode": "state_machine"}
     if node_type == "event.topic":
-        return {"key": page_key("comm", node_id), "kind": "comm", "id": node_id, "title": f"通信:{node_id}", "mode": "pubsub"}
+        return {"key": page_key("comm", node_id), "kind": "comm", "id": node_id, "title": f"通信:{node_display_name(node)}", "mode": "pubsub"}
     return None
 
 
@@ -38,28 +42,41 @@ def page_title(page: Page) -> str:
     return page.get("title") or page.get("key", "root")
 
 
+def is_root_visible_node(node: dict[str, Any]) -> bool:
+    node_type = node.get("type")
+    if node_type == "project.module":
+        return not node.get("parent")
+    if node_type == "custom.card":
+        return node.get("scope", "root") == "root" and not node.get("module")
+    if node_type in {"state.machine", "event.topic"}:
+        return not node.get("module")
+    return False
+
+
 def visible_nodes_for_page(graph: dict[str, Any], page: Page | None) -> list[dict[str, Any]]:
+    nodes = graph.get("nodes", [])
     if not page or page.get("kind") == "root":
-        return graph.get("nodes", [])
+        return [node for node in nodes if is_root_visible_node(node)]
     kind = page.get("kind")
     node_id = page.get("id")
-    nodes = graph.get("nodes", [])
     if kind == "module":
         return [node for node in nodes if node.get("id") == node_id or node.get("module") == node_id or node.get("parent") == node_id]
     if kind == "state":
-        return [node for node in nodes if node.get("id") == node_id or node.get("machine") == node_id]
+        scope = page.get("key")
+        return [node for node in nodes if node.get("id") == node_id or node.get("machine") == node_id or (node.get("type") == "custom.card" and node.get("scope") == scope)]
     if kind == "comm":
-        return [node for node in nodes if node.get("id") == node_id or node.get("topic") == node_id]
+        scope = page.get("key")
+        return [node for node in nodes if node.get("id") == node_id or node.get("topic") == node_id or (node.get("type") == "custom.card" and node.get("scope") == scope)]
     return nodes
 
 
 def page_hint(page: Page | None) -> str:
     if not page or page.get("kind") == "root":
-        return "根项目：通用蓝图视图，双击模块/状态机/Topic 可打开专用页面。"
+        return "根项目：只显示顶层模块、顶层状态机、顶层 Topic 和根级说明卡片；双击进入专用页面查看内部。"
     if page.get("kind") == "module":
-        return "模块页面：显示模块接口与内部节点；当前仍保存到同一 Graph，后续可升级为独立 subgraph 编译。"
+        return "模块页面：显示模块接口与内部节点；新卡片会自动归属当前模块，子模块会写入 parent。"
     if page.get("kind") == "state":
-        return "状态机页面：重点表达 State → Transition → State，端口已区分 machine/from/to。"
+        return "状态机页面：只建议添加 State / Transition；新状态或转换会自动绑定当前状态机。"
     if page.get("kind") == "comm":
-        return "通信页面：围绕 Topic 展示 Publisher / Subscriber 关系，适合检查发布订阅拓扑。"
+        return "通信页面：围绕 Topic 展示 Publisher / Subscriber；新发布者/订阅者会自动绑定当前 Topic。"
     return "蓝图页面"
