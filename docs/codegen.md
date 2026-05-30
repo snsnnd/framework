@@ -324,3 +324,12 @@ python3 tools/efw_studio.py
 `efw_studio.py` 启动项目工作台，项目管理、蓝图编辑、实时校验、代码生成都在同一个窗口内完成。`efw_visual_editor.py` 保留为内嵌编辑器模块，不再作为独立 GUI 入口；纯逻辑能力拆到 `efw_visual_core.py`，共享元数据保留在 `efw_visual_model.py`，生成器仍由 `efw_codegen.py` 负责。
 
 当前状态机 codegen 定位为“基础轻量状态机”：支持状态注册、进入/更新/退出回调和条件 transition。高级能力如 transition priority、transition action、timeout transition、event trigger transition、状态机调试输出、当前状态查询 API 尚未作为完整引擎实现，复杂竞赛车状态逻辑建议继续在 `custom_files` 中封装业务状态机或后续扩展框架状态机层。
+
+### 本轮 Studio 解耦与边界同步
+
+- `tools/efw_studio.py` 仍是唯一推荐 GUI 入口；Studio 内部开始拆成 `tools/efw_studio_core/` 包，当前包含 `templates.py`（框架扫描、卡片摘要、属性选择）、`edge_semantics.py`（端口类型、连接规则、Graph 字段推导）和 `board.py`（Board Profile 默认资源套用）。
+- `tools/efw_visual_editor.py` 继续保留为 PyQt 画布/面板实现，但不再承载所有纯逻辑；后续可以继续拆成 scene、palette、properties、pin planner、code panel 等 UI 子模块。
+- UI 连接规则与 codegen 的 `apply_edge_semantics()` 已共享同一组 pair-level 语义函数，减少“UI 允许连接但生成器不理解”的风险；状态机端口也区分为 `state_machine`、`transition_from`、`transition_to`。
+- `project.module` 已显式包含 `inputs`、`outputs`、`subgraph` 字段，当前 UI 仍以同一 Graph 的模块视图方式呈现，模块内部独立子图和跨模块接口编译会作为下一阶段继续强化。
+- “一键创建条件函数”会单独为 `state.transition`、`logic.if`、`logic.loop` 的 `condition` 生成 `int condition(void)` stub；“一键生成缺失回调”仍负责完整回调 stub。
+- 框架库扫描会附带 `framework_header`、`library_module`、`callbacks`、`schema_fields`、`scan_quality`、`generation` 等元数据；它仍是头文件路径推断，不等价于完整 C 反射，因此复杂依赖宏/回调契约仍需后续用组件描述文件补齐。

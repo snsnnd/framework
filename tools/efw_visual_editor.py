@@ -101,7 +101,16 @@ if str(REPO_ROOT / "tools") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "tools"))
 
 from efw_codegen import c_ident, generate, preview_application_files, validate_graph  # noqa: E402
-from efw_visual_core import discover_framework_templates, node_summary, property_choices as core_property_choices  # noqa: E402
+from efw_studio_core import (  # noqa: E402
+    PORT_COLORS,
+    PORT_RULES,
+    apply_board_profile_defaults_to_graph,
+    apply_pair_semantics,
+    can_connect_ports,
+    discover_framework_templates,
+    node_summary,
+    property_choices as core_property_choices,
+)
 from efw_visual_model import BOARD_PROFILES, GENERATED_APPLICATION_TREE, NODE_GENERATION_STATUS, VISUAL_NODE_CATEGORIES  # noqa: E402
 
 
@@ -198,6 +207,9 @@ NODE_TEMPLATES: dict[str, dict[str, Any]] = {
         "type": "project.module",
         "display_name": "控制模块",
         "description": "用于把一组 HAL/Sensor/Algorithm/Task 归到同一个应用模块或子系统。",
+        "inputs": [],
+        "outputs": [],
+        "subgraph": {"nodes": [], "edges": []},
     },
     "event.topic": {
         "id": "topic_battery",
@@ -365,41 +377,6 @@ void app_on_battery_topic(uint16_t topic_id, const void *data, uint16_t size, vo
 }
 """
 
-PORT_RULES = {
-    "hal.gpio_line_input": {"out": ["hal"]},
-    "hal.custom": {"out": ["hal"]},
-    "sensor.line_tracking": {"in": ["hal"], "out": ["sensor"]},
-    "sensor.custom": {"in": ["hal"], "out": ["sensor"]},
-    "algorithm.pid": {"in": ["sensor"], "out": ["algorithm"]},
-    "algorithm.custom": {"in": ["sensor"], "out": ["algorithm"]},
-    "actuator.motor": {"in": ["control"]},
-    "actuator.custom": {"in": ["hal", "control"]},
-    "module.custom": {"in": ["sensor", "algorithm", "event"], "out": ["module"]},
-    "task.periodic": {"in": ["module", "flow"]},
-    "project.module": {"out": ["group"]},
-    "event.topic": {"out": ["topic"]},
-    "event.publisher": {"in": ["module", "sensor", "topic"], "out": ["event"]},
-    "event.subscriber": {"in": ["topic"], "out": ["event"]},
-    "state.machine": {"out": ["state"]},
-    "state.state": {"in": ["state"], "out": ["state"]},
-    "state.transition": {"in": ["state"], "out": ["state"]},
-    "logic.if": {"in": ["event", "sensor"], "out": ["logic"]},
-    "logic.loop": {"in": ["logic"], "out": ["logic"]},
-}
-
-PORT_COLORS = {
-    "hal": "#26c6da",
-    "sensor": "#66bb6a",
-    "algorithm": "#ab47bc",
-    "control": "#ec407a",
-    "module": "#ffb300",
-    "flow": "#42a5f5",
-    "group": "#7e57c2",
-    "topic": "#ef5350",
-    "event": "#ff7043",
-    "state": "#26a69a",
-    "logic": "#d4e157",
-}
 
 NODE_THEMES = {
     "hal": {"bg": "#12313a", "border": "#26c6da", "accent": "#00acc1"},
@@ -828,10 +805,13 @@ class VisualEditorWindow(QMainWindow):
         delete_btn.clicked.connect(self.delete_code_file)
         stub_btn = QPushButton("一键生成缺失回调")
         stub_btn.clicked.connect(self.generate_missing_callbacks)
+        cond_btn = QPushButton("一键创建条件函数")
+        cond_btn.clicked.connect(self.generate_condition_callbacks)
         controls.addWidget(add_btn)
         controls.addWidget(apply_btn)
         controls.addWidget(delete_btn)
         controls.addWidget(stub_btn)
+        controls.addWidget(cond_btn)
         layout.addLayout(controls)
         layout.addWidget(QLabel("Custom code is saved in graph.custom_files and emitted beside generated application files."))
         return widget
@@ -876,7 +856,7 @@ class VisualEditorWindow(QMainWindow):
     def refresh_scene(self) -> None:
         if hasattr(self, "module_scope_label"):
             label = "根项目" if not self.active_module_id else f"模块：{self.active_module_id}"
-            self.module_scope_label.setText(f"当前视图：{label}（双击 project.module 进入，工具栏可返回根模块）")
+            self.module_scope_label.setText(f"当前视图：{label}（模块卡片可维护 inputs/outputs；当前版本仍在同一 Graph 内显示子图）")
         self.scene.clear()
         self.node_items.clear()
         self.edge_items.clear()
@@ -1059,6 +1039,17 @@ class VisualEditorWindow(QMainWindow):
                 direction = node.get("dir_pin", {})
                 self._add_pin_row(node.get("id", ""), "PWM", pwm.get("timer", 1), pwm.get("channel", 1), "电机速度")
                 self._add_pin_row(node.get("id", ""), "DIR", direction.get("port", "B"), direction.get("pin", 0), "电机方向")
+
+
+    def apply_board_profile_defaults(self) -> None:
+        profile_name = self.board_profile_edit.currentText().strip() or "generic-mock"
+        notes = apply_board_profile_defaults_to_graph(self.graph, BOARD_PROFILES, profile_name)
+        conflicts = self.collect_pin_conflicts()
+        if conflicts:
+            QMessageBox.warning(self, "Pin 冲突", "\n".join(conflicts))
+        else:
+            QMessageBox.information(self, "Board Profile", "已套用默认资源：\n" + "\n".join(notes[:12]))
+        self.refresh_all()
 
     def _add_pin_row(self, node_id: str, usage: str, port, pin, note: str) -> None:
         row = self.pin_table.rowCount()
@@ -1251,6 +1242,33 @@ class VisualEditorWindow(QMainWindow):
                 stubs.append(f"efw_status_t {name}(void) {{\n    return EFW_OK;\n}}\n")
         return stubs
 
+
+    def condition_stubs(self) -> list[str]:
+        self.apply_code_file()
+        existing_content = "\n".join(file.get("content", "") for file in self.graph.get("custom_files", []))
+        stubs: list[str] = []
+        for node in self.graph.get("nodes", []):
+            if node.get("type") in {"state.transition", "logic.if", "logic.loop"}:
+                name = str(node.get("condition", "")).strip()
+                if name and name not in existing_content:
+                    stubs.append(f"int {name}(void) {{\n    return 0;\n}}\n")
+        return stubs
+
+    def generate_condition_callbacks(self) -> None:
+        stubs = self.condition_stubs()
+        if not stubs:
+            QMessageBox.information(self, "条件函数", "没有发现需要生成的条件函数。")
+            return
+        files = self.graph.setdefault("custom_files", [])
+        if not files:
+            files.append({"path": "app_custom.c", "content": "#include \"efw/efw.h\"\n\n"})
+        files[0]["content"] = files[0].get("content", "") + "\n/* Auto-generated condition stubs */\n" + "\n".join(stubs)
+        self.current_code_index = 0
+        self.refresh_code_list()
+        self.select_code_file(0)
+        self.refresh_json_editor()
+        QMessageBox.information(self, "条件函数", f"已生成 {len(stubs)} 个条件函数 stub。")
+
     def generate_missing_callbacks(self) -> None:
         self.apply_code_file()
         stubs = self.callback_stubs()
@@ -1359,6 +1377,8 @@ class VisualEditorWindow(QMainWindow):
     def connect_ports(self, out_port: PortItem, in_port: PortItem) -> bool:
         src = out_port.node_item.node
         dst = in_port.node_item.node
+        if not can_connect_ports(src, dst, out_port.port_type, in_port.port_type):
+            return False
         if not self._connect_pair(src, dst):
             return False
         self.add_graph_edge(src, dst, out_port.port_type, in_port.port_type, "port")
@@ -1383,74 +1403,10 @@ class VisualEditorWindow(QMainWindow):
         QMessageBox.warning(self, "Connect cards", f"No supported connection rule for {a.get('type')} -> {b.get('type')}.")
 
     def _connect_pair(self, src: dict[str, Any], dst: dict[str, Any]) -> bool:
-        src_type = src.get("type")
-        dst_type = dst.get("type")
-        if src_type == "hal.gpio_line_input" and dst_type == "sensor.line_tracking":
-            dst["input"] = src.get("id")
-            return True
-        if src_type == "hal.custom" and dst_type == "sensor.custom":
-            dst["hal_name"] = src.get("id")
-            return True
-        if src_type == "hal.custom" and dst_type == "actuator.custom":
-            dst["hal_name"] = src.get("id")
-            return True
-        if src_type == "project.module" and dst_type != "project.module":
-            dst["module"] = src.get("id")
-            return True
-        if src_type == "event.topic" and dst_type in {"event.publisher", "event.subscriber"}:
-            dst["topic"] = src.get("id")
-            return True
-        if src_type in {"module.custom", "sensor.custom", "sensor.line_tracking"} and dst_type == "event.publisher":
-            dst["source"] = src.get("id")
-            return True
-        if src_type == "event.subscriber" and dst_type == "module.custom":
-            src["target"] = dst.get("id")
-            return True
-        if src_type == "state.machine" and dst_type in {"state.state", "state.transition"}:
-            dst["machine"] = src.get("id")
-            return True
-        if src_type == "state.state" and dst_type == "state.transition":
-            dst["from"] = src.get("id")
-            dst["machine"] = src.get("machine", dst.get("machine"))
-            return True
-        if src_type == "state.transition" and dst_type == "state.state":
-            src["to"] = dst.get("id")
-            src["machine"] = dst.get("machine", src.get("machine"))
-            return True
-        if src_type in {"logic.if", "logic.loop"} and dst_type in {"task.periodic", "module.custom"}:
-            dst["call"] = f"app_logic_{c_ident(src.get('id', 'logic'))}"
-            return True
-        if src_type == "sensor.line_tracking" and dst_type in {"algorithm.pid", "algorithm.custom"}:
-            flow_id = f"{src.get('id')}_flow"
-            flows = self.graph.setdefault("flows", [])
-            existing = next((flow for flow in flows if flow.get("id") == flow_id), None)
-            if existing is None:
-                existing = {"id": flow_id, "type": "control.line_follower", "period_ms": self.graph.get("project", {}).get("tick_ms", 1)}
-                flows.append(existing)
-            existing["sensor"] = src.get("id")
-            existing["pid"] = dst.get("id")
-            if dst_type == "algorithm.custom":
-                dst["io_contract"] = "efw_pid"
-            motors = [node for node in self.graph.get("nodes", []) if node.get("type") == "actuator.motor"]
-            if len(motors) >= 2:
-                existing.setdefault("left_motor", motors[0].get("id"))
-                existing.setdefault("right_motor", motors[1].get("id"))
-            input_node = self._find_node(src.get("input"))
-            channels = int(input_node.get("channels", 5)) if input_node else 5
-            existing.setdefault("weights", [float(i) - (channels - 1) / 2.0 for i in range(channels)])
-            return True
-        if src_type == "actuator.motor" and dst_type == "actuator.motor":
-            flows = self.graph.setdefault("flows", [])
-            existing = flows[-1] if flows else {"id": "line_follower", "type": "control.line_follower"}
-            if not flows:
-                flows.append(existing)
-            existing["left_motor"] = src.get("id")
-            existing["right_motor"] = dst.get("id")
-            return True
-        if src_type == "custom.code" and dst_type in {"sensor.custom", "algorithm.custom", "module.custom", "actuator.custom", "hal.custom", "task.periodic"}:
+        connected = apply_pair_semantics(src, dst, self.graph, c_ident_func=c_ident, overwrite=True)
+        if connected and src.get("type") == "custom.code":
             QMessageBox.information(self, "Connect cards", "Use the Code tab to implement callbacks named by the selected custom card.")
-            return True
-        return False
+        return connected
 
     def apply_node_json(self) -> None:
         if not self.current_node_id:

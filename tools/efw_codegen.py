@@ -14,6 +14,12 @@ import re
 import sys
 from pathlib import Path
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT / "tools") not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT / "tools"))
+
+from efw_studio_core import apply_pair_semantics  # noqa: E402
+
 SUPPORTED_NODE_TYPES = {
     "hal.gpio_line_input",
     "hal.custom",
@@ -258,40 +264,17 @@ def validate_callback_implementations(ctx):
 def apply_edge_semantics(raw_edges, nodes_by_id):
     """Derive common node fields from generic graph.edges before validation.
 
-    This keeps edges as a first-class graph input while preserving the current
-    generator templates that still read node fields/flows for concrete C output.
+    UI port connections and generator validation now share the same pair-level
+    semantic helper, so a connection accepted by the editor has the same field
+    derivation path during code generation.
     """
+    graph_view = {"nodes": list(nodes_by_id.values()), "flows": []}
     for edge in raw_edges:
         src = nodes_by_id.get(edge.get("from"))
         dst = nodes_by_id.get(edge.get("to"))
         if not src or not dst:
             continue
-        src_type = src.get("type")
-        dst_type = dst.get("type")
-        if src_type == "project.module" and dst_type != "project.module":
-            dst.setdefault("module", src.get("id"))
-        elif src_type == "hal.gpio_line_input" and dst_type == "sensor.line_tracking":
-            dst.setdefault("input", src.get("id"))
-        elif src_type == "hal.custom" and dst_type in {"sensor.custom", "actuator.custom"}:
-            dst.setdefault("hal_name", src.get("id"))
-        elif src_type == "event.topic" and dst_type in {"event.publisher", "event.subscriber"}:
-            dst.setdefault("topic", src.get("id"))
-        elif src_type in {"module.custom", "sensor.custom", "sensor.line_tracking"} and dst_type == "event.publisher":
-            dst.setdefault("source", src.get("id"))
-        elif src_type == "event.subscriber" and dst_type == "module.custom":
-            src.setdefault("target", dst.get("id"))
-        elif src_type == "state.machine" and dst_type in {"state.state", "state.transition"}:
-            dst.setdefault("machine", src.get("id"))
-        elif src_type == "state.state" and dst_type == "state.transition":
-            dst.setdefault("from", src.get("id"))
-            dst.setdefault("machine", src.get("machine"))
-        elif src_type == "state.transition" and dst_type == "state.state":
-            src.setdefault("to", dst.get("id"))
-            src.setdefault("machine", dst.get("machine"))
-        elif src_type == "logic.if" and dst_type in {"task.periodic", "module.custom"}:
-            dst.setdefault("call", f"app_logic_{c_ident(src.get('id', 'if'))}")
-        elif src_type == "logic.loop" and dst_type in {"task.periodic", "module.custom"}:
-            dst.setdefault("call", f"app_logic_{c_ident(src.get('id', 'loop'))}")
+        apply_pair_semantics(src, dst, graph_view, c_ident_func=c_ident, overwrite=False)
 
 
 def validate_graph(graph):
