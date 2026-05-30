@@ -309,3 +309,11 @@ efw_ringbuf_push(&rx_rb, byte);
 ```
 
 `state.transition.condition` 必须是 `int condition(void)` / `uint8_t condition(void)` / `bool condition(void)` 风格的用户函数；状态回调使用 `efw_status_t callback(void *ctx)`。编辑器的“一键生成缺失回调”可以生成这些函数 stub。
+
+### 本轮针对 UI/codegen 同步的补充
+
+- “框架库扫描”不再只是空分类：编辑器会递归扫描 `include/efw` 下可映射到当前 schema 的 HAL、Sensor、Actuator、Algorithm、Module、Event、State 头文件，并把扫描来源写入卡片的 `framework_header` 字段。
+- 右侧属性表单继续保留表格布局，但常见引用字段已经变成下拉选择器；复杂数组/对象仍放在高级 JSON 区编辑。
+- `project.module` 现在支持双击进入模块视图；在模块视图里新建非模块卡片会自动归属当前模块，工具栏可返回根项目。
+- 生成预览增加 `backup+overwrite` 状态；实际生成覆盖已有生成文件前会把旧内容保存到 `.efw_backup/`，额外用户文件仍标记为 `preserve` 并保持不动。
+- 卡片摘要进一步包含 PID 参数、transition 条件、logic 条件、motor PWM/DIR 和 GPIO 输入首个引脚，方便在大图里快速辨认节点。

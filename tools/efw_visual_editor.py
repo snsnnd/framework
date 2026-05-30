@@ -106,33 +106,62 @@ from efw_visual_model import BOARD_PROFILES, GENERATED_APPLICATION_TREE, NODE_GE
 
 
 def discover_framework_templates() -> tuple[dict[str, dict[str, Any]], list[str]]:
-    """Scan framework headers/sources and expose safe generated node templates."""
+    """Scan EFW public headers and expose graph templates for the palette.
+
+    The scan is intentionally conservative: it only creates templates that can
+    be represented by the current generator schema, and it records the source
+    header so users can see which framework API the card came from.
+    """
     templates: dict[str, dict[str, Any]] = {}
     order: list[str] = []
-    scan_specs = [
-        (REPO_ROOT / "include" / "efw" / "device" / "sensor", "sensor.custom", "sensor_type", "sensor"),
-        (REPO_ROOT / "include" / "efw" / "device" / "actuator", "actuator.custom", "actuator_type", "actuator"),
-        (REPO_ROOT / "include" / "efw" / "algorithm", "algorithm.custom", "algo_type", "algo"),
-    ]
-    for folder, node_type, type_field, prefix in scan_specs:
-        if not folder.exists():
+    include_root = REPO_ROOT / "include" / "efw"
+    if not include_root.exists():
+        return templates, order
+
+    def add_template(key: str, template: dict[str, Any], header: Path) -> None:
+        if key in templates:
+            return
+        template["framework_header"] = header.relative_to(REPO_ROOT).as_posix()
+        template.setdefault("note", f"从框架头文件 {template['framework_header']} 自动扫描得到；生成时仍会按当前 schema 校验回调。")
+        templates[key] = template
+        order.append(key)
+
+    skip_stems = {"algorithms", "registry", "sensor", "actuator"}
+    for header in sorted(include_root.rglob("*.h")):
+        rel = header.relative_to(include_root)
+        stem = header.stem
+        if stem in skip_stems:
             continue
-        for header in sorted(folder.glob("*.h")):
-            stem = header.stem
-            if stem in {"sensor", "actuator", "algorithms", "registry"}:
-                continue
-            key = f"scan.{node_type}.{stem}"
-            if node_type == "sensor.custom" and stem == "line_tracking":
-                continue
-            if node_type == "actuator.custom" and stem == "motor":
-                continue
-            template = copy.deepcopy(NODE_TEMPLATES.get(node_type, {"id": f"{prefix}_{stem}", "type": node_type}))
-            template["id"] = f"{prefix}_{stem}"
-            template["type"] = node_type
-            template[type_field] = stem if node_type != "algorithm.custom" else "EFW_ALGO_CUSTOM"
-            template.setdefault("note", f"从框架头文件 {header.relative_to(REPO_ROOT)} 扫描得到；若需要完整生成，请补充回调。")
-            templates[key] = template
-            order.append(key)
+        parts = rel.parts
+        if parts[:2] == ("device", "sensor") and stem not in {"line_tracking", "custom"}:
+            template = copy.deepcopy(NODE_TEMPLATES["sensor.custom"])
+            template.update({"id": f"sensor_{stem}", "sensor_type": stem, "read": f"app_sensor_{stem}_read"})
+            add_template(f"scan.sensor.{stem}", template, header)
+        elif parts[:2] == ("device", "actuator") and stem not in {"motor"}:
+            template = copy.deepcopy(NODE_TEMPLATES["actuator.custom"])
+            template.update({"id": f"actuator_{stem}", "actuator_type": stem, "write": f"app_actuator_{stem}_write"})
+            add_template(f"scan.actuator.{stem}", template, header)
+        elif parts[0] == "algorithm":
+            template = copy.deepcopy(NODE_TEMPLATES["algorithm.custom"])
+            template.update({"id": f"algo_{stem}", "run": f"app_algo_{stem}_run", "algo_type": "EFW_ALGO_CUSTOM"})
+            add_template(f"scan.algorithm.{stem}", template, header)
+        elif parts == ("hal", "hal.h"):
+            for hal_type in ["gpio", "uart", "i2c", "spi", "adc", "pwm", "timer"]:
+                template = copy.deepcopy(NODE_TEMPLATES["hal.custom"])
+                template.update({"id": f"hal_{hal_type}", "hal_type": hal_type, "init": f"app_hal_{hal_type}_init"})
+                add_template(f"scan.hal.{hal_type}", template, header)
+        elif parts == ("module", "module.h"):
+            template = copy.deepcopy(NODE_TEMPLATES["module.custom"])
+            template.update({"id": "module_service", "module_type": "EFW_MODULE_SERVICE"})
+            add_template("scan.module.service", template, header)
+        elif parts == ("core", "event.h"):
+            template = copy.deepcopy(NODE_TEMPLATES["event.topic"])
+            template.update({"id": "topic_event", "payload_type": "custom"})
+            add_template("scan.event.topic", template, header)
+        elif parts == ("state", "state_machine.h"):
+            template = copy.deepcopy(NODE_TEMPLATES["state.machine"])
+            template.update({"id": "scanned_state_machine"})
+            add_template("scan.state.machine", template, header)
     return templates, order
 
 NODE_TEMPLATES: dict[str, dict[str, Any]] = {
@@ -513,6 +542,14 @@ def display_label(template_key: str) -> str:
 
 def node_summary(node: dict[str, Any]) -> str:
     node_type = node.get("type", "")
+    if node_type == "actuator.motor":
+        pwm = node.get("pwm", {})
+        direction = node.get("dir_pin", {})
+        return f"PWM=T{pwm.get('timer')}/CH{pwm.get('channel')} · DIR={direction.get('port')}{direction.get('pin')}"
+    if node_type == "hal.gpio_line_input":
+        pins = node.get("pins", [])
+        first = pins[0] if pins else {}
+        return f"channels={node.get('channels')} · first={first.get('port')}{first.get('pin')}"
     keys_by_type = {
         "algorithm.pid": ["kp", "ki", "kd", "out_min", "out_max"],
         "task.periodic": ["period_ms", "call"],
@@ -753,9 +790,14 @@ class VisualEditorWindow(QMainWindow):
         left_layout.addWidget(add_btn)
         root_splitter.addWidget(left)
 
+        canvas = QWidget()
+        canvas_layout = QVBoxLayout(canvas)
+        self.module_scope_label = QLabel("当前视图：根项目")
+        canvas_layout.addWidget(self.module_scope_label)
         self.scene = QGraphicsScene()
         self.view = QGraphicsView(self.scene)
-        root_splitter.addWidget(self.view)
+        canvas_layout.addWidget(self.view)
+        root_splitter.addWidget(canvas)
 
         right_tabs = QTabWidget()
         right_tabs.addTab(self._build_properties_tab(), "属性表单")
@@ -918,6 +960,9 @@ class VisualEditorWindow(QMainWindow):
         self.refresh_all()
 
     def refresh_scene(self) -> None:
+        if hasattr(self, "module_scope_label"):
+            label = "根项目" if not self.active_module_id else f"模块：{self.active_module_id}"
+            self.module_scope_label.setText(f"当前视图：{label}（双击 project.module 进入，工具栏可返回根模块）")
         self.scene.clear()
         self.node_items.clear()
         self.edge_items.clear()
@@ -1022,6 +1067,8 @@ class VisualEditorWindow(QMainWindow):
             suffix += 1
             new_id = f"{base_id}_{suffix}"
         template["id"] = new_id
+        if self.active_module_id and template.get("type") != "project.module":
+            template.setdefault("module", self.active_module_id)
         self.graph.setdefault("nodes", []).append(template)
         self.graph.setdefault("ui", {}).setdefault("positions", {})[new_id] = [80, 80]
         self.current_node_id = new_id

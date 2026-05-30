@@ -1278,7 +1278,7 @@ def preview_application_files(graph_path: Path, out_dir: Path):
         elif target.read_text(encoding="utf-8") == content:
             status = "same"
         else:
-            status = "overwrite"
+            status = "backup+overwrite"
         preview.append({"path": rel_path, "status": status})
     if out_dir.exists():
         generated_set = set(files)
@@ -1295,6 +1295,11 @@ def generate(graph_path: Path, out_dir: Path, force: bool) -> None:
     if out_dir.exists() and any(out_dir.iterdir()):
         require(force, f"output directory already exists: {out_dir} (pass --force to overwrite generated files; non-generated files are preserved)")
     for rel_path, content in render_application_files(ctx).items():
+        target = out_dir / rel_path
+        if target.exists() and target.read_text(encoding="utf-8") != content:
+            backup = out_dir / ".efw_backup" / rel_path
+            backup.parent.mkdir(parents=True, exist_ok=True)
+            backup.write_text(target.read_text(encoding="utf-8"), encoding="utf-8")
         write_file(out_dir, rel_path, content)
 
 

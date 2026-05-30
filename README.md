@@ -109,7 +109,7 @@ python3 tools/efw_project_manager.py
 ## 基础数据结构
 EFW 现在通过 `efw/efw.h` 直接暴露无动态内存的数据结构 API：`efw_ringbuf_t`、`efw_queue_t`、`efw_stack_t`，适合 UART 缓冲、事件/命令队列、解析器栈等裸机场景。实现位于 `include/efw/core/ds.h`，由调用方提供存储数组，不依赖 OS。
 
-可视化工具已开始让 UI 节点能力与 codegen 同步：左侧模板库会扫描框架头文件形成“框架库扫描”分组，属性面板对常见引用字段提供下拉选择，Board Profile 数据库位于 `examples/board_profiles/board_profiles.json`，状态机与基本 if/loop 节点已经生成轻量 C glue，生成前会显示 create/overwrite/same/preserve 摘要，并且覆盖时只写生成文件、保留额外用户文件。
+可视化工具已开始让 UI 节点能力与 codegen 同步：左侧模板库会递归扫描 `include/efw` 形成“框架库扫描”分组，属性面板对常见引用字段提供下拉选择，`project.module` 支持双击进入模块视图，Board Profile 数据库位于 `examples/board_profiles/board_profiles.json`，状态机与基本 if/loop 节点已经生成轻量 C glue，生成前会显示 create/backup+overwrite/same/preserve 摘要，并且覆盖时会把旧生成文件备份到 `.efw_backup/`、保留额外用户文件。
 
 ## CMake 构建
 CMake 只用于主机侧编译验证或支持 CMake 的工程，不是裸机接入必需项。
