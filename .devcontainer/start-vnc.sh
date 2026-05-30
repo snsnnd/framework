@@ -135,4 +135,4 @@ echo "If you run GUI apps from VS Code terminal, use:"
 echo "export DISPLAY=${DISPLAY}"
 echo
 echo "Example:"
-echo "python3 tools/efw_project_manager.py"
+echo "python3 tools/efw_studio.py"

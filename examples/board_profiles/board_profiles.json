@@ -1,26 +1,94 @@
 {
   "generic-mock": {
     "label": "通用 Mock / Host 仿真",
-    "ports": ["A", "B", "C", "D"],
+    "ports": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
     "pins_per_port": 16,
-    "timers": [1, 2, 3, 4],
-    "pwm_channels": [1, 2, 3, 4],
+    "timers": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "pwm_channels": [
+      1,
+      2,
+      3,
+      4
+    ],
     "notes": "适合主机编译验证和无板卡演示。"
   },
   "stm32-basic": {
     "label": "STM32 基础板卡",
-    "ports": ["A", "B", "C"],
+    "ports": [
+      "A",
+      "B",
+      "C"
+    ],
     "pins_per_port": 16,
-    "timers": [1, 2, 3, 4],
-    "pwm_channels": [1, 2, 3, 4],
+    "timers": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "pwm_channels": [
+      1,
+      2,
+      3,
+      4
+    ],
     "notes": "用于生成 STM32 GPIO/PWM 规划草稿，实际复用功能仍需按 CubeMX/手册核对。"
   },
   "esp32-basic": {
     "label": "ESP32 基础板卡",
-    "ports": ["GPIO"],
+    "ports": [
+      "GPIO"
+    ],
     "pins_per_port": 40,
-    "timers": [0, 1, 2, 3],
-    "pwm_channels": [0, 1, 2, 3, 4, 5, 6, 7],
+    "timers": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "pwm_channels": [
+      0,
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7
+    ],
     "notes": "用于 ESP-IDF GPIO/LEDC 规划草稿。"
+  },
+  "robot-line-tracking": {
+    "label": "循迹小车 Mock / 通用竞赛底盘",
+    "ports": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "pins_per_port": 16,
+    "timers": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "pwm_channels": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "notes": "用于循迹小车示例 Graph 的板级资源草稿；真实 MCU 复用仍需按手册/CubeMX/SDK 核对。"
   }
 }

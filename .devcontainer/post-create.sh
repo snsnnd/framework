@@ -48,6 +48,6 @@ To check VNC:
 
 To run GUI tools:
   export DISPLAY=:1
-  python3 tools/efw_project_manager.py
+  python3 tools/efw_studio.py
 
 EOF

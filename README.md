@@ -92,19 +92,19 @@ python3 tools/efw_codegen.py examples/graphs/generic_embedded_app.json \
   --force
 ```
 
-生成代码仍然只依赖 EFW 的 application runtime 和 bind/update 句柄模式；真实项目可把 STM32 HAL、ESP-IDF、MSPM0 DriverLib 或自有 BSP glue 放进 `board_adapters`，生成器会检查回调函数存在、签名匹配并加入 CMake 片段。第二阶段增加 PyQt 编辑器：`python3 tools/efw_visual_editor.py`，可拖动卡片、用 Connect Selected 辅助连线、编辑节点 JSON，并在 Code 区写自定义 `.c/.h` 文件；同时新增项目管理界面 `python3 tools/efw_project_manager.py`，用于管理 graph、输出目录、板级 profile、notes 和一键 Validate/Generate。自定义算法、模块和周期任务会与可视化卡片一起生成 application。更多说明见 `docs/codegen.md`，环境需求见 `docs/environment.md`。
+生成代码仍然只依赖 EFW 的 application runtime 和 bind/update 句柄模式；真实项目可把 STM32 HAL、ESP-IDF、MSPM0 DriverLib 或自有 BSP glue 放进 `board_adapters`，生成器会检查回调函数存在、签名匹配并加入 CMake 片段。第二阶段增加统一 PyQt 工作台：`python3 tools/efw_studio.py`，在同一窗口内管理 graph、输出目录、板级 profile、notes、蓝图画布、Connect Selected 连线、节点属性和 Code 区自定义 `.c/.h` 文件。自定义算法、模块和周期任务会与可视化卡片一起生成 application。更多说明见 `docs/codegen.md`，环境需求见 `docs/environment.md`。
 
 ## 可视化工具环境
 代码生成器只依赖 Python 标准库；PyQt 可视化编辑器和项目管理界面需要安装 Qt 绑定：
 
 ```bash
 python3 -m pip install -r tools/requirements-visual.txt
-python3 tools/efw_project_manager.py
+python3 tools/efw_studio.py
 ```
 
 `examples/projects/generic_embedded_app.efw_project.json` 是一个项目管理界面可直接打开的示例项目文件。仓库还包含 `.devcontainer/`，在 GitHub Codespaces 中可通过 6080 端口打开 noVNC 桌面来运行 PyQt 项目管理器，并可用 `bash .devcontainer/check-vnc.sh` 自检 VNC/noVNC/PyQt；详见 `docs/environment.md`。
 
-可视化工作台已全面中文化，并新增项目创建向导、属性表单、端口拖线连线、实时校验面板、Board Profile / Pin Planner、模板库入口、代码生成映射视图、自动布局、分类配色主题、项目模块分组卡片、统一 `graph.edges`、Graph → Application 文件树预览、任务调度视图、一键生成缺失回调、状态机卡片、基础 if/loop 逻辑卡片和事件总线发布/订阅卡片；项目管理页和蓝图编辑页也整合在同一个 `efw_project_manager.py` 工作台内。Codespaces devcontainer 会安装 Noto CJK 字体，避免 VNC 中中文显示为空格或方块。生成 application 时如果输出目录非空会先确认覆盖，项目管理器会把 Board Profile 注入 Graph 后再生成。
+可视化工作台已全面中文化，并新增项目创建向导、属性表单、端口拖线连线、实时校验面板、Board Profile / Pin Planner、模板库入口、代码生成映射视图、自动布局、分类配色主题、项目模块分组卡片、统一 `graph.edges`、Graph → Application 文件树预览、任务调度视图、一键生成缺失回调、状态机卡片、基础 if/loop 逻辑卡片和事件总线发布/订阅卡片；项目管理页和蓝图编辑页也整合在统一入口 `tools/efw_studio.py` 工作台内。Codespaces devcontainer 会安装 Noto CJK 字体，避免 VNC 中中文显示为空格或方块。生成 application 时如果输出目录非空会先确认覆盖，项目管理器会把 Board Profile 注入 Graph 后再生成。
 
 ## 基础数据结构
 EFW 现在通过 `efw/efw.h` 直接暴露无动态内存的数据结构 API：`efw_ringbuf_t`、`efw_queue_t`、`efw_stack_t`，适合 UART 缓冲、事件/命令队列、解析器栈等裸机场景。实现位于 `include/efw/core/ds.h`，由调用方提供存储数组，不依赖 OS。

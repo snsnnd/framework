@@ -27,7 +27,6 @@ if importlib.util.find_spec("PyQt6") is not None:
         QLabel,
         QLineEdit,
         QComboBox,
-        QComboBox,
         QListWidget,
         QListWidgetItem,
         QMainWindow,
@@ -51,7 +50,6 @@ elif importlib.util.find_spec("PyQt5") is not None:
         QInputDialog,
         QLabel,
         QLineEdit,
-        QComboBox,
         QComboBox,
         QListWidget,
         QListWidgetItem,
@@ -235,7 +233,10 @@ class ProjectManagerWindow(QMainWindow):
         self.name_edit.setText(str(self.project.get("name", "")))
         self.graph_edit.setText(str(self.project.get("graph_path", "")))
         self.output_edit.setText(str(self.project.get("output_dir", "")))
-        self.board_edit.setText(str(self.project.get("board_profile", "")))
+        profile = str(self.project.get("board_profile", "generic-mock"))
+        if self.board_edit.findText(profile) < 0:
+            self.board_edit.addItem(profile)
+        self.board_edit.setCurrentText(profile)
         self.notes_edit.setPlainText(str(self.project.get("notes", "")))
 
     def apply_form_to_project(self) -> None:
@@ -407,6 +408,7 @@ class ProjectManagerWindow(QMainWindow):
 
 
 def main() -> int:
+    print("提示：推荐统一入口为 python3 tools/efw_studio.py；当前脚本作为兼容入口继续启动工作台。", file=sys.stderr)
     if QApplication is None:
         print("未安装 PyQt。请安装 PyQt6 或 PyQt5 后再运行 tools/efw_project_manager.py。", file=sys.stderr)
         return 1

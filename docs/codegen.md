@@ -1,6 +1,6 @@
 # EFW 代码生成器与 PyQt 可视化编辑器
 
-`tools/efw_codegen.py` 是可视化蓝图系统的代码生成后端：它把 Graph JSON 生成可复制到真实工程的 `application/` 目录。`tools/efw_visual_editor.py` 是 PyQt 桌面编辑器：它提供卡片画布、连线辅助、节点 JSON 属性编辑、完整 Graph JSON 编辑、Code 标签页和一键生成入口。`tools/efw_project_manager.py` 在此基础上增加项目管理界面，用 `.efw_project.json` 记录 graph 路径、输出目录、板级 profile 和 notes。
+`tools/efw_codegen.py` 是可视化蓝图系统的代码生成后端：它把 Graph JSON 生成可复制到真实工程的 `application/` 目录。`tools/efw_studio.py` 是唯一推荐 GUI 入口：它把项目管理、蓝图编辑、实时校验、属性面板、Code 标签页和一键生成集中在同一个 PyQt 工作台里。`tools/efw_visual_editor.py` 保留为工作台内嵌蓝图编辑器模块。
 
 当前版本定位为 **通用嵌入式 application 生成器**，循迹车只是一个内置 flow 示例。生成器现在支持：
 
@@ -56,7 +56,7 @@ CMakeLists.generated.txt  可选的 CMake 片段，会包含 custom_files/board_
 安装 PyQt6 或 PyQt5 后可以先启动项目管理界面：
 
 ```bash
-python3 tools/efw_project_manager.py
+python3 tools/efw_studio.py
 ```
 
 项目管理界面用于维护 `.efw_project.json`，包括项目名、Graph JSON、输出 application 目录、板级 profile 和交接 notes。示例项目文件：
@@ -65,13 +65,7 @@ python3 tools/efw_project_manager.py
 examples/projects/generic_embedded_app.efw_project.json
 ```
 
-也可以直接启动蓝图编辑器：
-
-```bash
-python3 tools/efw_visual_editor.py
-```
-
-编辑器包含三块核心区域：
+蓝图编辑页作为 `efw_studio.py` 工作台的一部分打开，包含三块核心区域：
 
 - **Card Palette / Canvas**：添加并拖动 HAL、传感器、电机、PID、自定义算法、自定义模块、周期任务、说明卡片等。
 - **Connect Selected**：在画布上选中两张卡后自动写入常见连接，例如 HAL → Sensor、HAL → Actuator、Sensor → PID/Custom Algorithm，减少手写 Graph JSON。
@@ -235,13 +229,13 @@ efw_status_t app_line_custom_pid_run(void *ctx, const void *in, void *out);
 最新版本把项目管理器作为中文入口，建议优先运行：
 
 ```bash
-python3 tools/efw_project_manager.py
+python3 tools/efw_studio.py
 ```
 
 它提供：
 
 - **项目创建向导**：从通用嵌入式应用、循迹小车、循迹 + 自定义代码等模板创建 `.efw_project.json`。
-- **统一项目入口**：项目名、Graph JSON、输出目录、Board Profile、notes、Validate、Generate 和蓝图编辑入口集中在一个窗口里，`tools/efw_visual_editor.py` 保留为高级直接编辑入口。
+- **统一项目入口**：项目名、Graph JSON、输出目录、Board Profile、notes、Validate、Generate 和蓝图编辑入口集中在一个窗口里，`tools/efw_visual_editor.py` 保留为内嵌编辑器模块，兼容脚本会提示改用 `tools/efw_studio.py`。
 - **覆盖保护**：项目管理器和蓝图编辑器生成 application 时，如果输出目录已经存在且非空，会先弹出覆盖确认，不再无条件 `force=True`。
 - **Board Profile 注入**：项目的 `board_profile` 会写入临时 Graph 的 `board.profile` 后再生成；蓝图编辑器的 Board Profile / Pin Planner 会把配置写回 `graph.board.profile` 和 `graph.board.pin_plan`。
 
@@ -317,3 +311,16 @@ efw_ringbuf_push(&rx_rb, byte);
 - `project.module` 现在支持双击进入模块视图；在模块视图里新建非模块卡片会自动归属当前模块，工具栏可返回根项目。
 - 生成预览增加 `backup+overwrite` 状态；实际生成覆盖已有生成文件前会把旧内容保存到 `.efw_backup/`，额外用户文件仍标记为 `preserve` 并保持不动。
 - 卡片摘要进一步包含 PID 参数、transition 条件、logic 条件、motor PWM/DIR 和 GPIO 输入首个引脚，方便在大图里快速辨认节点。
+
+
+## 工具入口与解耦
+
+推荐只使用一个 GUI 启动入口：
+
+```bash
+python3 tools/efw_studio.py
+```
+
+`efw_studio.py` 启动项目工作台，项目管理、蓝图编辑、实时校验、代码生成都在同一个窗口内完成。`efw_visual_editor.py` 保留为内嵌编辑器模块，不再作为独立 GUI 入口；纯逻辑能力拆到 `efw_visual_core.py`，共享元数据保留在 `efw_visual_model.py`，生成器仍由 `efw_codegen.py` 负责。
+
+当前状态机 codegen 定位为“基础轻量状态机”：支持状态注册、进入/更新/退出回调和条件 transition。高级能力如 transition priority、transition action、timeout transition、event trigger transition、状态机调试输出、当前状态查询 API 尚未作为完整引擎实现，复杂竞赛车状态逻辑建议继续在 `custom_files` 中封装业务状态机或后续扩展框架状态机层。

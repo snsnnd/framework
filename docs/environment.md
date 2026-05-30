@@ -2,7 +2,7 @@
 
 ## 基础构建环境
 
-- Python 3.10 或更新版本：运行 `tools/efw_codegen.py`、`tools/efw_visual_editor.py` 和 `tools/efw_project_manager.py`。
+- Python 3.10 或更新版本：运行 `tools/efw_codegen.py` 和统一 PyQt 工作台 `tools/efw_studio.py`。
 - CMake 3.15 或更新版本：主机侧构建验证。
 - C99 编译器：例如 GCC/Clang；嵌入式 IDE 可使用 Keil、STM32CubeIDE、ESP-IDF、MSPM0 SDK 工程等。
 
@@ -26,7 +26,7 @@ python3 -m pip install "PyQt5>=5.15"
 
 ```bash
 # 项目管理界面：管理 graph、输出目录、板级 profile 和 notes
-python3 tools/efw_project_manager.py
+python3 tools/efw_studio.py
 
 # 蓝图编辑器：编辑卡片、连线、Graph JSON 和 custom_files
 python3 tools/efw_visual_editor.py
@@ -55,7 +55,7 @@ python3 tools/efw_codegen.py examples/graphs/generic_embedded_app.json \
 4. 进入桌面后打开终端，运行：
 
 ```bash
-python3 tools/efw_project_manager.py
+python3 tools/efw_studio.py
 ```
 
 如果只需要命令行生成，不需要 VNC 桌面，可以直接在 Codespaces 终端运行 `tools/efw_codegen.py`。`start-vnc.sh` 每次容器启动都会运行 `check-vnc.sh --quick`，确保 5901/6080 端口已经监听且 noVNC 页面能返回。
