@@ -1,0 +1,145 @@
+{
+  "project": {
+    "name": "generated_line_tracking_car_custom",
+    "tick_ms": 1
+  },
+  "nodes": [
+    {
+      "id": "line_input",
+      "type": "hal.gpio_line_input",
+      "channels": 5,
+      "pins": [
+        {
+          "port": "A",
+          "pin": 0
+        },
+        {
+          "port": "A",
+          "pin": 1
+        },
+        {
+          "port": "A",
+          "pin": 2
+        },
+        {
+          "port": "A",
+          "pin": 3
+        },
+        {
+          "port": "A",
+          "pin": 4
+        }
+      ]
+    },
+    {
+      "id": "line_sensor_5ch",
+      "type": "sensor.line_tracking",
+      "input": "line_input"
+    },
+    {
+      "id": "left_motor",
+      "type": "actuator.motor",
+      "pwm": {
+        "timer": 1,
+        "channel": 1
+      },
+      "dir_pin": {
+        "port": "B",
+        "pin": 0
+      }
+    },
+    {
+      "id": "right_motor",
+      "type": "actuator.motor",
+      "pwm": {
+        "timer": 1,
+        "channel": 2
+      },
+      "dir_pin": {
+        "port": "B",
+        "pin": 1
+      }
+    },
+    {
+      "id": "line_pid",
+      "type": "algorithm.pid",
+      "kp": 18.0,
+      "ki": 0.0,
+      "kd": 2.5,
+      "kff": 0.0,
+      "integral_min": -20.0,
+      "integral_max": 20.0,
+      "out_min": -60.0,
+      "out_max": 60.0,
+      "anti_windup": true
+    },
+    {
+      "id": "custom_speed_limiter",
+      "type": "algorithm.custom",
+      "algo_type": "EFW_ALGO_CUSTOM",
+      "ctx": "0",
+      "run": "app_custom_algo_run"
+    },
+    {
+      "id": "custom_health_module",
+      "type": "module.custom",
+      "module_type": "EFW_MODULE_SERVICE",
+      "ctx": "0",
+      "init": "app_custom_module_init",
+      "poll": "app_custom_module_poll"
+    },
+    {
+      "id": "custom_task_10ms",
+      "type": "task.periodic",
+      "period_ms": 10,
+      "call": "app_custom_task_10ms"
+    },
+    {
+      "id": "custom_note",
+      "type": "custom.card",
+      "note": "Cards can describe custom logic while implementation lives in custom_files."
+    }
+  ],
+  "flows": [
+    {
+      "id": "line_follower",
+      "type": "control.line_follower",
+      "sensor": "line_sensor_5ch",
+      "pid": "line_pid",
+      "left_motor": "left_motor",
+      "right_motor": "right_motor",
+      "weights": [
+        -2.0,
+        -1.0,
+        0.0,
+        1.0,
+        2.0
+      ],
+      "base_speed": 65.0,
+      "min_speed": 0.0,
+      "max_speed": 100.0,
+      "dt": 0.001,
+      "active_value": 1,
+      "binary_mode": true,
+      "period_ms": 1
+    }
+  ],
+  "tasks": [
+    {
+      "id": "battery_service_20ms",
+      "type": "task.periodic",
+      "period_ms": 20,
+      "call": "app_custom_task_20ms"
+    }
+  ],
+  "custom_files": [
+    {
+      "path": "app_custom.c",
+      "content": "/**\n * @file    app_custom.c\n * @brief   Example custom code generated beside visual cards.\n */\n\n#include \"efw/efw.h\"\n\nefw_status_t app_custom_algo_run(void *ctx, const void *in, void *out) {\n    EFW_UNUSED(ctx);\n    EFW_UNUSED(in);\n    EFW_UNUSED(out);\n    return EFW_OK;\n}\n\nefw_status_t app_custom_module_init(void *ctx) {\n    EFW_UNUSED(ctx);\n    return EFW_OK;\n}\n\nefw_status_t app_custom_module_poll(void *ctx) {\n    EFW_UNUSED(ctx);\n    return EFW_OK;\n}\n\nefw_status_t app_custom_task_10ms(void) {\n    return EFW_OK;\n}\n\nefw_status_t app_custom_task_20ms(void) {\n    return EFW_OK;\n}\n"
+    }
+  ],
+  "board": {
+    "profile": "robot-line-tracking",
+    "pin_plan": []
+  }
+}

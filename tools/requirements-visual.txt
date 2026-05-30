@@ -1,0 +1,4 @@
+# EFW visual tools runtime requirements
+# Python: 3.10+
+# Install one Qt binding. PyQt6 is preferred; PyQt5 is kept as a fallback in code.
+PyQt6>=6.5

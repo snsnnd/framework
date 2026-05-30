@@ -27,8 +27,8 @@ EFW 是一个面向裸机和轻量 RTOS 的嵌入式 C 框架，可直接作为�
 - `include/efw/module/`：模块生命周期接口
 - `include/efw/state/`：状态机接口
 - `src/`：库源码，按功能分层，可按需加入 Keil、STM32CubeIDE、ESP-IDF 或 CMake 工程
-- `application/`：接近真实工程结构的应用示例
-- `docs/`：设计说明
+- `application/`：接近真实工程结构的应用示例（`simple_blink/` 是最小例，`smart_environment_controller/` 展示多组件组合，`line_tracking_car/` 展示领域应用）
+- `docs/`：设计说明和环境需求
 
 ## 快速接入
 1. 把 `include/` 加入头文件路径。
@@ -77,6 +77,39 @@ STATE：src/state/state_machine_registry.c
 5. 在 `main()` 初始化阶段调用 `efw_init()`，然后注册平台 HAL 和业务模块。
 
 如果裁剪某个功能，需要在 Keil 的 `C/C++ > Define` 中同步关闭对应宏，例如 `EFW_ENABLE_COMM=0`。使用 `src/efw_all.c` 时，关闭的模块不会被包含进编译单元。
+
+## Application 示例
+- `application/simple_blink/`：最小通用嵌入式应用，只包含 GPIO HAL、LED Actuator 和一个周期 Module，适合学习注册、初始化、主循环调度的最短路径。
+- `application/smart_environment_controller/`：复杂一点的环境控制器，组合 ADC/I2C/GPIO HAL、自定义温湿度传感器、IMU、滑动均值、互补滤波、事件总线、状态机、继电器和告警 LED，用来展示 EFW 作为通用嵌入式开发工具的组织方式。
+- `application/line_tracking_car/`：循迹车示例，保留为机器人/控制类项目的领域模板。
+
+## 代码生成器第一阶段
+可视化蓝图系统的第一步已经落到 CLI：`tools/efw_codegen.py` 可读取图描述 JSON，并生成可复制到真实项目的 `application/` 目录。当前定位为通用嵌入式 application 生成工具：支持自定义 HAL/SENSOR/ACTUATOR/ALGORITHM/MODULE/TASK 卡片，也保留循迹车 LineFollower 作为一个内置示例 flow。
+
+```bash
+python3 tools/efw_codegen.py examples/graphs/generic_embedded_app.json \
+  -o application/generated_generic_embedded_app \
+  --force
+```
+
+生成代码仍然只依赖 EFW 的 application runtime 和 bind/update 句柄模式；真实项目可把 STM32 HAL、ESP-IDF、MSPM0 DriverLib 或自有 BSP glue 放进 `board_adapters`，生成器会检查回调函数存在、签名匹配并加入 CMake 片段。第二阶段增加 PyQt 编辑器：`python3 tools/efw_visual_editor.py`，可拖动卡片、用 Connect Selected 辅助连线、编辑节点 JSON，并在 Code 区写自定义 `.c/.h` 文件；同时新增项目管理界面 `python3 tools/efw_project_manager.py`，用于管理 graph、输出目录、板级 profile、notes 和一键 Validate/Generate。自定义算法、模块和周期任务会与可视化卡片一起生成 application。更多说明见 `docs/codegen.md`，环境需求见 `docs/environment.md`。
+
+## 可视化工具环境
+代码生成器只依赖 Python 标准库；PyQt 可视化编辑器和项目管理界面需要安装 Qt 绑定：
+
+```bash
+python3 -m pip install -r tools/requirements-visual.txt
+python3 tools/efw_project_manager.py
+```
+
+`examples/projects/generic_embedded_app.efw_project.json` 是一个项目管理界面可直接打开的示例项目文件。仓库还包含 `.devcontainer/`，在 GitHub Codespaces 中可通过 6080 端口打开 noVNC 桌面来运行 PyQt 项目管理器，并可用 `bash .devcontainer/check-vnc.sh` 自检 VNC/noVNC/PyQt；详见 `docs/environment.md`。
+
+可视化工作台已全面中文化，并新增项目创建向导、属性表单、端口拖线连线、实时校验面板、Board Profile / Pin Planner、模板库入口、代码生成映射视图、自动布局、分类配色主题、项目模块分组卡片、统一 `graph.edges`、Graph → Application 文件树预览、任务调度视图、一键生成缺失回调、状态机卡片、基础 if/loop 逻辑卡片和事件总线发布/订阅卡片；项目管理页和蓝图编辑页也整合在同一个 `efw_project_manager.py` 工作台内。Codespaces devcontainer 会安装 Noto CJK 字体，避免 VNC 中中文显示为空格或方块。生成 application 时如果输出目录非空会先确认覆盖，项目管理器会把 Board Profile 注入 Graph 后再生成。
+
+## 基础数据结构
+EFW 现在通过 `efw/efw.h` 直接暴露无动态内存的数据结构 API：`efw_ringbuf_t`、`efw_queue_t`、`efw_stack_t`，适合 UART 缓冲、事件/命令队列、解析器栈等裸机场景。实现位于 `include/efw/core/ds.h`，由调用方提供存储数组，不依赖 OS。
+
+可视化工具已开始让 UI 节点能力与 codegen 同步：左侧模板库会扫描框架头文件形成“框架库扫描”分组，属性面板对常见引用字段提供下拉选择，Board Profile 数据库位于 `examples/board_profiles/board_profiles.json`，状态机与基本 if/loop 节点已经生成轻量 C glue，生成前会显示 create/overwrite/same/preserve 摘要，并且覆盖时只写生成文件、保留额外用户文件。
 
 ## CMake 构建
 CMake 只用于主机侧编译验证或支持 CMake 的工程，不是裸机接入必需项。

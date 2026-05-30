@@ -133,6 +133,28 @@ target_compile_definitions(efw PUBLIC
 )
 
 if(EFW_BUILD_APPLICATIONS)
+    add_executable(efw_app_simple_blink
+        application/simple_blink/main.c
+        application/simple_blink/app_bootstrap.c
+        application/simple_blink/app_components.c
+        application/simple_blink/app_platform.c
+    )
+    target_include_directories(efw_app_simple_blink PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/application/simple_blink
+    )
+    target_link_libraries(efw_app_simple_blink PRIVATE efw)
+
+    add_executable(efw_app_smart_environment_controller
+        application/smart_environment_controller/main.c
+        application/smart_environment_controller/app_bootstrap.c
+        application/smart_environment_controller/app_components.c
+        application/smart_environment_controller/app_platform.c
+    )
+    target_include_directories(efw_app_smart_environment_controller PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/application/smart_environment_controller
+    )
+    target_link_libraries(efw_app_smart_environment_controller PRIVATE efw)
+
     add_executable(efw_app_line_tracking_car
         application/line_tracking_car/main.c
         application/line_tracking_car/app_bootstrap.c
