@@ -39,6 +39,7 @@ if importlib.util.find_spec("PyQt6") is not None:
         QMainWindow,
         QMessageBox,
         QLineEdit,
+        QComboBox,
         QPushButton,
         QPlainTextEdit,
         QSplitter,
@@ -72,6 +73,7 @@ elif importlib.util.find_spec("PyQt5") is not None:
         QMainWindow,
         QMessageBox,
         QLineEdit,
+        QComboBox,
         QPushButton,
         QPlainTextEdit,
         QSplitter,
@@ -85,17 +87,53 @@ elif importlib.util.find_spec("PyQt5") is not None:
     QT_LIB = "PyQt5"
 else:
     QApplication = None
-    QGraphicsRectItem = object
-    QMainWindow = object
+    QFileDialog = QInputDialog = QMessageBox = None
+    QBrush = QColor = QFont = QPen = QPointF = Qt = object
+    QComboBox = QFormLayout = QGraphicsEllipseItem = QGraphicsItem = object
+    QGraphicsLineItem = QGraphicsRectItem = QGraphicsScene = QGraphicsSimpleTextItem = QGraphicsView = object
+    QHBoxLayout = QLabel = QListWidget = QListWidgetItem = QMainWindow = object
+    QLineEdit = QPushButton = QPlainTextEdit = QSplitter = QTableWidget = QTableWidgetItem = object
+    QTabWidget = QToolBar = QVBoxLayout = QWidget = object
     QT_LIB = "missing"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT / "tools") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "tools"))
 
-from efw_codegen import generate, validate_graph  # noqa: E402
-from efw_visual_model import GENERATED_APPLICATION_TREE, NODE_GENERATION_STATUS, VISUAL_NODE_CATEGORIES  # noqa: E402
+from efw_codegen import c_ident, generate, preview_application_files, validate_graph  # noqa: E402
+from efw_visual_model import BOARD_PROFILES, GENERATED_APPLICATION_TREE, NODE_GENERATION_STATUS, VISUAL_NODE_CATEGORIES  # noqa: E402
 
+
+
+def discover_framework_templates() -> tuple[dict[str, dict[str, Any]], list[str]]:
+    """Scan framework headers/sources and expose safe generated node templates."""
+    templates: dict[str, dict[str, Any]] = {}
+    order: list[str] = []
+    scan_specs = [
+        (REPO_ROOT / "include" / "efw" / "device" / "sensor", "sensor.custom", "sensor_type", "sensor"),
+        (REPO_ROOT / "include" / "efw" / "device" / "actuator", "actuator.custom", "actuator_type", "actuator"),
+        (REPO_ROOT / "include" / "efw" / "algorithm", "algorithm.custom", "algo_type", "algo"),
+    ]
+    for folder, node_type, type_field, prefix in scan_specs:
+        if not folder.exists():
+            continue
+        for header in sorted(folder.glob("*.h")):
+            stem = header.stem
+            if stem in {"sensor", "actuator", "algorithms", "registry"}:
+                continue
+            key = f"scan.{node_type}.{stem}"
+            if node_type == "sensor.custom" and stem == "line_tracking":
+                continue
+            if node_type == "actuator.custom" and stem == "motor":
+                continue
+            template = copy.deepcopy(NODE_TEMPLATES.get(node_type, {"id": f"{prefix}_{stem}", "type": node_type}))
+            template["id"] = f"{prefix}_{stem}"
+            template["type"] = node_type
+            template[type_field] = stem if node_type != "algorithm.custom" else "EFW_ALGO_CUSTOM"
+            template.setdefault("note", f"从框架头文件 {header.relative_to(REPO_ROOT)} 扫描得到；若需要完整生成，请补充回调。")
+            templates[key] = template
+            order.append(key)
+    return templates, order
 
 NODE_TEMPLATES: dict[str, dict[str, Any]] = {
     "hal.gpio_line_input": {
@@ -217,7 +255,7 @@ NODE_TEMPLATES: dict[str, dict[str, Any]] = {
         "id": "main_state_machine",
         "type": "state.machine",
         "initial": "idle",
-        "description": "状态机容器，后续可生成 EFW state_machine 注册代码。",
+        "description": "状态机容器，生成 EFW state_machine 注册和轻量转换调度。",
     },
     "state.state": {
         "id": "idle",
@@ -260,6 +298,9 @@ NODE_TEMPLATES: dict[str, dict[str, Any]] = {
         "note": "Use the Code tab to add custom .c/.h files. This card documents the custom extension point.",
     },
 }
+
+FRAMEWORK_SCAN_TEMPLATES, FRAMEWORK_SCAN_ORDER = discover_framework_templates()
+NODE_TEMPLATES.update(FRAMEWORK_SCAN_TEMPLATES)
 
 DEFAULT_FLOW = {
     "id": "line_follower",
@@ -459,7 +500,35 @@ TYPE_LABELS = {
     "custom.code": "代码卡片",
 }
 
-NODE_CATEGORIES = VISUAL_NODE_CATEGORIES
+NODE_CATEGORIES = [(name, FRAMEWORK_SCAN_ORDER if name == "框架库扫描" else types) for name, types in VISUAL_NODE_CATEGORIES]
+
+
+def display_label(template_key: str) -> str:
+    template = NODE_TEMPLATES.get(template_key, {})
+    node_type = template.get("type", template_key)
+    if template_key.startswith("scan."):
+        return f"框架扫描 · {template.get('id', template_key)}"
+    return TYPE_LABELS.get(node_type, TYPE_LABELS.get(template_key, template_key))
+
+
+def node_summary(node: dict[str, Any]) -> str:
+    node_type = node.get("type", "")
+    keys_by_type = {
+        "algorithm.pid": ["kp", "ki", "kd", "out_min", "out_max"],
+        "task.periodic": ["period_ms", "call"],
+        "state.transition": ["from", "to", "condition"],
+        "logic.if": ["condition", "then", "else"],
+        "logic.loop": ["condition", "body", "max_iterations"],
+        "event.topic": ["topic_id", "payload_type"],
+        "event.subscriber": ["topic", "callback"],
+        "project.module": ["display_name"],
+        "hal.custom": ["hal_type", "bus_id"],
+        "sensor.custom": ["sensor_type", "hal_name", "read"],
+        "actuator.custom": ["actuator_type", "hal_name", "write"],
+    }
+    keys = keys_by_type.get(node_type, ["module", "period_ms"])
+    parts = [f"{key}={node.get(key)}" for key in keys if node.get(key) not in (None, "", [])]
+    return " · ".join(parts[:3])
 
 
 def parse_form_value(text: str) -> Any:
@@ -552,7 +621,12 @@ class GraphNodeItem(QGraphicsRectItem):
         label = TYPE_LABELS.get(node.get("type"), node.get("type", "unknown"))
         subtitle = QGraphicsSimpleTextItem(label, self)
         subtitle.setBrush(QBrush(QColor("#d7e6ec")))
-        subtitle.setPos(8, 34)
+        subtitle.setPos(8, 29)
+        summary_text = node_summary(node)
+        if summary_text:
+            summary = QGraphicsSimpleTextItem(summary_text[:34], self)
+            summary.setBrush(QBrush(QColor("#b8cad1")))
+            summary.setPos(8, 49)
         self.ports: list[PortItem] = []
         rules = PORT_RULES.get(node.get("type"), {})
         for idx, port_type in enumerate(rules.get("in", [])):
@@ -574,6 +648,13 @@ class GraphNodeItem(QGraphicsRectItem):
         self.editor.select_node(self.node.get("id"))
         super().mousePressEvent(event)
 
+    def mouseDoubleClickEvent(self, event):
+        if self.node.get("type") == "project.module":
+            self.editor.enter_module(self.node.get("id"))
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
 
 class VisualEditorWindow(QMainWindow):
     def __init__(self):
@@ -588,6 +669,7 @@ class VisualEditorWindow(QMainWindow):
         self.drag_line: QGraphicsLineItem | None = None
         self.drag_port: PortItem | None = None
         self.validation_messages: list[str] = []
+        self.active_module_id: str | None = None
         self.graph = self.default_graph()
         self.setStyleSheet(WORKBENCH_STYLESHEET)
         self._build_ui()
@@ -644,6 +726,7 @@ class VisualEditorWindow(QMainWindow):
         toolbar.addAction("生成", self.generate_application)
         toolbar.addAction("连接选中", self.connect_selected_cards)
         toolbar.addAction("自动布局", self.auto_layout)
+        toolbar.addAction("返回根模块", self.exit_module)
 
         root_splitter = QSplitter()
         self.setCentralWidget(root_splitter)
@@ -658,9 +741,10 @@ class VisualEditorWindow(QMainWindow):
             header.setBackground(QBrush(QColor("#233544")))
             header.setForeground(QBrush(QColor("#ffecb3")))
             for node_type in node_types:
-                item = QListWidgetItem(f"  {TYPE_LABELS.get(node_type, node_type)}  ({node_type})", self.palette)
+                template_type = NODE_TEMPLATES.get(node_type, {}).get("type", node_type)
+                item = QListWidgetItem(f"  {display_label(node_type)}  ({template_type})", self.palette)
                 item.setData(Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole, node_type)
-                theme = node_theme(node_type)
+                theme = node_theme(template_type)
                 item.setBackground(QBrush(QColor(theme["bg"])))
                 item.setForeground(QBrush(QColor("#f4fbff")))
         left_layout.addWidget(self.palette)
@@ -691,8 +775,8 @@ class VisualEditorWindow(QMainWindow):
         layout = QVBoxLayout(widget)
         self.selected_label = QLabel("未选择卡片")
         layout.addWidget(self.selected_label)
-        self.property_table = QTableWidget(0, 2)
-        self.property_table.setHorizontalHeaderLabels(["属性", "值"])
+        self.property_table = QTableWidget(0, 3)
+        self.property_table.setHorizontalHeaderLabels(["属性", "值", "控件类型"])
         layout.addWidget(self.property_table)
         apply_form_btn = QPushButton("应用表单")
         apply_form_btn.clicked.connect(self.apply_property_form)
@@ -712,8 +796,12 @@ class VisualEditorWindow(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.addWidget(QLabel("Board Profile 与 Pin Planner：修改 GPIO/PWM 后点击应用，会写回 Graph 节点。"))
-        self.board_profile_edit = QLineEdit("generic-mock")
+        self.board_profile_edit = QComboBox()
+        self.board_profile_edit.addItems(list(BOARD_PROFILES))
         layout.addWidget(self.board_profile_edit)
+        profile_btn = QPushButton("套用 Board Profile 默认资源")
+        profile_btn.clicked.connect(self.apply_board_profile_defaults)
+        layout.addWidget(profile_btn)
         self.pin_table = QTableWidget(0, 5)
         self.pin_table.setHorizontalHeaderLabels(["节点", "用途", "端口/定时器", "引脚/通道", "备注"])
         layout.addWidget(self.pin_table)
@@ -814,12 +902,28 @@ class VisualEditorWindow(QMainWindow):
         self.refresh_validation_panel(show_dialog=False)
         self.select_node(self.current_node_id)
 
+    def visible_nodes(self) -> list[dict[str, Any]]:
+        if not self.active_module_id:
+            return self.graph.get("nodes", [])
+        return [node for node in self.graph.get("nodes", []) if node.get("id") == self.active_module_id or node.get("module") == self.active_module_id]
+
+    def enter_module(self, module_id: str | None) -> None:
+        if not module_id:
+            return
+        self.active_module_id = module_id
+        self.refresh_all()
+
+    def exit_module(self) -> None:
+        self.active_module_id = None
+        self.refresh_all()
+
     def refresh_scene(self) -> None:
         self.scene.clear()
         self.node_items.clear()
         self.edge_items.clear()
         positions = self.graph.setdefault("ui", {}).setdefault("positions", {})
-        for index, node in enumerate(self.graph.get("nodes", [])):
+        visible_nodes = self.visible_nodes()
+        for index, node in enumerate(visible_nodes):
             item = GraphNodeItem(node, self)
             pos = positions.get(node.get("id"), [40 + index * 30, 60 + index * 85])
             item.setPos(QPointF(float(pos[0]), float(pos[1])))
@@ -924,13 +1028,56 @@ class VisualEditorWindow(QMainWindow):
         self.refresh_all()
 
 
+    def property_choices(self, node: dict[str, Any], key: str) -> list[str]:
+        node_type = node.get("type")
+        by_type = lambda t: [n.get("id", "") for n in self.graph.get("nodes", []) if n.get("type") == t]
+        if key == "type":
+            return sorted({tpl.get("type", name) for name, tpl in NODE_TEMPLATES.items()})
+        if key == "module":
+            return [""] + by_type("project.module")
+        if key in {"input", "hal_name"}:
+            return [""] + [n.get("id", "") for n in self.graph.get("nodes", []) if str(n.get("type", "")).startswith("hal.")]
+        if key in {"sensor", "source"}:
+            return [""] + [n.get("id", "") for n in self.graph.get("nodes", []) if str(n.get("type", "")).startswith(("sensor.", "module."))]
+        if key in {"pid", "algorithm"}:
+            return [""] + [n.get("id", "") for n in self.graph.get("nodes", []) if str(n.get("type", "")).startswith("algorithm.")]
+        if key in {"left_motor", "right_motor", "target"}:
+            return [""] + [n.get("id", "") for n in self.graph.get("nodes", []) if str(n.get("type", "")).startswith(("actuator.", "module."))]
+        if key == "topic":
+            return [""] + by_type("event.topic")
+        if key == "machine":
+            return [""] + by_type("state.machine")
+        if key in {"from", "to"} and node_type == "state.transition":
+            states = [n.get("id", "") for n in self.graph.get("nodes", []) if n.get("type") == "state.state" and (not node.get("machine") or n.get("machine") == node.get("machine"))]
+            return [""] + states
+        if key == "hal_type":
+            return ["gpio", "uart", "i2c", "spi", "adc", "pwm", "timer", "custom"]
+        if key == "sensor_type":
+            return ["custom", "imu", "encoder", "ultrasonic", "line_tracking"]
+        if key == "actuator_type":
+            return ["custom", "led", "relay", "servo", "motor"]
+        if key == "loop":
+            return ["while", "for"]
+        return []
+
     def populate_property_form(self, node: dict[str, Any]) -> None:
         self.property_table.setRowCount(0)
         for key, value in node.items():
             row = self.property_table.rowCount()
             self.property_table.insertRow(row)
             self.property_table.setItem(row, 0, QTableWidgetItem(str(key)))
-            self.property_table.setItem(row, 1, QTableWidgetItem(form_value_text(value)))
+            choices = self.property_choices(node, str(key))
+            if choices:
+                combo = QComboBox()
+                combo.addItems(choices)
+                if str(value) not in choices:
+                    combo.addItem(str(value))
+                combo.setCurrentText(str(value))
+                self.property_table.setCellWidget(row, 1, combo)
+                self.property_table.setItem(row, 2, QTableWidgetItem("下拉选择"))
+            else:
+                self.property_table.setItem(row, 1, QTableWidgetItem(form_value_text(value)))
+                self.property_table.setItem(row, 2, QTableWidgetItem("文本/JSON"))
 
     def apply_property_form(self) -> None:
         if not self.current_node_id:
@@ -942,12 +1089,17 @@ class VisualEditorWindow(QMainWindow):
         for row in range(self.property_table.rowCount()):
             key_item = self.property_table.item(row, 0)
             value_item = self.property_table.item(row, 1)
+            value_widget = self.property_table.cellWidget(row, 1)
             if not key_item:
                 continue
             key = key_item.text().strip()
             if not key:
                 continue
-            updated[key] = parse_form_value(value_item.text() if value_item else "")
+            if isinstance(value_widget, QComboBox):
+                raw_value = value_widget.currentText()
+            else:
+                raw_value = value_item.text() if value_item else ""
+            updated[key] = parse_form_value(raw_value)
         nodes = self.graph.get("nodes", [])
         for idx, item in enumerate(nodes):
             if item.get("id") == self.current_node_id:
@@ -961,7 +1113,10 @@ class VisualEditorWindow(QMainWindow):
             return
         board = self.graph.get("board", {})
         if hasattr(self, "board_profile_edit"):
-            self.board_profile_edit.setText(str(board.get("profile", "generic-mock")))
+            profile = str(board.get("profile", "generic-mock"))
+            if self.board_profile_edit.findText(profile) < 0:
+                self.board_profile_edit.addItem(profile)
+            self.board_profile_edit.setCurrentText(profile)
         self.pin_table.setRowCount(0)
         for node in self.graph.get("nodes", []):
             if node.get("type") == "hal.gpio_line_input":
@@ -981,7 +1136,7 @@ class VisualEditorWindow(QMainWindow):
 
     def apply_pin_planner(self) -> None:
         board = self.graph.setdefault("board", {})
-        board["profile"] = self.board_profile_edit.text().strip() or "generic-mock"
+        board["profile"] = self.board_profile_edit.currentText().strip() or "generic-mock"
         grouped: dict[str, list[tuple[str, str, str]]] = {}
         for row in range(self.pin_table.rowCount()):
             node_id = self.pin_table.item(row, 0).text()
@@ -1142,6 +1297,22 @@ class VisualEditorWindow(QMainWindow):
             if ntype == "event.subscriber" and node.get("callback") and not has_symbol(str(node.get("callback"))):
                 name = node.get("callback")
                 stubs.append(f"void {name}(uint16_t topic_id, const void *data, uint16_t size, void *user) {{\n    EFW_UNUSED(topic_id);\n    EFW_UNUSED(data);\n    EFW_UNUSED(size);\n    EFW_UNUSED(user);\n}}\n")
+            if ntype == "state.state":
+                for field in ["on_enter", "on_update", "on_exit"]:
+                    name = node.get(field)
+                    if name and not has_symbol(str(name)):
+                        stubs.append(f"efw_status_t {name}(void *ctx) {{\n    EFW_UNUSED(ctx);\n    return EFW_OK;\n}}\n")
+            if ntype in {"state.transition", "logic.if", "logic.loop"} and node.get("condition") and not has_symbol(str(node.get("condition"))):
+                name = node.get("condition")
+                stubs.append(f"int {name}(void) {{\n    return 0;\n}}\n")
+            if ntype == "logic.if":
+                for field in ["then", "else"]:
+                    name = node.get(field)
+                    if name and not has_symbol(str(name)):
+                        stubs.append(f"efw_status_t {name}(void) {{\n    return EFW_OK;\n}}\n")
+            if ntype == "logic.loop" and node.get("body") and not has_symbol(str(node.get("body"))):
+                name = node.get("body")
+                stubs.append(f"efw_status_t {name}(void) {{\n    return EFW_OK;\n}}\n")
         for task in self.graph.get("tasks", []) + [n for n in self.graph.get("nodes", []) if n.get("type") == "task.periodic"]:
             name = task.get("call")
             if name and not has_symbol(str(name)):
@@ -1254,16 +1425,12 @@ class VisualEditorWindow(QMainWindow):
         port.setBrush(QBrush(QColor("#e53935")))
 
     def connect_ports(self, out_port: PortItem, in_port: PortItem) -> bool:
-        self.add_graph_edge(out_port.node_item.node, in_port.node_item.node, out_port.port_type, in_port.port_type, "port")
-        if out_port.port_type == "hal" and in_port.port_type == "hal":
-            return self._connect_pair(out_port.node_item.node, in_port.node_item.node) or True
-        if out_port.port_type == "sensor" and in_port.port_type == "sensor":
-            return self._connect_pair(out_port.node_item.node, in_port.node_item.node) or True
-        if out_port.port_type in {"algorithm", "module", "event"} and in_port.port_type in {"control", "module", "flow"}:
-            return self._connect_pair(out_port.node_item.node, in_port.node_item.node) or True
-        if out_port.port_type in {"group", "topic"}:
-            return self._connect_pair(out_port.node_item.node, in_port.node_item.node) or True
-        return self._connect_pair(out_port.node_item.node, in_port.node_item.node) or True
+        src = out_port.node_item.node
+        dst = in_port.node_item.node
+        if not self._connect_pair(src, dst):
+            return False
+        self.add_graph_edge(src, dst, out_port.port_type, in_port.port_type, "port")
+        return True
 
 
     def connect_selected_cards(self) -> None:
@@ -1306,6 +1473,20 @@ class VisualEditorWindow(QMainWindow):
             return True
         if src_type == "event.subscriber" and dst_type == "module.custom":
             src["target"] = dst.get("id")
+            return True
+        if src_type == "state.machine" and dst_type in {"state.state", "state.transition"}:
+            dst["machine"] = src.get("id")
+            return True
+        if src_type == "state.state" and dst_type == "state.transition":
+            dst["from"] = src.get("id")
+            dst["machine"] = src.get("machine", dst.get("machine"))
+            return True
+        if src_type == "state.transition" and dst_type == "state.state":
+            src["to"] = dst.get("id")
+            src["machine"] = dst.get("machine", src.get("machine"))
+            return True
+        if src_type in {"logic.if", "logic.loop"} and dst_type in {"task.periodic", "module.custom"}:
+            dst["call"] = f"app_logic_{c_ident(src.get('id', 'logic'))}"
             return True
         if src_type == "sensor.line_tracking" and dst_type in {"algorithm.pid", "algorithm.custom"}:
             flow_id = f"{src.get('id')}_flow"
@@ -1468,9 +1649,11 @@ class VisualEditorWindow(QMainWindow):
             with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
                 json.dump(self.graph, tmp, ensure_ascii=False, indent=2)
                 tmp_path = Path(tmp.name)
+            preview = preview_application_files(tmp_path, out_path)
+            summary = "\n".join(f"{item['status']}: {item['path']}" for item in preview[:40])
             force = False
             if out_path.exists() and any(out_path.iterdir()):
-                answer = QMessageBox.question(self, "覆盖确认", f"输出目录已存在且非空：\n{out_path}\n是否清空并重新生成？")
+                answer = QMessageBox.question(self, "Diff 预览 / 覆盖确认", f"输出目录已存在且非空，非生成文件会保留：\n{out_path}\n\n{summary}\n\n是否覆盖生成文件？")
                 yes = QMessageBox.StandardButton.Yes if hasattr(QMessageBox, "StandardButton") else QMessageBox.Yes
                 if answer != yes:
                     tmp_path.unlink(missing_ok=True)

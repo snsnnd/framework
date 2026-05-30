@@ -6,7 +6,13 @@ future work can split the editor into model, scene, panels, and generators
 without changing the graph format.
 """
 
+import json
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
 VISUAL_NODE_CATEGORIES = [
+    ("框架库扫描", []),
     ("项目结构", ["project.module"]),
     ("HAL / 硬件", ["hal.gpio_line_input", "hal.custom"]),
     ("传感器", ["sensor.line_tracking", "sensor.custom"]),
@@ -44,12 +50,51 @@ NODE_GENERATION_STATUS = {
     "event.topic": ("部分生成", "生成 APP_TOPIC_* 宏"),
     "event.publisher": ("说明/半自动", "表达发布关系，publish 调用仍在用户代码中"),
     "event.subscriber": ("部分生成", "生成 efw_topic_subscribe 绑定，回调由用户代码提供"),
-    "project.module": ("可视化组织", "用于分组和文档，不直接生成 C 模块文件"),
-    "state.machine": ("可视化占位", "当前只校验图结构，尚未生成 state_machine 注册代码"),
-    "state.state": ("可视化占位", "当前只校验图结构，尚未生成 state 节点代码"),
-    "state.transition": ("可视化占位", "当前只校验图结构，尚未生成 transition 代码"),
-    "logic.if": ("可视化占位", "当前只表达逻辑结构，尚未生成 C if 代码"),
-    "logic.loop": ("可视化占位", "当前只表达逻辑结构，尚未生成 C loop 代码"),
+    "project.module": ("生成分组", "用于 graph.module 分组，可双击进入子模块页面"),
+    "state.machine": ("完整生成", "生成轻量状态机调度与状态注册 glue"),
+    "state.state": ("完整生成", "生成 efw_state_machine_ops_t 状态注册"),
+    "state.transition": ("完整生成", "生成条件判断和状态切换代码"),
+    "logic.if": ("完整生成", "生成条件分支 wrapper，可由周期任务/模块调用"),
+    "logic.loop": ("完整生成", "生成带 max_iterations 防护的循环 wrapper"),
     "custom.card": ("说明", "不生成代码"),
     "custom.code": ("说明", "代码正文来自 custom_files"),
 }
+
+
+DEFAULT_BOARD_PROFILES = {
+    "generic-mock": {
+        "label": "通用 Mock / Host 仿真",
+        "ports": ["A", "B", "C", "D"],
+        "pins_per_port": 16,
+        "timers": [1, 2, 3, 4],
+        "pwm_channels": [1, 2, 3, 4],
+        "notes": "适合主机编译验证和无板卡演示。",
+    },
+    "stm32-basic": {
+        "label": "STM32 基础板卡",
+        "ports": ["A", "B", "C"],
+        "pins_per_port": 16,
+        "timers": [1, 2, 3, 4],
+        "pwm_channels": [1, 2, 3, 4],
+        "notes": "用于生成 STM32 GPIO/PWM 规划草稿，实际复用功能仍需按 CubeMX/手册核对。",
+    },
+    "esp32-basic": {
+        "label": "ESP32 基础板卡",
+        "ports": ["GPIO"],
+        "pins_per_port": 40,
+        "timers": [0, 1, 2, 3],
+        "pwm_channels": [0, 1, 2, 3, 4, 5, 6, 7],
+        "notes": "用于 ESP-IDF GPIO/LEDC 规划草稿。",
+    },
+}
+
+
+def load_board_profiles() -> dict:
+    path = REPO_ROOT / "examples" / "board_profiles" / "board_profiles.json"
+    if not path.exists():
+        return DEFAULT_BOARD_PROFILES
+    data = json.loads(path.read_text(encoding="utf-8"))
+    return data if isinstance(data, dict) and data else DEFAULT_BOARD_PROFILES
+
+
+BOARD_PROFILES = load_board_profiles()

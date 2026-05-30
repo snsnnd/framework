@@ -109,8 +109,8 @@ python3 tools/efw_visual_editor.py
 | `event.topic` | 事件总线 topic 定义卡片，生成 `APP_TOPIC_*` 宏 |
 | `event.publisher` | 发布者说明卡片，用于表达某个模块/传感器会向 topic 发布数据 |
 | `event.subscriber` | 订阅者卡片，会在 bind 阶段生成 `efw_topic_subscribe()` |
-| `state.machine` / `state.state` / `state.transition` | 状态机可视化卡片，当前先做图结构与校验占位，后续可生成状态机注册代码 |
-| `logic.if` / `logic.loop` | 基础逻辑控制卡片，用于表达条件与循环结构，当前作为可视化/文档节点 |
+| `state.machine` / `state.state` / `state.transition` | 生成轻量状态机 glue：状态注册、当前状态索引、进入/更新/退出回调与条件转换 |
+| `logic.if` / `logic.loop` | 生成 `app_logic_<id>()` wrapper；`logic.loop` 使用 `max_iterations` 防止不可控死循环 |
 | `custom.card` | 纯说明/占位卡片，用于记录硬件、调参或未来模板 |
 | `custom.code` | 自定义代码说明卡片，代码正文放在 `custom_files` |
 
@@ -265,7 +265,7 @@ python3 tools/efw_project_manager.py
 
 - **完整生成**：HAL/Sensor/Actuator/Algorithm/Module/Task、LineFollower flow 等会生成 C 注册、bind 或调度代码。
 - **部分生成**：例如 `event.topic` 会生成 `APP_TOPIC_*` 宏，`event.subscriber` 会生成 `efw_topic_subscribe()`，但 `event.publisher` 的 `efw_topic_publish()` 调用仍应写在用户任务或模块代码中。
-- **可视化占位**：`state.machine`、`state.state`、`state.transition`、`logic.if`、`logic.loop` 当前用于表达结构和做引用校验，还不会自动生成完整 C 状态机或 if/loop 业务代码。
+- **轻量生成**：`state.machine`、`state.state`、`state.transition`、`logic.if`、`logic.loop` 已生成可编译 glue，但业务条件和动作仍由 `custom_files` 回调实现。
 
 编辑器的“生成映射”面板会显示每个节点的生成状态，避免用户误以为所有卡片都已经具备完整代码生成能力。
 
@@ -287,3 +287,25 @@ efw_ringbuf_t rx_rb;
 efw_ringbuf_init(&rx_rb, rx_mem, sizeof(rx_mem));
 efw_ringbuf_push(&rx_rb, byte);
 ```
+
+## 可视化能力与生成能力同步（新增）
+
+为了避免“UI 卡片比代码生成走得更快”，编辑器现在把每种节点的生成状态显式展示在“生成映射”面板中：
+
+- 左侧模板库会扫描 `include/efw/device/sensor`、`include/efw/device/actuator`、`include/efw/algorithm` 下的框架头文件，并把可安全映射到现有 Graph schema 的条目放入“框架库扫描”分组。
+- 右侧属性表单对 `module`、`hal_name`、`topic`、`machine`、状态转换 `from/to`、`hal_type`、`sensor_type`、`actuator_type` 等字段使用下拉选择，减少手写字符串引用错误。
+- `state.machine`、`state.state`、`state.transition` 已从占位升级为生成轻量状态机 glue：生成状态注册、当前状态索引、`on_enter/on_update/on_exit` 调用以及带 `condition` 的转换判断。
+- `logic.if` 和 `logic.loop` 已从占位升级为生成 `app_logic_<id>()` wrapper；循环节点带 `max_iterations` 防护，避免在裸机主循环里产生不可控死循环。
+- `project.module` 仍然是项目结构分组，但在可视化编辑器中可双击进入子模块页面，根视图/模块视图之间可以切换。
+- Board Profile 数据库位于 `examples/board_profiles/board_profiles.json`，当前内置 `generic-mock`、`stm32-basic`、`esp32-basic`，Pin Planner 会基于 profile 生成默认资源规划草稿并检查冲突。
+- 端口连线现在会先调用统一连接语义，只有合法连接才写入 `graph.edges`；无效连接会高亮并提示。
+- 生成前会展示 create/overwrite/same/preserve 摘要；`--force` 和 UI 覆盖只覆盖生成目标文件，不再清空整个输出目录，因此额外用户文件会保留。
+
+状态机节点的推荐连接方式：
+
+```text
+[state.machine] -> [state.state]
+[state.state] -> [state.transition] -> [state.state]
+```
+
+`state.transition.condition` 必须是 `int condition(void)` / `uint8_t condition(void)` / `bool condition(void)` 风格的用户函数；状态回调使用 `efw_status_t callback(void *ctx)`。编辑器的“一键生成缺失回调”可以生成这些函数 stub。

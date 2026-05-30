@@ -26,6 +26,8 @@ if importlib.util.find_spec("PyQt6") is not None:
         QInputDialog,
         QLabel,
         QLineEdit,
+        QComboBox,
+        QComboBox,
         QListWidget,
         QListWidgetItem,
         QMainWindow,
@@ -49,6 +51,8 @@ elif importlib.util.find_spec("PyQt5") is not None:
         QInputDialog,
         QLabel,
         QLineEdit,
+        QComboBox,
+        QComboBox,
         QListWidget,
         QListWidgetItem,
         QMainWindow,
@@ -64,15 +68,19 @@ elif importlib.util.find_spec("PyQt5") is not None:
     QT_LIB = "PyQt5"
 else:
     QApplication = None
-    QMainWindow = object
+    QFileDialog = QInputDialog = QMessageBox = None
+    QFont = object
+    QComboBox = QFormLayout = QHBoxLayout = QLabel = QLineEdit = QListWidget = QListWidgetItem = object
+    QMainWindow = QPushButton = QPlainTextEdit = QSplitter = QTabWidget = QToolBar = QVBoxLayout = QWidget = object
     QT_LIB = "missing"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT / "tools") not in sys.path:
     sys.path.insert(0, str(REPO_ROOT / "tools"))
 
-from efw_codegen import generate, validate_graph  # noqa: E402
+from efw_codegen import generate, preview_application_files, validate_graph  # noqa: E402
 from efw_visual_editor import VisualEditorWindow  # noqa: E402
+from efw_visual_model import BOARD_PROFILES  # noqa: E402
 
 WORKBENCH_STYLESHEET = """
 QMainWindow, QWidget { background: #101820; color: #e8f0f2; font-family: "Noto Sans CJK SC", "Microsoft YaHei", "WenQuanYi Micro Hei", "DejaVu Sans"; }
@@ -189,7 +197,8 @@ class ProjectManagerWindow(QMainWindow):
         self.name_edit = QLineEdit()
         self.graph_edit = QLineEdit()
         self.output_edit = QLineEdit()
-        self.board_edit = QLineEdit()
+        self.board_edit = QComboBox()
+        self.board_edit.addItems(list(BOARD_PROFILES))
         form.addRow("项目名", self.name_edit)
         form.addRow("Graph JSON", self._path_row(self.graph_edit, self.choose_graph_path))
         form.addRow("输出 application", self._path_row(self.output_edit, self.choose_output_dir))
@@ -235,7 +244,7 @@ class ProjectManagerWindow(QMainWindow):
             "name": self.name_edit.text().strip() or "generated_app",
             "graph_path": self.graph_edit.text().strip(),
             "output_dir": self.output_edit.text().strip(),
-            "board_profile": self.board_edit.text().strip() or "generic-mock",
+            "board_profile": self.board_edit.currentText().strip() or "generic-mock",
             "notes": self.notes_edit.toPlainText(),
         }
 
@@ -357,27 +366,29 @@ class ProjectManagerWindow(QMainWindow):
 
     def generate_application(self) -> None:
         self.apply_form_to_project()
-        graph_path = self.graph_path()
         out_dir = self.output_dir()
+        tmp_path: Path | None = None
         try:
             graph = self.project_graph()
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
+                json.dump(graph, tmp, ensure_ascii=False, indent=2)
+                tmp_path = Path(tmp.name)
+            preview = preview_application_files(tmp_path, out_dir)
+            summary = "\n".join(f"{item['status']}: {item['path']}" for item in preview[:40])
             force = False
             if out_dir.exists() and any(out_dir.iterdir()):
-                answer = QMessageBox.question(self, "覆盖确认", f"输出目录已存在且非空：\n{display_path(out_dir)}\n是否清空并重新生成？")
+                answer = QMessageBox.question(self, "Diff 预览 / 覆盖确认", f"输出目录已存在且非空，非生成文件会保留：\n{display_path(out_dir)}\n\n{summary}\n\n是否覆盖生成文件？")
                 yes = QMessageBox.StandardButton.Yes if hasattr(QMessageBox, "StandardButton") else QMessageBox.Yes
                 if answer != yes:
                     return
                 force = True
-            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
-                json.dump(graph, tmp, ensure_ascii=False, indent=2)
-                tmp_path = Path(tmp.name)
-            try:
-                generate(tmp_path, out_dir, force=force)
-            finally:
-                tmp_path.unlink(missing_ok=True)
+            generate(tmp_path, out_dir, force=force)
         except Exception as exc:  # noqa: BLE001 - UI generation dialog should show exact generator message.
             QMessageBox.warning(self, "生成失败", str(exc))
             return
+        finally:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
         QMessageBox.information(self, "已生成", f"已生成 application:\n{display_path(out_dir)}")
 
     def open_graph_editor(self) -> None:

@@ -11,7 +11,6 @@ flows from a 1 ms tick.
 import argparse
 import json
 import re
-import shutil
 import sys
 from pathlib import Path
 
@@ -130,6 +129,20 @@ def find_c_topic_callback_defs(files):
     return definitions
 
 
+
+def find_c_condition_defs(files):
+    definitions = {}
+    pattern = re.compile(r"\b(?:int|uint8_t|bool)\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(([^)]*)\)\s*\{")
+    for item in files:
+        if not item["path"].endswith(".c"):
+            continue
+        for match in pattern.finditer(item["content"]):
+            name = match.group(1)
+            params = normalize_c_params(match.group(2))
+            require(name not in definitions, f"duplicate custom condition definition: {name}")
+            definitions[name] = {"path": item["path"], "params": params}
+    return definitions
+
 def validate_file_items(items, field_name):
     require(isinstance(items, list), f"{field_name} must be an array when present")
     result = []
@@ -198,6 +211,15 @@ def expected_callbacks(ctx):
             add(node.get(cb), "void *ctx", f"{node['id']}.{cb}")
     for task in ctx["tasks"]:
         add(task.get("call"), "void", f"task {task.get('id')}.call")
+    for node in nodes_of(ctx, "state.state"):
+        add(node.get("on_enter"), "void *ctx", f"{node['id']}.on_enter")
+        add(node.get("on_update"), "void *ctx", f"{node['id']}.on_update")
+        add(node.get("on_exit"), "void *ctx", f"{node['id']}.on_exit")
+    for node in nodes_of(ctx, "logic.if"):
+        add(node.get("then"), "void", f"{node['id']}.then")
+        add(node.get("else"), "void", f"{node['id']}.else")
+    for node in nodes_of(ctx, "logic.loop"):
+        add(node.get("body"), "void", f"{node['id']}.body")
     return callbacks
 
 
@@ -205,6 +227,7 @@ def validate_callback_implementations(ctx):
     files = ctx["custom_files"] + ctx["board_adapters"]
     definitions = find_c_function_defs(files)
     topic_definitions = find_c_topic_callback_defs(files)
+    condition_definitions = find_c_condition_defs(files)
     reserved = {"app_init", "app_loop_1ms", "app_loop_tick", "app_platform_register", "app_components_register", "main"}
     for item in files:
         for reserved_name in reserved:
@@ -222,6 +245,14 @@ def validate_callback_implementations(ctx):
         definition = topic_definitions.get(callback)
         require(definition, f"missing topic subscriber callback implementation for {node['id']}: {callback}")
         require(definition["params"] == topic_params, f"topic callback {callback} in {definition['path']} has signature ({definition['params']}), expected ({topic_params})")
+    for node in nodes_of(ctx, "state.transition") + nodes_of(ctx, "logic.if") + nodes_of(ctx, "logic.loop"):
+        condition = node.get("condition")
+        if condition:
+            cname = c_ident(condition)
+            require(condition == cname, f"{node['id']}.condition must be a valid C identifier")
+            definition = condition_definitions.get(cname)
+            require(definition, f"missing condition implementation for {node['id']}: {cname}")
+            require(definition["params"] == "void", f"condition {cname} in {definition['path']} has signature ({definition['params']}), expected (void)")
 
 
 def apply_edge_semantics(raw_edges, nodes_by_id):
@@ -251,6 +282,16 @@ def apply_edge_semantics(raw_edges, nodes_by_id):
             src.setdefault("target", dst.get("id"))
         elif src_type == "state.machine" and dst_type in {"state.state", "state.transition"}:
             dst.setdefault("machine", src.get("id"))
+        elif src_type == "state.state" and dst_type == "state.transition":
+            dst.setdefault("from", src.get("id"))
+            dst.setdefault("machine", src.get("machine"))
+        elif src_type == "state.transition" and dst_type == "state.state":
+            src.setdefault("to", dst.get("id"))
+            src.setdefault("machine", dst.get("machine"))
+        elif src_type == "logic.if" and dst_type in {"task.periodic", "module.custom"}:
+            dst.setdefault("call", f"app_logic_{c_ident(src.get('id', 'if'))}")
+        elif src_type == "logic.loop" and dst_type in {"task.periodic", "module.custom"}:
+            dst.setdefault("call", f"app_logic_{c_ident(src.get('id', 'loop'))}")
 
 
 def validate_graph(graph):
@@ -352,7 +393,11 @@ def validate_graph(graph):
             require(node.get("machine") in nodes_by_id and nodes_by_id[node.get("machine")]["type"] == "state.machine", f"{node['id']}.machine must reference state.machine")
         elif node_type_name == "state.transition":
             require(node.get("machine") in nodes_by_id and nodes_by_id[node.get("machine")]["type"] == "state.machine", f"{node['id']}.machine must reference state.machine")
-            require(isinstance(node.get("from", ""), str) and isinstance(node.get("to", ""), str), f"{node['id']} transition endpoints must be strings")
+            require(node.get("from") in nodes_by_id and nodes_by_id[node.get("from")]["type"] == "state.state", f"{node['id']}.from must reference state.state")
+            require(node.get("to") in nodes_by_id and nodes_by_id[node.get("to")]["type"] == "state.state", f"{node['id']}.to must reference state.state")
+            require(nodes_by_id[node.get("from")].get("machine") == node.get("machine") and nodes_by_id[node.get("to")].get("machine") == node.get("machine"), f"{node['id']} endpoints must belong to the same state.machine")
+            if node.get("condition"):
+                require(node.get("condition") == c_ident(node.get("condition")), f"{node['id']}.condition must be a valid C identifier")
         elif node_type_name in {"logic.if", "logic.loop"}:
             require(isinstance(node.get("condition", ""), str), f"{node['id']}.condition must be a string")
 
@@ -523,6 +568,8 @@ def render_manifest(ctx):
 #define APP_USE_PID                 {c_bool(len(nodes_of(ctx, 'algorithm.pid')))}
 #define APP_USE_MODULE              {c_bool(len(nodes_of(ctx, 'module.custom')))}
 #define APP_USE_EVENT               {c_bool(len(nodes_of(ctx, 'event.topic') + nodes_of(ctx, 'event.publisher') + nodes_of(ctx, 'event.subscriber')))}
+#define APP_USE_STATE_MACHINE       {c_bool(len(nodes_of(ctx, 'state.machine') + nodes_of(ctx, 'state.state') + nodes_of(ctx, 'state.transition')))}
+#define APP_USE_LOGIC               {c_bool(len(nodes_of(ctx, 'logic.if') + nodes_of(ctx, 'logic.loop')))}
 
 #define APP_PROJECT_TICK_MS          {int(ctx["project"].get("tick_ms", 1))}u
 
@@ -532,6 +579,8 @@ def render_manifest(ctx):
 #define APP_ALGO_COUNT              {len(nodes_of(ctx, 'algorithm.pid') + nodes_of(ctx, 'algorithm.custom'))}
 #define APP_MODULE_COUNT            {len(nodes_of(ctx, 'module.custom'))}
 #define APP_TOPIC_COUNT             {len(nodes_of(ctx, 'event.topic'))}
+#define APP_STATE_COUNT             {len(nodes_of(ctx, 'state.state'))}
+#define APP_LOGIC_COUNT             {len(nodes_of(ctx, 'logic.if') + nodes_of(ctx, 'logic.loop'))}
 
 {render_topic_macros(ctx)}
 #endif
@@ -908,6 +957,93 @@ efw_status_t app_loop_1ms(void);
 """
 
 
+
+def states_by_machine(ctx):
+    result = {}
+    for machine in nodes_of(ctx, "state.machine"):
+        states = [node for node in nodes_of(ctx, "state.state") if node.get("machine") == machine["id"]]
+        transitions = [node for node in nodes_of(ctx, "state.transition") if node.get("machine") == machine["id"]]
+        result[machine["id"]] = {"machine": machine, "states": states, "transitions": transitions}
+    return result
+
+
+def render_state_logic_blocks(ctx):
+    parts = []
+    machines = states_by_machine(ctx)
+    if machines or nodes_of(ctx, "logic.if") or nodes_of(ctx, "logic.loop"):
+        parts.append("static efw_status_t app_noop_status(void *ctx) { EFW_UNUSED(ctx); return EFW_OK; }\n")
+    for node in nodes_of(ctx, "state.state"):
+        for cb, sig in [("on_enter", "void *ctx"), ("on_update", "void *ctx"), ("on_exit", "void *ctx")]:
+            if node.get(cb):
+                parts.append(f"extern efw_status_t {c_ident(node[cb])}({sig});\n")
+    for node in nodes_of(ctx, "state.transition"):
+        if node.get("condition"):
+            parts.append(f"extern int {c_ident(node['condition'])}(void);\n")
+    for node in nodes_of(ctx, "logic.if"):
+        if node.get("condition"):
+            parts.append(f"extern int {c_ident(node['condition'])}(void);\n")
+        for cb in ["then", "else"]:
+            if node.get(cb):
+                parts.append(f"extern efw_status_t {c_ident(node[cb])}(void);\n")
+    for node in nodes_of(ctx, "logic.loop"):
+        if node.get("condition"):
+            parts.append(f"extern int {c_ident(node['condition'])}(void);\n")
+        if node.get("body"):
+            parts.append(f"extern efw_status_t {c_ident(node['body'])}(void);\n")
+    if parts:
+        parts.append("\n")
+    for mid, bundle in machines.items():
+        m_ident = c_ident(mid)
+        states = bundle["states"]
+        index = {state["id"]: i for i, state in enumerate(states)}
+        for state in states:
+            s_ident = c_ident(state["id"])
+            parts.append(f"static efw_state_machine_ops_t g_state_{s_ident} = {{\n")
+            parts.append(f"    .name = {c_str(state['id'])},\n    .ctx = 0,\n")
+            parts.append(f"    .on_enter = {c_ident(state['on_enter']) if state.get('on_enter') else '0'},\n")
+            parts.append(f"    .on_tick = {c_ident(state['on_update']) if state.get('on_update') else 'app_noop_status'},\n")
+            parts.append(f"    .on_exit = {c_ident(state['on_exit']) if state.get('on_exit') else '0'},\n}};\n")
+        parts.append(f"static efw_state_machine_ops_t *g_{m_ident}_states[] = {{ {', '.join('&g_state_' + c_ident(s['id']) for s in states)} }};\n")
+        initial = bundle["machine"].get("initial") or (states[0]["id"] if states else "")
+        parts.append(f"static uint8_t g_{m_ident}_current = {index.get(initial, 0)}u;\n")
+        parts.append(f"static efw_status_t app_{m_ident}_register(void) {{\n    efw_status_t s;\n")
+        for state in states:
+            parts.append(f"    s = efw_sm_register(&g_state_{c_ident(state['id'])});\n    if (s != EFW_OK) return s;\n")
+        if states:
+            parts.append(f"    if (g_{m_ident}_states[g_{m_ident}_current]->on_enter) {{ s = g_{m_ident}_states[g_{m_ident}_current]->on_enter(g_{m_ident}_states[g_{m_ident}_current]->ctx); if (s != EFW_OK) return s; }}\n")
+        parts.append("    return EFW_OK;\n}\n")
+        parts.append(f"static efw_status_t app_{m_ident}_tick(void) {{\n    efw_status_t s;\n")
+        if states:
+            parts.append(f"    s = g_{m_ident}_states[g_{m_ident}_current]->on_tick(g_{m_ident}_states[g_{m_ident}_current]->ctx);\n    if (s != EFW_OK) return s;\n")
+            for transition in bundle["transitions"]:
+                cond = c_ident(transition["condition"]) + "()" if transition.get("condition") else "1"
+                from_idx = index.get(transition.get("from"), 0)
+                to_idx = index.get(transition.get("to"), 0)
+                parts.append(f"    if (g_{m_ident}_current == {from_idx}u && ({cond})) {{\n")
+                parts.append(f"        if (g_{m_ident}_states[g_{m_ident}_current]->on_exit) {{ s = g_{m_ident}_states[g_{m_ident}_current]->on_exit(g_{m_ident}_states[g_{m_ident}_current]->ctx); if (s != EFW_OK) return s; }}\n")
+                parts.append(f"        g_{m_ident}_current = {to_idx}u;\n")
+                parts.append(f"        if (g_{m_ident}_states[g_{m_ident}_current]->on_enter) {{ s = g_{m_ident}_states[g_{m_ident}_current]->on_enter(g_{m_ident}_states[g_{m_ident}_current]->ctx); if (s != EFW_OK) return s; }}\n    }}\n")
+        parts.append("    return EFW_OK;\n}\n\n")
+    for node in nodes_of(ctx, "logic.if"):
+        ident = c_ident(node["id"])
+        cond = c_ident(node["condition"]) + "()" if node.get("condition") else "1"
+        parts.append(f"static efw_status_t app_logic_{ident}(void) {{\n    efw_status_t s;\n    if ({cond}) {{\n")
+        if node.get("then"):
+            parts.append(f"        s = {c_ident(node['then'])}();\n        if (s != EFW_OK) return s;\n")
+        parts.append("    } else {\n")
+        if node.get("else"):
+            parts.append(f"        s = {c_ident(node['else'])}();\n        if (s != EFW_OK) return s;\n")
+        parts.append("    }\n    return EFW_OK;\n}\n\n")
+    for node in nodes_of(ctx, "logic.loop"):
+        ident = c_ident(node["id"])
+        cond = c_ident(node["condition"]) + "()" if node.get("condition") else "1"
+        max_iter = int(node.get("max_iterations", 1))
+        parts.append(f"static efw_status_t app_logic_{ident}(void) {{\n    efw_status_t s;\n    uint16_t guard = 0u;\n    while (({cond}) && guard++ < {max_iter}u) {{\n")
+        if node.get("body"):
+            parts.append(f"        s = {c_ident(node['body'])}();\n        if (s != EFW_OK) return s;\n")
+        parts.append("    }\n    return EFW_OK;\n}\n\n")
+    return "".join(parts)
+
 def render_bootstrap_c(ctx):
     parts = ["""
 /**
@@ -941,6 +1077,7 @@ static const efw_module_ops_t *g_module_pool[APP_MODULE_COUNT];
 static uint32_t g_app_elapsed_ms;
 
 """]
+    parts.append(render_state_logic_blocks(ctx))
     for flow in ctx["flows"]:
         ident = c_ident(flow["id"])
         weights = ", ".join(c_float(value) for value in flow["weights"])
@@ -1001,6 +1138,8 @@ static efw_status_t app_bind_handles(void) {
 """)
     for node in nodes_of(ctx, "event.subscriber"):
         parts.append(f"    s = efw_topic_subscribe({event_topic_id(ctx, node['topic'])}u, {c_ident(node['callback'])}, {node.get('user', '0')});\n    if (s != EFW_OK) return s;\n")
+    for machine_id in states_by_machine(ctx):
+        parts.append(f"    s = app_{c_ident(machine_id)}_register();\n    if (s != EFW_OK) return s;\n")
     parts.append("    return EFW_OK;\n}\n\n")
     parts.append("static efw_status_t app_update_1ms(void) {\n    efw_status_t s;\n    g_app_elapsed_ms += APP_PROJECT_TICK_MS;\n")
     flow_tasks = {task.get("flow") for task in ctx["tasks"] if task.get("flow")}
@@ -1019,6 +1158,12 @@ static efw_status_t app_bind_handles(void) {
         elif task.get("flow"):
             ident = c_ident(task["flow"])
             parts.append(f"    if ({condition}) {{\n        s = efw_line_follower_update(&g_{ident}, 0, 0);\n        if (s != EFW_OK) return s;\n    }}\n")
+    for machine_id in states_by_machine(ctx):
+        parts.append(f"    s = app_{c_ident(machine_id)}_tick();\n    if (s != EFW_OK) return s;\n")
+    for node in nodes_of(ctx, "logic.if") + nodes_of(ctx, "logic.loop"):
+        period = int(node.get("period_ms", ctx["project"].get("tick_ms", 1)))
+        condition = "1" if period <= int(ctx["project"].get("tick_ms", 1)) else f"(g_app_elapsed_ms % {period}u) == 0u"
+        parts.append(f"    if ({condition}) {{\n        s = app_logic_{c_ident(node['id'])}();\n        if (s != EFW_OK) return s;\n    }}\n")
     if nodes_of(ctx, "module.custom"):
         parts.append("    s = efw_module_poll_all();\n    if (s != EFW_OK) return s;\n")
     parts.append("    return EFW_OK;\n}\n\n")
@@ -1103,24 +1248,54 @@ target_link_libraries(efw_app_{target} PRIVATE efw)
 """
 
 
+def render_application_files(ctx):
+    files = {
+        "app_board_config.h": render_board_config(ctx),
+        "app_manifest.h": render_manifest(ctx),
+        "app_components.h": render_components_h(),
+        "app_components.c": render_components_c(ctx),
+        "app_platform.h": render_platform_h(),
+        "app_platform.c": render_platform_c(ctx),
+        "app_bootstrap.h": render_bootstrap_h(),
+        "app_bootstrap.c": render_bootstrap_c(ctx),
+        "main.c": render_main_c(ctx),
+        "CMakeLists.generated.txt": render_cmake(ctx),
+    }
+    for item in ctx["custom_files"] + ctx["board_adapters"]:
+        files[item["path"]] = item["content"]
+    return files
+
+
+def preview_application_files(graph_path: Path, out_dir: Path):
+    graph = json.loads(graph_path.read_text(encoding="utf-8"))
+    ctx = validate_graph(graph)
+    files = render_application_files(ctx)
+    preview = []
+    for rel_path, content in sorted(files.items()):
+        target = out_dir / rel_path
+        if not target.exists():
+            status = "create"
+        elif target.read_text(encoding="utf-8") == content:
+            status = "same"
+        else:
+            status = "overwrite"
+        preview.append({"path": rel_path, "status": status})
+    if out_dir.exists():
+        generated_set = set(files)
+        for target in sorted(path for path in out_dir.rglob("*") if path.is_file()):
+            rel = target.relative_to(out_dir).as_posix()
+            if rel not in generated_set:
+                preview.append({"path": rel, "status": "preserve"})
+    return preview
+
+
 def generate(graph_path: Path, out_dir: Path, force: bool) -> None:
     graph = json.loads(graph_path.read_text(encoding="utf-8"))
     ctx = validate_graph(graph)
-    if out_dir.exists():
-        require(force, f"output directory already exists: {out_dir} (pass --force to replace it)")
-        shutil.rmtree(out_dir)
-    write_file(out_dir, "app_board_config.h", render_board_config(ctx))
-    write_file(out_dir, "app_manifest.h", render_manifest(ctx))
-    write_file(out_dir, "app_components.h", render_components_h())
-    write_file(out_dir, "app_components.c", render_components_c(ctx))
-    write_file(out_dir, "app_platform.h", render_platform_h())
-    write_file(out_dir, "app_platform.c", render_platform_c(ctx))
-    write_file(out_dir, "app_bootstrap.h", render_bootstrap_h())
-    write_file(out_dir, "app_bootstrap.c", render_bootstrap_c(ctx))
-    write_file(out_dir, "main.c", render_main_c(ctx))
-    for item in ctx["custom_files"] + ctx["board_adapters"]:
-        write_file(out_dir, item["path"], item["content"])
-    write_file(out_dir, "CMakeLists.generated.txt", render_cmake(ctx))
+    if out_dir.exists() and any(out_dir.iterdir()):
+        require(force, f"output directory already exists: {out_dir} (pass --force to overwrite generated files; non-generated files are preserved)")
+    for rel_path, content in render_application_files(ctx).items():
+        write_file(out_dir, rel_path, content)
 
 
 def parse_args(argv):
