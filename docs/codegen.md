@@ -1,6 +1,8 @@
 # EFW 代码生成器与 PyQt 可视化编辑器
 
-`tools/efw_codegen.py` 是可视化蓝图系统的代码生成后端：它把 Graph JSON 生成可复制到真实工程的 `application/` 目录。`tools/efw_studio.py` 是唯一推荐 GUI 入口：它把项目管理、蓝图编辑、实时校验、属性面板、Code 标签页和一键生成集中在同一个 PyQt 工作台里。`tools/efw_visual_editor.py` 保留为工作台内嵌蓝图编辑器模块。
+`tools/efw.py codegen` 是可视化蓝图系统的代码生成入口：它把 Graph JSON 生成可复制到真实工程的 `application/` 目录。`tools/efw.py studio` 是唯一推荐 GUI 入口：它把项目管理、蓝图编辑、实时校验、属性面板、Code 标签页和一键生成集中在同一个 PyQt 工作台里。
+
+当前生成契约已固化到 `tools/codegen/graph/schema.py` 聚合入口，通用契约位于 `tools/codegen/graph/common.py`，具体节点契约位于 `tools/codegen/graph/node_contracts.py`，包括支持的节点类型、生成等级、回调签名、edge kind 和生成文件清单。Graph 校验逻辑位于 `tools/codegen/validate.py`，渲染/预览/写文件 API 位于 `tools/codegen/generator.py`，CLI 参数入口位于 `tools/codegen/cli.py`。详细边界见 `docs/graph_contract.md`。
 
 当前版本定位为 **通用嵌入式 application 生成器**，循迹车只是一个内置 flow 示例。生成器现在支持：
 
@@ -18,7 +20,7 @@
 在仓库根目录执行：
 
 ```bash
-python3 tools/efw_codegen.py examples/graphs/generic_embedded_app.json \
+python3 tools/efw.py codegen examples/graphs/generic_embedded_app.json \
   -o application/generated_generic_embedded_app \
   --force
 ```
@@ -26,7 +28,7 @@ python3 tools/efw_codegen.py examples/graphs/generic_embedded_app.json \
 循迹车示例：
 
 ```bash
-python3 tools/efw_codegen.py examples/graphs/line_tracking_car.json \
+python3 tools/efw.py codegen examples/graphs/line_tracking_car.json \
   -o application/generated_line_tracking_car \
   --force
 ```
@@ -34,7 +36,7 @@ python3 tools/efw_codegen.py examples/graphs/line_tracking_car.json \
 带自定义算法、模块和周期任务的循迹示例：
 
 ```bash
-python3 tools/efw_codegen.py examples/graphs/line_tracking_car_with_custom_code.json \
+python3 tools/efw.py codegen examples/graphs/line_tracking_car_with_custom_code.json \
   -o application/generated_line_tracking_car_custom \
   --force
 ```
@@ -56,7 +58,7 @@ CMakeLists.generated.txt  可选的 CMake 片段，会包含 custom_files/board_
 安装 PyQt6 或 PyQt5 后可以先启动项目管理界面：
 
 ```bash
-python3 tools/efw_studio.py
+python3 tools/efw.py studio
 ```
 
 项目管理界面用于维护 `.efw_project.json`，包括项目名、Graph JSON、输出 application 目录、板级 profile 和交接 notes。示例项目文件：
@@ -65,7 +67,7 @@ python3 tools/efw_studio.py
 examples/projects/generic_embedded_app.efw_project.json
 ```
 
-蓝图编辑页作为 `efw_studio.py` 工作台的一部分打开，包含三块核心区域：
+蓝图编辑页作为 `tools/efw.py studio` 工作台的一部分打开，包含三块核心区域：
 
 - **Card Palette / Canvas**：添加并拖动 HAL、传感器、电机、PID、自定义算法、自定义模块、周期任务、说明卡片等。
 - **Connect Selected**：在画布上选中两张卡后自动写入常见连接，例如 HAL → Sensor、HAL → Actuator、Sensor → PID/Custom Algorithm，减少手写 Graph JSON。
@@ -229,13 +231,13 @@ efw_status_t app_line_custom_pid_run(void *ctx, const void *in, void *out);
 最新版本把项目管理器作为中文入口，建议优先运行：
 
 ```bash
-python3 tools/efw_studio.py
+python3 tools/efw.py studio
 ```
 
 它提供：
 
 - **项目创建向导**：从通用嵌入式应用、循迹小车、循迹 + 自定义代码等模板创建 `.efw_project.json`。
-- **统一项目入口**：项目名、Graph JSON、输出目录、Board Profile、notes、Validate、Generate 和蓝图编辑入口集中在一个窗口里，`tools/efw_visual_editor.py` 保留为内嵌编辑器模块，兼容脚本会提示改用 `tools/efw_studio.py`。
+- **统一项目入口**：项目名、Graph JSON、输出目录、Board Profile、notes、Validate、Generate 和蓝图编辑入口集中在一个窗口里，统一从 `python3 tools/efw.py studio` 启动。
 - **覆盖保护**：项目管理器和蓝图编辑器生成 application 时，如果输出目录已经存在且非空，会先弹出覆盖确认，不再无条件 `force=True`。
 - **Board Profile 注入**：项目的 `board_profile` 会写入临时 Graph 的 `board.profile` 后再生成；蓝图编辑器的 Board Profile / Pin Planner 会把配置写回 `graph.board.profile` 和 `graph.board.pin_plan`。
 
@@ -248,7 +250,7 @@ python3 tools/efw_studio.py
 - **项目结构 / 文件树 / 调度视图**：展示模块分组、Graph → application 文件树预览，以及 flow/task 的周期调度关系。
 - **一键生成缺失回调**：根据 HAL/Sensor/Actuator/Algorithm/Module/Task/Event 节点声明，向 `app_custom.c` 追加缺失 callback stub。
 - **自动布局**：将节点按类型粗略分列排列，适合导入 JSON 后快速整理画布。
-- **模板库 / 组件市场感**：左侧面板按项目结构、硬件、传感器、执行器、算法、模块/任务、通信、状态机、逻辑控制、自定义分组展示模板，分组元数据已抽到 `tools/efw_visual_model.py`，作为后续拆分 PyQt 单文件的第一步。
+- **模板库 / 组件市场感**：左侧面板按项目结构、硬件、传感器、执行器、算法、模块/任务、通信、状态机、逻辑控制、自定义分组展示模板，分组元数据已抽到 `tools/studio/model.py`。
 - **分类配色**：画布卡片、端口和连线会按 HAL、Sensor、Actuator、Algorithm、Module、Task、Event、Project Module 等类型使用不同颜色，降低大型 Graph 的阅读成本。
 
 > Code 面板目前仍是普通文本编辑器，适合先承载自定义算法、BSP glue 和临时代码。后续可以再增强为带语法高亮、符号索引和 LSP 的代码区。
@@ -318,17 +320,17 @@ efw_ringbuf_push(&rx_rb, byte);
 推荐只使用一个 GUI 启动入口：
 
 ```bash
-python3 tools/efw_studio.py
+python3 tools/efw.py studio
 ```
 
-`efw_studio.py` 启动项目工作台，项目管理、蓝图编辑、实时校验、代码生成都在同一个窗口内完成。`efw_visual_editor.py` 保留为内嵌编辑器模块，不再作为独立 GUI 入口；纯逻辑能力拆到 `efw_visual_core.py`，共享元数据保留在 `efw_visual_model.py`，生成器仍由 `efw_codegen.py` 负责。
+`tools/efw.py studio` 启动项目工作台，项目管理、蓝图编辑、实时校验、代码生成都在同一个窗口内完成。Studio 实现位于 `tools/studio/`，codegen 实现位于 `tools/codegen/`。
 
 当前状态机 codegen 定位为“基础轻量状态机”：支持状态注册、进入/更新/退出回调和条件 transition。高级能力如 transition priority、transition action、timeout transition、event trigger transition、状态机调试输出、当前状态查询 API 尚未作为完整引擎实现，复杂竞赛车状态逻辑建议继续在 `custom_files` 中封装业务状态机或后续扩展框架状态机层。
 
 ### 本轮 Studio 解耦与边界同步
 
-- `tools/efw_studio.py` 仍是唯一推荐 GUI 入口；Studio 内部开始拆成 `tools/efw_studio_core/` 包，当前包含 `templates.py`（框架扫描、卡片摘要、属性选择）、`edge_semantics.py`（端口类型、连接规则、Graph 字段推导）和 `board.py`（Board Profile 默认资源套用）。
-- `tools/efw_visual_editor.py` 继续保留为 PyQt 画布/面板实现，但不再承载所有纯逻辑；后续可以继续拆成 scene、palette、properties、pin planner、code panel 等 UI 子模块。
+- `tools/efw.py` 是唯一推荐工具入口；Studio 内部位于 `tools/studio/`，codegen 和 Graph 契约位于 `tools/codegen/`。
+- `tools/studio/editor.py` 继续保留为 PyQt 画布/面板实现，但不再承载所有纯逻辑；后续可以继续拆成 scene、palette、properties、pin planner、code panel 等 UI 子模块。
 - UI 连接规则与 codegen 的 `apply_edge_semantics()` 已共享同一组 pair-level 语义函数，减少“UI 允许连接但生成器不理解”的风险；状态机端口也区分为 `state_machine`、`transition_from`、`transition_to`。
 - `project.module` 已显式包含 `inputs`、`outputs`、`subgraph` 字段，当前 UI 仍以同一 Graph 的模块视图方式呈现，模块内部独立子图和跨模块接口编译会作为下一阶段继续强化。
 - “一键创建条件函数”会单独为 `state.transition`、`logic.if`、`logic.loop` 的 `condition` 生成 `int condition(void)` stub；“一键生成缺失回调”仍负责完整回调 stub。
@@ -380,7 +382,7 @@ python3 tools/efw_studio.py
 - 右侧属性面板会根据字段类型显示下拉选择、布尔开关、整数、浮点、JSON 和必填条件字段；空 `state.transition.condition` 会红色提示。
 - 实时校验页提供可点击的错误列表，点击后会打开对应模块/状态机/通信页面并选中问题卡片。
 - Studio 提供轻量 Undo / Redo，并把当前 Graph 自动保存到仓库根目录 `.efw_studio_autosave.json`，用于远程 Codespaces/VNC 环境中降低误操作损失。
-- 框架库扫描现在优先使用 `tools/efw_studio_core/component_metadata.py` 中的组件 metadata（字段、回调、include、宏和生成边界），只有缺少 metadata 时才回退到头文件路径推断。
+- 框架库扫描现在优先使用 `tools/studio/core/component_metadata.py` 中的组件 metadata（字段、回调、include、宏和生成边界），只有缺少 metadata 时才回退到头文件路径推断。
 
 ## 蓝图端口与快捷键
 

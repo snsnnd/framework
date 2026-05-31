@@ -2,7 +2,7 @@
 
 ## 基础构建环境
 
-- Python 3.10 或更新版本：运行 `tools/efw_codegen.py` 和统一 PyQt 工作台 `tools/efw_studio.py`。
+- Python 3.10 或更新版本：运行统一入口 `tools/efw.py`。
 - CMake 3.15 或更新版本：主机侧构建验证。
 - C99 编译器：例如 GCC/Clang；嵌入式 IDE 可使用 Keil、STM32CubeIDE、ESP-IDF、MSPM0 SDK 工程等。
 
@@ -26,20 +26,20 @@ python3 -m pip install "PyQt5>=5.15"
 
 ```bash
 # 项目管理界面：管理 graph、输出目录、板级 profile 和 notes
-python3 tools/efw_studio.py
+python3 tools/efw.py studio
 
 # 蓝图编辑器：编辑卡片、连线、Graph JSON 和 custom_files
-python3 tools/efw_visual_editor.py
+python3 tools/efw.py studio
 
 # CLI 生成器：不启动 UI，直接从 Graph JSON 生成 application/
-python3 tools/efw_codegen.py examples/graphs/generic_embedded_app.json \
+python3 tools/efw.py codegen examples/graphs/generic_embedded_app.json \
   -o application/generated_generic_embedded_app \
   --force
 ```
 
 ## 推荐工作流
 
-1. 用 `tools/efw_project_manager.py` 打开或创建 `.efw_project.json` 项目文件。
+1. 用 `python3 tools/efw.py studio` 打开或创建 `.efw_project.json` 项目文件。
 2. 点击 **Open Graph Editor** 编辑卡片、连线和自定义代码。
 3. 点击 **Validate Graph** 做结构、回调函数、签名、周期和 ID 校验。
 4. 点击 **Generate** 输出 `application/`。
@@ -55,10 +55,10 @@ python3 tools/efw_codegen.py examples/graphs/generic_embedded_app.json \
 4. 进入桌面后打开终端，运行：
 
 ```bash
-python3 tools/efw_studio.py
+python3 tools/efw.py studio
 ```
 
-如果只需要命令行生成，不需要 VNC 桌面，可以直接在 Codespaces 终端运行 `tools/efw_codegen.py`。`start-vnc.sh` 每次容器启动都会运行 `check-vnc.sh --quick`，确保 5901/6080 端口已经监听且 noVNC 页面能返回。
+如果只需要命令行生成，不需要 VNC 桌面，可以直接在 Codespaces 终端运行 `python3 tools/efw.py codegen ...`。`start-vnc.sh` 每次容器启动都会运行 `check-vnc.sh --quick`，确保 5901/6080 端口已经监听且 noVNC 页面能返回。
 
 ## 主机侧验证
 

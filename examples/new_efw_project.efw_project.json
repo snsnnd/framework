@@ -1,0 +1,15 @@
+{
+  "kind": "efw.project",
+  "schema_version": 1,
+  "name": "generic_embedded_app",
+  "description": "new_efw_project 的 EFW Studio 项目描述文件。",
+  "graph_path": "examples/graphs/generic_embedded_app.json",
+  "output_dir": "application/generated_generic_embedded_app",
+  "board_profile": "generic-mock",
+  "notes": "Use the graph editor to edit cards/code, then generate application/. Put board-specific glue in graph.board_adapters.",
+  "workflow": [
+    "双击最近项目或打开 .efw_project.json 后，先检查项目名、Graph JSON、输出目录和 Board Profile。",
+    "点击“打开当前项目”进入项目装配，编辑卡片、关系和 custom_files。",
+    "回到项目页执行实时校验，通过后生成 application。"
+  ]
+}

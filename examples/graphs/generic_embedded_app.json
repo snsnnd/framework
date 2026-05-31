@@ -99,5 +99,81 @@
   "board": {
     "profile": "generic-mock",
     "pin_plan": []
-  }
+  },
+  "ui": {
+    "positions_by_page": {
+      "root": {
+        "system_core": [
+          -65.0,
+          -325.0
+        ]
+      },
+      "module:system_core": {
+        "uart_debug": [
+          -192.0,
+          -82.0
+        ],
+        "battery_sensor": [
+          -194.0,
+          228.0
+        ],
+        "status_led": [
+          -303.0,
+          640.0
+        ],
+        "health_service": [
+          -200.0,
+          959.0
+        ],
+        "heartbeat_100ms": [
+          200.0,
+          1408.0
+        ],
+        "topic_battery": [
+          240.0,
+          1762.0
+        ],
+        "publish_battery": [
+          -180.0,
+          1999.0
+        ],
+        "subscribe_battery": [
+          252.0,
+          2158.0
+        ]
+      },
+      "comm:topic_battery": {
+        "topic_battery": [
+          -152.0,
+          176.0
+        ],
+        "publish_battery": [
+          605.0,
+          5.0
+        ],
+        "subscribe_battery": [
+          306.0,
+          481.0
+        ]
+      }
+    }
+  },
+  "edges": [
+    {
+      "id": "edge_topic_battery_publish_battery_1",
+      "from": "topic_battery",
+      "to": "publish_battery",
+      "from_port": "topic",
+      "to_port": "topic",
+      "kind": "event"
+    },
+    {
+      "id": "edge_topic_battery_subscribe_battery_2",
+      "from": "topic_battery",
+      "to": "subscribe_battery",
+      "from_port": "topic",
+      "to_port": "topic",
+      "kind": "event"
+    }
+  ]
 }

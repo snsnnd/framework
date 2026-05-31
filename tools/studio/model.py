@@ -9,7 +9,9 @@ without changing the graph format.
 import json
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
+from codegen.graph import NODE_CONTRACTS, node_generation_label
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 VISUAL_NODE_CATEGORIES = [
     ("框架库扫描", []),
@@ -21,7 +23,7 @@ VISUAL_NODE_CATEGORIES = [
     ("模块 / 任务", ["module.custom", "task.periodic"]),
     ("通信发布订阅", ["event.topic", "event.publisher", "event.subscriber"]),
     ("状态机", ["state.machine", "state.state", "state.transition"]),
-    ("逻辑控制", ["logic.if", "logic.loop"]),
+    ("逻辑 / 数据建模", ["logic.if", "logic.loop", "logic.switch", "logic.for", "data.enum", "data.struct"]),
     ("自定义", ["custom.card", "custom.code"]),
 ]
 
@@ -37,27 +39,8 @@ GENERATED_APPLICATION_TREE = [
 
 
 NODE_GENERATION_STATUS = {
-    "hal.gpio_line_input": ("完整生成", "生成 HAL mock 与 board pin 常量"),
-    "hal.custom": ("完整生成", "生成 HAL 注册，回调由 custom_files/board_adapters 提供"),
-    "sensor.line_tracking": ("完整生成", "生成循迹 sensor 注册"),
-    "sensor.custom": ("完整生成", "生成 custom sensor 注册，read 回调由用户代码提供"),
-    "actuator.motor": ("完整生成", "生成 motor actuator mock 与 PWM/DIR 常量"),
-    "actuator.custom": ("完整生成", "生成 custom actuator 注册，write 回调由用户代码提供"),
-    "algorithm.pid": ("完整生成", "生成 PID 实例与算法注册"),
-    "algorithm.custom": ("完整生成", "生成算法注册，run 回调由用户代码提供"),
-    "module.custom": ("完整生成", "生成 module 注册与生命周期调用"),
-    "task.periodic": ("完整生成", "生成 tick scheduler 调用"),
-    "event.topic": ("部分生成", "生成 APP_TOPIC_* 宏"),
-    "event.publisher": ("说明/半自动", "表达发布关系，publish 调用仍在用户代码中"),
-    "event.subscriber": ("部分生成", "生成 efw_topic_subscribe 绑定，回调由用户代码提供"),
-    "project.module": ("生成分组", "用于 graph.module 分组，可双击进入子模块页面"),
-    "state.machine": ("完整生成", "生成轻量状态机调度与状态注册 glue"),
-    "state.state": ("完整生成", "生成 efw_state_machine_ops_t 状态注册"),
-    "state.transition": ("完整生成", "生成条件判断和状态切换代码"),
-    "logic.if": ("完整生成", "生成条件分支 wrapper，可由周期任务/模块调用"),
-    "logic.loop": ("完整生成", "生成带 max_iterations 防护的循环 wrapper"),
-    "custom.card": ("说明", "不生成代码"),
-    "custom.code": ("说明", "代码正文来自 custom_files"),
+    node_type: (node_generation_label(node_type), str(contract.get("boundary", "")))
+    for node_type, contract in NODE_CONTRACTS.items()
 }
 
 

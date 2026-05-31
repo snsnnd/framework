@@ -1,0 +1,84 @@
+{
+  "project": {
+    "name": "test",
+    "tick_ms": 1
+  },
+  "board": {
+    "profile": "generic-mock",
+    "pin_plan": []
+  },
+  "nodes": [
+    {
+      "id": "app_module",
+      "type": "project.module",
+      "name": "app_module",
+      "display_name": "应用模块",
+      "description": "项目的第一个模块。"
+    },
+    {
+      "id": "module_1",
+      "type": "project.module",
+      "display_name": "模块 1",
+      "description": "用于把一组 HAL/Sensor/Algorithm/Task 归到同一个应用模块或子系统。",
+      "inputs": [],
+      "outputs": [],
+      "subgraph": {
+        "nodes": [],
+        "edges": []
+      }
+    },
+    {
+      "id": "module_2",
+      "type": "project.module",
+      "display_name": "模块 2",
+      "description": "用于把一组 HAL/Sensor/Algorithm/Task 归到同一个应用模块或子系统。",
+      "inputs": [],
+      "outputs": [],
+      "subgraph": {
+        "nodes": [],
+        "edges": []
+      }
+    }
+  ],
+  "edges": [],
+  "flows": [],
+  "tasks": [],
+  "custom_files": [
+    {
+      "path": "app_custom.c",
+      "content": "#include \"efw/efw.h\"\n"
+    }
+  ],
+  "ui": {
+    "positions": {
+      "app_module": [
+        40,
+        40
+      ]
+    },
+    "positions_by_page": {
+      "root": {
+        "app_module": [
+          40.0,
+          40.0
+        ],
+        "module_1": [
+          80.0,
+          414.0
+        ]
+      },
+      "module:module_1": {
+        "app_module": [
+          40,
+          40
+        ]
+      },
+      "module:module_2": {
+        "app_module": [
+          40,
+          40
+        ]
+      }
+    }
+  }
+}

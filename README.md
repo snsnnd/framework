@@ -84,32 +84,32 @@ STATE：src/state/state_machine_registry.c
 - `application/line_tracking_car/`：循迹车示例，保留为机器人/控制类项目的领域模板。
 
 ## 代码生成器第一阶段
-可视化蓝图系统的第一步已经落到 CLI：`tools/efw_codegen.py` 可读取图描述 JSON，并生成可复制到真实项目的 `application/` 目录。当前定位为通用嵌入式 application 生成工具：支持自定义 HAL/SENSOR/ACTUATOR/ALGORITHM/MODULE/TASK 卡片，也保留循迹车 LineFollower 作为一个内置示例 flow。
+可视化蓝图系统的第一步已经落到 CLI：`tools/efw.py codegen` 可读取图描述 JSON，并生成可复制到真实项目的 `application/` 目录。当前定位为通用嵌入式 application 生成工具：支持自定义 HAL/SENSOR/ACTUATOR/ALGORITHM/MODULE/TASK 卡片，也保留循迹车 LineFollower 作为一个内置示例 flow。
 
 ```bash
-python3 tools/efw_codegen.py examples/graphs/generic_embedded_app.json \
+python3 tools/efw.py codegen examples/graphs/generic_embedded_app.json \
   -o application/generated_generic_embedded_app \
   --force
 ```
 
-生成代码仍然只依赖 EFW 的 application runtime 和 bind/update 句柄模式；真实项目可把 STM32 HAL、ESP-IDF、MSPM0 DriverLib 或自有 BSP glue 放进 `board_adapters`，生成器会检查回调函数存在、签名匹配并加入 CMake 片段。第二阶段增加统一 PyQt 工作台：`python3 tools/efw_studio.py`，在同一窗口内管理 graph、输出目录、板级 profile、notes、蓝图画布、Connect Selected 连线、节点属性和 Code 区自定义 `.c/.h` 文件。自定义算法、模块和周期任务会与可视化卡片一起生成 application。更多说明见 `docs/codegen.md`，环境需求见 `docs/environment.md`。
+生成代码仍然只依赖 EFW 的 application runtime 和 bind/update 句柄模式；真实项目可把 STM32 HAL、ESP-IDF、MSPM0 DriverLib 或自有 BSP glue 放进 `board_adapters`，生成器会检查回调函数存在、签名匹配并加入 CMake 片段。第二阶段增加统一 PyQt 工作台：`python3 tools/efw.py studio`，在同一窗口内管理 graph、输出目录、板级 profile、notes、蓝图画布、Connect Selected 连线、节点属性和 Code 区自定义 `.c/.h` 文件。自定义算法、模块和周期任务会与可视化卡片一起生成 application。更多说明见 `docs/codegen.md`，环境需求见 `docs/environment.md`。
 
 ## 可视化工具环境
 代码生成器只依赖 Python 标准库；PyQt 可视化编辑器和项目管理界面需要安装 Qt 绑定：
 
 ```bash
 python3 -m pip install -r tools/requirements-visual.txt
-python3 tools/efw_studio.py
+python3 tools/efw.py studio
 ```
 
 `examples/projects/generic_embedded_app.efw_project.json` 是一个项目管理界面可直接打开的示例项目文件。仓库还包含 `.devcontainer/`，在 GitHub Codespaces 中可通过 6080 端口打开 noVNC 桌面来运行 PyQt 项目管理器，并可用 `bash .devcontainer/check-vnc.sh` 自检 VNC/noVNC/PyQt；详见 `docs/environment.md`。
 
-可视化工作台已全面中文化，并新增项目创建向导、属性表单、端口拖线连线、实时校验面板、Board Profile / Pin Planner、模板库入口、代码生成映射视图、自动布局、分类配色主题、项目模块分组卡片、统一 `graph.edges`、Graph → Application 文件树预览、任务调度视图、一键生成缺失回调、状态机卡片、基础 if/loop 逻辑卡片和事件总线发布/订阅卡片；项目管理页和蓝图编辑页也整合在统一入口 `tools/efw_studio.py` 工作台内。Codespaces devcontainer 会安装 Noto CJK 字体，避免 VNC 中中文显示为空格或方块。生成 application 时如果输出目录非空会先确认覆盖，项目管理器会把 Board Profile 注入 Graph 后再生成。
+可视化工作台已全面中文化，并新增项目创建向导、属性表单、端口拖线连线、实时校验面板、Board Profile / Pin Planner、模板库入口、代码生成映射视图、自动布局、分类配色主题、项目模块分组卡片、统一 `graph.edges`、Graph → Application 文件树预览、任务调度视图、一键生成缺失回调、状态机卡片、基础 if/loop 逻辑卡片和事件总线发布/订阅卡片；项目管理页和蓝图编辑页也整合在统一入口 `tools/efw.py studio` 工作台内。Codespaces devcontainer 会安装 Noto CJK 字体，避免 VNC 中中文显示为空格或方块。生成 application 时如果输出目录非空会先确认覆盖，项目管理器会把 Board Profile 注入 Graph 后再生成。
 
 ## 基础数据结构
 EFW 现在通过 `efw/efw.h` 直接暴露无动态内存的数据结构 API：`efw_ringbuf_t`、`efw_queue_t`、`efw_stack_t`，适合 UART 缓冲、事件/命令队列、解析器栈等裸机场景。实现位于 `include/efw/core/ds.h`，由调用方提供存储数组，不依赖 OS。
 
-可视化工具已开始让 UI 节点能力与 codegen 同步：左侧模板库会递归扫描 `include/efw` 形成“框架库扫描”分组，属性面板对常见引用字段提供下拉选择，`project.module` 支持 inputs/outputs/subgraph 元数据和模块视图，Board Profile 数据库位于 `examples/board_profiles/board_profiles.json`，状态机与基本 if/loop 节点已经生成轻量 C glue，生成前会显示 create/backup+overwrite/same/preserve 摘要，并且覆盖时会把旧生成文件备份到 `.efw_backup/`、保留额外用户文件。Studio 的纯逻辑已开始拆入 `tools/efw_studio_core/`，端口连接语义由 UI 和 codegen 共享；画布顶部支持类似 VS Code 的页面标签，双击模块、状态机或通信 Topic 可进入专用页面，根页面只展示模块/顶层 Topic/顶层状态机，模块内部节点只在对应页面显示，顶部工具栏也精简为项目级操作。
+可视化工具已开始让 UI 节点能力与 codegen 同步：左侧模板库会递归扫描 `include/efw` 形成“框架库扫描”分组，属性面板对常见引用字段提供下拉选择，`project.module` 支持 inputs/outputs/subgraph 元数据和模块视图，Board Profile 数据库位于 `examples/board_profiles/board_profiles.json`，状态机与基本 if/loop 节点已经生成轻量 C glue，生成前会显示 create/backup+overwrite/same/preserve 摘要，并且覆盖时会把旧生成文件备份到 `.efw_backup/`、保留额外用户文件。Studio 实现已拆入 `tools/studio/`，codegen 与 Graph 契约已拆入 `tools/codegen/`，端口连接语义由 UI 和 codegen 共享；画布顶部支持类似 VS Code 的页面标签，双击模块、状态机或通信 Topic 可进入专用页面，根页面只展示模块/顶层 Topic/顶层状态机，模块内部节点只在对应页面显示，顶部工具栏也精简为项目级操作。
 
 ## CMake 构建
 CMake 只用于主机侧编译验证或支持 CMake 的工程，不是裸机接入必需项。

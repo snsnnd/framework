@@ -1,0 +1,36 @@
+{
+  "project": {
+    "name": "new_efw_project",
+    "tick_ms": 1
+  },
+  "board": {
+    "profile": "generic-mock",
+    "pin_plan": []
+  },
+  "nodes": [
+    {
+      "id": "app_module",
+      "type": "project.module",
+      "name": "app_module",
+      "display_name": "应用模块",
+      "description": "项目的第一个模块。"
+    }
+  ],
+  "edges": [],
+  "flows": [],
+  "tasks": [],
+  "custom_files": [
+    {
+      "path": "app_custom.c",
+      "content": "#include \"efw/efw.h\"\n"
+    }
+  ],
+  "ui": {
+    "positions": {
+      "app_module": [
+        40,
+        40
+      ]
+    }
+  }
+}
