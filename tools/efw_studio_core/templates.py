@@ -6,12 +6,14 @@ import copy
 from pathlib import Path
 from typing import Any
 
+from .component_metadata import COMPONENT_METADATA
+
 
 def _extract_enable_macros(text: str) -> list[str]:
     return sorted(set(__import__("re").findall(r"EFW_ENABLE_[A-Z0-9_]+", text)))
 
 
-def _annotate_scan_template(template: dict[str, Any], header: Path, repo_root: Path, library_module: str, callbacks: list[str]) -> None:
+def _annotate_scan_template(template: dict[str, Any], key: str, header: Path, repo_root: Path, library_module: str, callbacks: list[str]) -> None:
     text = header.read_text(encoding="utf-8", errors="ignore")
     template["framework_header"] = header.relative_to(repo_root).as_posix()
     template["library_module"] = library_module
@@ -22,8 +24,13 @@ def _annotate_scan_template(template: dict[str, Any], header: Path, repo_root: P
     template["schema_fields"] = sorted(key for key in template if key not in {"id", "type"})
     template["generation"] = "当前 schema 可生成注册 glue；具体业务回调仍由 custom_files/board_adapters 实现。"
     template["scan_warning"] = "路径/头文件元数据推断，尚未解析完整 C AST；复杂依赖请补组件描述文件。"
+    metadata = COMPONENT_METADATA.get(key) or COMPONENT_METADATA.get(template.get("type", "")) or {}
+    if metadata:
+        template.update(copy.deepcopy(metadata))
+        template.setdefault("framework_header", header.relative_to(repo_root).as_posix())
+        template.setdefault("scan_warning", "使用显式组件 metadata；字段、回调、宏与生成边界来自 metadata。")
     template.setdefault("requires", [])
-    template.setdefault("note", f"从框架头文件 {template['framework_header']} 自动扫描得到；字段/回调为保守推断，生成时仍会按 schema 校验。")
+    template.setdefault("note", f"从框架头文件 {template['framework_header']} 自动扫描得到；字段/回调为 metadata 优先、路径推断兜底，生成时仍会按 schema 校验。")
 
 
 def discover_framework_templates(node_templates: dict[str, dict[str, Any]], repo_root: Path) -> tuple[dict[str, dict[str, Any]], list[str]]:
@@ -43,9 +50,27 @@ def discover_framework_templates(node_templates: dict[str, dict[str, Any]], repo
     def add_template(key: str, template: dict[str, Any], header: Path, library_module: str, callbacks: list[str]) -> None:
         if key in templates:
             return
-        _annotate_scan_template(template, header, repo_root, library_module, callbacks)
+        _annotate_scan_template(template, key, header, repo_root, library_module, callbacks)
         templates[key] = template
         order.append(key)
+
+    def add_metadata_template(key: str, header_rel: str) -> None:
+        metadata = COMPONENT_METADATA.get(key)
+        if not metadata or key in templates:
+            return
+        template = copy.deepcopy(metadata)
+        header = repo_root / header_rel
+        if header.exists():
+            _annotate_scan_template(template, key, header, repo_root, template.get("library_module", "framework"), template.get("callbacks", []))
+        else:
+            template.setdefault("framework_header", header_rel)
+        templates[key] = template
+        order.append(key)
+
+    add_metadata_template("scan.sensor.custom", "include/efw/device/sensor/custom.h")
+    add_metadata_template("scan.actuator.custom", "include/efw/device/actuator.h")
+    add_metadata_template("scan.algorithm.pid", "include/efw/algorithm/control/pid.h")
+    add_metadata_template("scan.algorithm.custom", "include/efw/algorithm/algorithm.h")
 
     skip_stems = {"algorithms", "registry", "sensor", "actuator"}
     for header in sorted(include_root.rglob("*.h")):
@@ -106,7 +131,7 @@ def node_summary(node: dict[str, Any]) -> str:
         "task.periodic": ["period_ms", "call"],
         "state.machine": ["initial"],
         "state.state": ["machine", "on_update"],
-        "state.transition": ["from", "to", "condition"],
+        "state.transition": ["from", "to", "condition", "priority", "timeout_ms"],
         "logic.if": ["condition", "then", "else"],
         "logic.loop": ["condition", "body", "max_iterations"],
         "event.topic": ["topic_id", "payload_type"],
@@ -140,6 +165,8 @@ def property_choices(graph: dict[str, Any], node: dict[str, Any], key: str, node
         return [""] + by_type("event.topic")
     if key == "machine":
         return [""] + by_type("state.machine")
+    if key == "event_trigger":
+        return [""] + by_type("event.topic")
     if key in {"from", "to"} and node_type == "state.transition":
         states = [n.get("id", "") for n in graph.get("nodes", []) if n.get("type") == "state.state" and (not node.get("machine") or n.get("machine") == node.get("machine"))]
         return [""] + states

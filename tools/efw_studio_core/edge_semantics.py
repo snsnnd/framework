@@ -210,3 +210,34 @@ def apply_pair_semantics(src: dict[str, Any], dst: dict[str, Any], graph: dict[s
     if src_type == "custom.code" and dst_type in {"sensor.custom", "algorithm.custom", "module.custom", "actuator.custom", "hal.custom", "task.periodic"}:
         return True
     return False
+
+EDGE_KIND_LABELS = {
+    "containment": "包含/归属",
+    "data": "数据流",
+    "control": "控制调用",
+    "event": "事件发布订阅",
+    "state": "状态转换",
+    "code": "代码实现",
+    "generic": "通用连接",
+}
+
+
+def semantic_edge_kind(src: dict[str, Any], dst: dict[str, Any], from_port: str | None = None, to_port: str | None = None) -> str:
+    """Return a normalized edge.kind instead of UI-only labels like selected/port."""
+    src_type = str(src.get("type", ""))
+    dst_type = str(dst.get("type", ""))
+    if src_type == "project.module" and dst_type == "project.module":
+        return "data"
+    if src_type == "project.module" or dst.get("module") == src.get("id"):
+        return "containment"
+    if src_type.startswith("event.") or dst_type.startswith("event."):
+        return "event"
+    if src_type.startswith("state.") or dst_type.startswith("state."):
+        return "state"
+    if src_type.startswith("logic.") or dst_type in {"task.periodic", "module.custom"} and from_port in {"logic_call", "logic_true", "logic_false", "logic_body"}:
+        return "control"
+    if src_type == "custom.code":
+        return "code"
+    if from_port in {"module_output", "sensor", "algorithm", "hal", "topic"} or to_port in {"module_input", "sensor", "algorithm", "hal", "topic"}:
+        return "data"
+    return "generic"

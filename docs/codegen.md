@@ -348,3 +348,36 @@ python3 tools/efw_studio.py
 - 页面位置改为优先写入 `ui.positions_by_page[page_key]`，避免根页面、模块页、状态机页和通信页互相覆盖布局。
 - 修改卡片 `id` 时会同步 `module`、`parent`、`machine`、`topic`、flow、edge、task 和 UI 位置引用，并刷新打开的页面标签。
 - 根页面模块之间的连线表示 `module_data_flow`，用于表达模块接口关系，而不是把一个模块设置成另一个模块的子模块。
+
+## Studio 语义同步与用户代码保护
+
+最新 Studio/Codegen 约定把可视化连接统一收敛到 `graph.edges[].kind`：
+
+- `containment`：模块包含或页面归属关系。
+- `data`：模块接口、传感器、算法等数据流。
+- `control`：逻辑块、任务、模块调用关系。
+- `event`：Topic、Publisher、Subscriber 的发布订阅关系。
+- `state`：状态机、状态和转换关系。
+- `code`：自定义代码卡片提供的实现关系。
+
+生成器仍兼容历史 `flows`，但 UI 与 codegen 会优先通过统一 edge 语义推导节点字段，减少「edges / flows / 字段引用」三套模型长期分叉。
+
+生成前可以调用 `preview_application_files()` 获取 Diff 预览：每个文件包含 `status`、`old_sha/new_sha`、行数变化和保护方式。发生覆盖时，生成器会把旧生成文件写入 `.efw_backup/`；不属于本次生成清单的用户文件会被 `preserve`，不会被删除。
+
+## State Machine 转换约束
+
+状态机页面只允许添加 `state.state` 和 `state.transition`。转换卡片必须填写 `condition`，并且 `from` / `to` 必须属于同一个 `state.machine`。转换支持以下字段：
+
+- `priority`：数值越小越先判断。
+- `condition`：必填，签名为 `int condition(void)` / `uint8_t condition(void)` / `bool condition(void)`。
+- `action`：可选，转换时在 `on_exit` 之后、切换状态之前调用，签名为 `efw_status_t action(void)`。
+- `timeout_ms`：可选，大于 0 时需要当前状态停留时间达到该值后才允许转换。
+- `event_trigger`：可选，当前版本作为事件语义标记写入生成代码注释，后续可继续接入事件总线触发。
+
+## Studio UX 改进
+
+- Pin Planner 使用 Board Profile 提供的端口、引脚、Timer、PWM Channel 下拉选择，并在空值时阻止写回。
+- 右侧属性面板会根据字段类型显示下拉选择、布尔开关、整数、浮点、JSON 和必填条件字段；空 `state.transition.condition` 会红色提示。
+- 实时校验页提供可点击的错误列表，点击后会打开对应模块/状态机/通信页面并选中问题卡片。
+- Studio 提供轻量 Undo / Redo，并把当前 Graph 自动保存到仓库根目录 `.efw_studio_autosave.json`，用于远程 Codespaces/VNC 环境中降低误操作损失。
+- 框架库扫描现在优先使用 `tools/efw_studio_core/component_metadata.py` 中的组件 metadata（字段、回调、include、宏和生成边界），只有缺少 metadata 时才回退到头文件路径推断。

@@ -40,6 +40,7 @@ if importlib.util.find_spec("PyQt6") is not None:
         QMessageBox,
         QLineEdit,
         QComboBox,
+        QCheckBox,
         QPushButton,
         QPlainTextEdit,
         QSplitter,
@@ -74,6 +75,7 @@ elif importlib.util.find_spec("PyQt5") is not None:
         QMessageBox,
         QLineEdit,
         QComboBox,
+        QCheckBox,
         QPushButton,
         QPlainTextEdit,
         QSplitter,
@@ -92,7 +94,7 @@ else:
     QComboBox = QFormLayout = QGraphicsEllipseItem = QGraphicsItem = object
     QGraphicsLineItem = QGraphicsRectItem = QGraphicsScene = QGraphicsSimpleTextItem = QGraphicsView = object
     QHBoxLayout = QLabel = QListWidget = QListWidgetItem = QMainWindow = object
-    QLineEdit = QPushButton = QPlainTextEdit = QSplitter = QTableWidget = QTableWidgetItem = object
+    QLineEdit = QPushButton = QPlainTextEdit = QSplitter = QTableWidget = QTableWidgetItem = QCheckBox = object
     QTabWidget = QToolBar = QVBoxLayout = QWidget = object
     QT_LIB = "missing"
 
@@ -108,6 +110,7 @@ from efw_studio_core import (  # noqa: E402
     apply_pair_semantics,
     can_connect_ports,
     discover_framework_templates,
+    semantic_edge_kind,
     node_summary,
     page_for_node,
     page_hint,
@@ -261,6 +264,10 @@ NODE_TEMPLATES: dict[str, dict[str, Any]] = {
         "from": "idle",
         "to": "run",
         "condition": "app_can_run",
+        "priority": 0,
+        "action": "",
+        "timeout_ms": 0,
+        "event_trigger": "",
     },
     "logic.if": {
         "id": "if_condition",
@@ -563,7 +570,8 @@ class GraphNodeItem(QGraphicsRectItem):
         self.setFlags(flags)
         theme = node_theme(node.get("type"))
         self.setBrush(QBrush(QColor(theme["bg"])))
-        self.setPen(QPen(QColor(theme["border"]), 2))
+        border_color = "#e53935" if node.get("type") == "state.transition" and not str(node.get("condition", "")).strip() else theme["border"]
+        self.setPen(QPen(QColor(border_color), 3 if border_color == "#e53935" else 2))
         accent = QGraphicsRectItem(0, 0, self.WIDTH, 7, self)
         accent.setBrush(QBrush(QColor(theme["accent"])))
         accent.setPen(QPen(QColor(theme["accent"]), 0))
@@ -624,11 +632,53 @@ class VisualEditorWindow(QMainWindow):
         self.drag_line: QGraphicsLineItem | None = None
         self.drag_port: PortItem | None = None
         self.validation_messages: list[str] = []
+        self.validation_targets: list[str | None] = []
+        self.undo_stack: list[dict[str, Any]] = []
+        self.redo_stack: list[dict[str, Any]] = []
+        self._suspend_history = False
+        self.autosave_path = REPO_ROOT / ".efw_studio_autosave.json"
         self.open_pages = [root_page()]
         self.active_page_key = "root"
         self.graph = self.default_graph()
         self.setStyleSheet(WORKBENCH_STYLESHEET)
         self._build_ui()
+        self.refresh_all()
+
+    def graph_snapshot(self) -> dict[str, Any]:
+        return copy.deepcopy(self.graph)
+
+    def push_undo(self) -> None:
+        if self._suspend_history:
+            return
+        self.undo_stack.append(self.graph_snapshot())
+        if len(self.undo_stack) > 80:
+            self.undo_stack.pop(0)
+        self.redo_stack.clear()
+
+    def undo(self) -> None:
+        if not self.undo_stack:
+            return
+        self.redo_stack.append(self.graph_snapshot())
+        self.graph = self.undo_stack.pop()
+        self.current_node_id = None
+        self.refresh_all()
+
+    def redo(self) -> None:
+        if not self.redo_stack:
+            return
+        self.undo_stack.append(self.graph_snapshot())
+        self.graph = self.redo_stack.pop()
+        self.current_node_id = None
+        self.refresh_all()
+
+    def autosave_graph(self) -> None:
+        try:
+            self.autosave_path.write_text(json.dumps(self.graph, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        except OSError:
+            return
+
+    def refresh_after_change(self) -> None:
+        self.autosave_graph()
         self.refresh_all()
 
     def default_graph(self) -> dict[str, Any]:
@@ -678,6 +728,8 @@ class VisualEditorWindow(QMainWindow):
         toolbar.addAction("打开", self.open_graph)
         toolbar.addAction("保存", self.save_graph)
         toolbar.addAction("另存为", self.save_graph_as)
+        toolbar.addAction("撤销", self.undo)
+        toolbar.addAction("重做", self.redo)
         toolbar.addAction("实时校验", self.validate_current_graph)
         toolbar.addAction("生成", self.generate_application)
 
@@ -787,6 +839,10 @@ class VisualEditorWindow(QMainWindow):
     def _build_validation_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        layout.addWidget(QLabel("校验错误列表（点击可定位到相关卡片）："))
+        self.validation_list = QListWidget()
+        self.validation_list.itemClicked.connect(self.open_validation_item)
+        layout.addWidget(self.validation_list)
         self.validation_output = QPlainTextEdit()
         self.validation_output.setReadOnly(True)
         layout.addWidget(self.validation_output)
@@ -1012,6 +1068,7 @@ class VisualEditorWindow(QMainWindow):
 
     def refresh_json_editor(self) -> None:
         self.graph_json_editor.setPlainText(json.dumps(self.graph, ensure_ascii=False, indent=2))
+        self.autosave_graph()
 
     def refresh_code_list(self) -> None:
         self.code_files.blockSignals(True)
@@ -1082,14 +1139,11 @@ class VisualEditorWindow(QMainWindow):
                 template["module"] = owner_id
             return True
         if kind == "state":
-            allowed = {"state.state", "state.transition", "custom.card"}
+            allowed = {"state.state", "state.transition"}
             if node_type not in allowed:
-                QMessageBox.warning(self, "页面类型不匹配", "状态机页面只建议添加 State / Transition / 说明卡片。")
+                QMessageBox.warning(self, "页面类型不匹配", "状态机页面只允许添加 State / Transition；说明卡片请放在模块或根页面。")
                 return False
-            if node_type != "custom.card":
-                template["machine"] = owner_id
-            else:
-                template["scope"] = f"state:{owner_id}"
+            template["machine"] = owner_id
             return True
         if kind == "comm":
             allowed = {"event.publisher", "event.subscriber", "custom.card"}
@@ -1122,6 +1176,7 @@ class VisualEditorWindow(QMainWindow):
             suffix += 1
             new_id = f"{base_id}_{suffix}"
         template["id"] = new_id
+        self.push_undo()
         self.graph.setdefault("nodes", []).append(template)
         self.page_positions()[new_id] = [80, 80]
         self.current_node_id = new_id
@@ -1180,6 +1235,21 @@ class VisualEditorWindow(QMainWindow):
     def property_choices(self, node: dict[str, Any], key: str) -> list[str]:
         return core_property_choices(self.graph, node, key, NODE_TEMPLATES)
 
+    def property_widget_kind(self, node: dict[str, Any], key: str, value: Any, choices: list[str]) -> str:
+        if choices:
+            return "下拉选择"
+        if isinstance(value, bool) or key in {"binary_mode", "anti_windup", "enabled"}:
+            return "布尔开关"
+        if isinstance(value, int) and not isinstance(value, bool) or key.endswith("_ms") or key in {"priority", "period_ms", "channels", "topic_id", "max_iterations"}:
+            return "整数"
+        if isinstance(value, float) or key in {"kp", "ki", "kd", "out_min", "out_max", "base_speed", "min_speed", "max_speed", "dt"}:
+            return "浮点数"
+        if node.get("type") == "state.transition" and key == "condition":
+            return "必填条件函数"
+        if isinstance(value, (dict, list)):
+            return "JSON"
+        return "文本"
+
     def populate_property_form(self, node: dict[str, Any]) -> None:
         self.property_table.setRowCount(0)
         for key, value in node.items():
@@ -1187,17 +1257,30 @@ class VisualEditorWindow(QMainWindow):
             self.property_table.insertRow(row)
             self.property_table.setItem(row, 0, QTableWidgetItem(str(key)))
             choices = self.property_choices(node, str(key))
+            kind = self.property_widget_kind(node, str(key), value, choices)
             if choices:
                 combo = QComboBox()
-                combo.addItems(choices)
-                if str(value) not in choices:
+                combo.addItems([str(item) for item in choices])
+                if str(value) not in [str(item) for item in choices]:
                     combo.addItem(str(value))
                 combo.setCurrentText(str(value))
                 self.property_table.setCellWidget(row, 1, combo)
-                self.property_table.setItem(row, 2, QTableWidgetItem("下拉选择"))
+            elif kind == "布尔开关":
+                check = QCheckBox()
+                check.setChecked(bool(value) if not isinstance(value, str) else value.lower() in {"1", "true", "yes", "on"})
+                self.property_table.setCellWidget(row, 1, check)
             else:
-                self.property_table.setItem(row, 1, QTableWidgetItem(form_value_text(value)))
-                self.property_table.setItem(row, 2, QTableWidgetItem("文本/JSON"))
+                item = QTableWidgetItem(form_value_text(value))
+                if node.get("type") == "state.transition" and key == "condition" and not str(value).strip():
+                    item.setBackground(QBrush(QColor("#5b1f24")))
+                    item.setForeground(QBrush(QColor("#ffb3b3")))
+                    item.setText("<必填：条件函数名>")
+                self.property_table.setItem(row, 1, item)
+            type_item = QTableWidgetItem(kind)
+            if node.get("type") == "state.transition" and key == "condition" and not str(value).strip():
+                type_item.setBackground(QBrush(QColor("#5b1f24")))
+                type_item.setForeground(QBrush(QColor("#ffb3b3")))
+            self.property_table.setItem(row, 2, type_item)
 
     def apply_property_form(self) -> None:
         if not self.current_node_id:
@@ -1205,6 +1288,7 @@ class VisualEditorWindow(QMainWindow):
         node = self._find_node(self.current_node_id)
         if not node:
             return
+        self.push_undo()
         old_id = str(node.get("id", self.current_node_id))
         updated: dict[str, Any] = {}
         for row in range(self.property_table.rowCount()):
@@ -1218,9 +1302,15 @@ class VisualEditorWindow(QMainWindow):
                 continue
             if isinstance(value_widget, QComboBox):
                 raw_value = value_widget.currentText()
+                value = parse_form_value(raw_value)
+            elif isinstance(value_widget, QCheckBox):
+                value = value_widget.isChecked()
             else:
                 raw_value = value_item.text() if value_item else ""
-            updated[key] = parse_form_value(raw_value)
+                if raw_value == "<必填：条件函数名>":
+                    raw_value = ""
+                value = parse_form_value(raw_value)
+            updated[key] = value
         new_id = str(updated.get("id", old_id))
         if new_id != old_id:
             self.rename_node_references(old_id, new_id)
@@ -1231,6 +1321,18 @@ class VisualEditorWindow(QMainWindow):
                 self.current_node_id = new_id
                 break
         self.refresh_all()
+
+    def board_profile(self) -> dict[str, Any]:
+        board = self.graph.get("board", {})
+        profile = str(board.get("profile") or (self.board_profile_edit.currentText() if hasattr(self, "board_profile_edit") else "generic-mock") or "generic-mock")
+        return BOARD_PROFILES.get(profile) or BOARD_PROFILES.get("generic-mock", {})
+
+    def pin_cell_text(self, row: int, col: int) -> str:
+        widget = self.pin_table.cellWidget(row, col)
+        if isinstance(widget, QComboBox):
+            return widget.currentText().strip()
+        item = self.pin_table.item(row, col)
+        return item.text().strip() if item else ""
 
     def refresh_pin_planner(self) -> None:
         if not hasattr(self, "pin_table"):
@@ -1245,15 +1347,16 @@ class VisualEditorWindow(QMainWindow):
         for node in self.graph.get("nodes", []):
             if node.get("type") == "hal.gpio_line_input":
                 for index, pin in enumerate(node.get("pins", [])):
-                    self._add_pin_row(node.get("id", ""), f"GPIO输入[{index}]", pin.get("port", "A"), pin.get("pin", 0), "循迹/数字输入")
+                    self._add_pin_row(node.get("id", ""), f"GPIO输入[{index}]", pin.get("port", ""), pin.get("pin", ""), "循迹/数字输入")
             elif node.get("type") == "actuator.motor":
                 pwm = node.get("pwm", {})
                 direction = node.get("dir_pin", {})
-                self._add_pin_row(node.get("id", ""), "PWM", pwm.get("timer", 1), pwm.get("channel", 1), "电机速度")
-                self._add_pin_row(node.get("id", ""), "DIR", direction.get("port", "B"), direction.get("pin", 0), "电机方向")
+                self._add_pin_row(node.get("id", ""), "PWM", pwm.get("timer", ""), pwm.get("channel", ""), "电机速度")
+                self._add_pin_row(node.get("id", ""), "DIR", direction.get("port", ""), direction.get("pin", ""), "电机方向")
 
 
     def apply_board_profile_defaults(self) -> None:
+        self.push_undo()
         profile_name = self.board_profile_edit.currentText().strip() or "generic-mock"
         notes = apply_board_profile_defaults_to_graph(self.graph, BOARD_PROFILES, profile_name)
         conflicts = self.collect_pin_conflicts()
@@ -1263,22 +1366,52 @@ class VisualEditorWindow(QMainWindow):
             QMessageBox.information(self, "Board Profile", "已套用默认资源：\n" + "\n".join(notes[:12]))
         self.refresh_all()
 
+    def _add_combo_cell(self, row: int, col: int, choices: list[Any], value: Any) -> None:
+        combo = QComboBox()
+        text_choices = [str(item) for item in choices]
+        if "" not in text_choices:
+            text_choices.insert(0, "")
+        combo.addItems(text_choices)
+        if str(value) not in text_choices:
+            combo.addItem(str(value))
+        combo.setCurrentText(str(value))
+        self.pin_table.setCellWidget(row, col, combo)
+
     def _add_pin_row(self, node_id: str, usage: str, port, pin, note: str) -> None:
         row = self.pin_table.rowCount()
         self.pin_table.insertRow(row)
-        for col, value in enumerate([node_id, usage, port, pin, note]):
-            self.pin_table.setItem(row, col, QTableWidgetItem(str(value)))
+        self.pin_table.setItem(row, 0, QTableWidgetItem(str(node_id)))
+        self.pin_table.setItem(row, 1, QTableWidgetItem(str(usage)))
+        profile = self.board_profile()
+        if usage == "PWM":
+            self._add_combo_cell(row, 2, profile.get("timers", []), port)
+            self._add_combo_cell(row, 3, profile.get("pwm_channels", []), pin)
+        else:
+            self._add_combo_cell(row, 2, profile.get("ports", []), port)
+            pin_count = int(profile.get("pins_per_port", 0) or 0)
+            self._add_combo_cell(row, 3, list(range(pin_count)), pin)
+        self.pin_table.setItem(row, 4, QTableWidgetItem(str(note)))
 
     def apply_pin_planner(self) -> None:
+        self.push_undo()
         board = self.graph.setdefault("board", {})
         board["profile"] = self.board_profile_edit.currentText().strip() or "generic-mock"
         grouped: dict[str, list[tuple[str, str, str]]] = {}
+        errors: list[str] = []
         for row in range(self.pin_table.rowCount()):
-            node_id = self.pin_table.item(row, 0).text()
-            usage = self.pin_table.item(row, 1).text()
-            port = self.pin_table.item(row, 2).text()
-            pin = self.pin_table.item(row, 3).text()
+            node_id = self.pin_cell_text(row, 0)
+            usage = self.pin_cell_text(row, 1)
+            port = self.pin_cell_text(row, 2)
+            pin = self.pin_cell_text(row, 3)
+            if not node_id or not usage:
+                continue
+            if not port or not pin:
+                errors.append(f"第 {row + 1} 行 {node_id}/{usage} 资源为空，请用下拉框选择端口/引脚。")
+                continue
             grouped.setdefault(node_id, []).append((usage, port, pin))
+        if errors:
+            QMessageBox.warning(self, "Pin Planner 空值", "\n".join(errors))
+            return
         pin_plan = []
         for node in self.graph.get("nodes", []):
             rows = grouped.get(node.get("id"), [])
@@ -1403,12 +1536,13 @@ class VisualEditorWindow(QMainWindow):
         if not src_id or not dst_id:
             return
         if self.active_page().get("kind") == "root" and src.get("type") == "project.module" and dst.get("type") == "project.module":
-            kind = "module_data_flow"
             out_port = out_port if out_port not in {"selected", "out"} else "module_output"
             in_port = in_port if in_port not in {"selected", "in"} else "module_input"
+        kind = semantic_edge_kind(src, dst, out_port, in_port)
         for edge in edges:
             if edge.get("from") == src_id and edge.get("to") == dst_id and edge.get("from_port") == out_port and edge.get("to_port") == in_port:
                 return
+        self.push_undo()
         edges.append({"id": f"edge_{src_id}_{dst_id}_{len(edges) + 1}", "from": src_id, "to": dst_id, "from_port": out_port, "to_port": in_port, "kind": kind})
 
     def callback_stubs(self) -> list[str]:
@@ -1444,6 +1578,9 @@ class VisualEditorWindow(QMainWindow):
             if ntype in {"state.transition", "logic.if", "logic.loop"} and node.get("condition") and not has_symbol(str(node.get("condition"))):
                 name = node.get("condition")
                 stubs.append(f"int {name}(void) {{\n    return 0;\n}}\n")
+            if ntype == "state.transition" and node.get("action") and not has_symbol(str(node.get("action"))):
+                name = node.get("action")
+                stubs.append(f"efw_status_t {name}(void) {{\n    return EFW_OK;\n}}\n")
             if ntype == "logic.if":
                 for field in ["then", "else"]:
                     name = node.get(field)
@@ -1460,7 +1597,7 @@ class VisualEditorWindow(QMainWindow):
 
 
     def condition_stubs(self) -> list[str]:
-        self.apply_code_file()
+        self.apply_code_file(record_history=False)
         existing_content = "\n".join(file.get("content", "") for file in self.graph.get("custom_files", []))
         stubs: list[str] = []
         for node in self.graph.get("nodes", []):
@@ -1486,7 +1623,7 @@ class VisualEditorWindow(QMainWindow):
         QMessageBox.information(self, "条件函数", f"已生成 {len(stubs)} 个条件函数 stub。")
 
     def generate_missing_callbacks(self) -> None:
-        self.apply_code_file()
+        self.apply_code_file(record_history=False)
         stubs = self.callback_stubs()
         if not stubs:
             QMessageBox.information(self, "缺失回调", "没有发现需要生成的缺失回调。")
@@ -1500,25 +1637,59 @@ class VisualEditorWindow(QMainWindow):
         self.refresh_json_editor()
         QMessageBox.information(self, "缺失回调", f"已生成 {len(stubs)} 个回调 stub 到 {files[0].get('path')}。")
 
+    def _validation_target_from_message(self, message: str) -> str | None:
+        ids = {str(node.get("id")) for node in self.graph.get("nodes", [])}
+        for node_id in ids:
+            if node_id and node_id in message:
+                return node_id
+        return None
+
+    def open_validation_item(self, item: QListWidgetItem) -> None:
+        role = Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole
+        node_id = item.data(role)
+        if not node_id:
+            return
+        node = self._find_node(str(node_id))
+        page = page_for_node(node) if node else None
+        if page:
+            self.open_page(page)
+        self.select_node(str(node_id))
+
     def refresh_validation_panel(self, show_dialog: bool = False) -> bool:
+        messages: list[str] = []
+        ok = True
         try:
-            self.apply_code_file()
+            self.apply_code_file(record_history=False)
             validate_graph(self.graph)
-            conflicts = self.collect_pin_conflicts()
             edge_count = len(self.graph.get("edges", []))
             visual_only = [node.get("id") for node in self.graph.get("nodes", []) if NODE_GENERATION_STATUS.get(node.get("type"), ("", ""))[0] in {"可视化占位", "说明/半自动", "可视化组织", "说明"}]
-            text = f"✅ Graph 校验通过：ID、引用、周期、回调函数和签名均有效。\n统一 edges: {edge_count} 条"
+            messages.append(f"✅ Graph 校验通过：ID、引用、周期、回调函数和签名均有效。统一 edges: {edge_count} 条")
             if visual_only:
-                text += "\n\nℹ️ 以下节点目前不是完整代码生成节点：" + ", ".join(visual_only)
-            if conflicts:
-                text += "\n\n⚠️ Pin Planner 冲突：\n" + "\n".join(conflicts)
-            ok = not conflicts
+                messages.append("ℹ️ 非完整代码生成节点：" + ", ".join(visual_only))
         except Exception as exc:  # noqa: BLE001 - UI validation panel shows validator message.
-            text = f"❌ Graph 校验失败：\n{exc}"
+            messages.append(f"❌ Graph 校验失败：{exc}")
             ok = False
-        self.validation_messages = [text]
+        conflicts = self.collect_pin_conflicts()
+        for conflict in conflicts:
+            messages.append(f"⚠️ Pin Planner 冲突：{conflict}")
+        ok = ok and not conflicts
+        for node in self.graph.get("nodes", []):
+            if node.get("type") == "state.transition" and not str(node.get("condition", "")).strip():
+                messages.append(f"❌ {node.get('id')}.condition 为空：transition 必须填写条件函数")
+                ok = False
+        text = "\n".join(messages)
+        self.validation_messages = messages
+        self.validation_targets = [self._validation_target_from_message(message) for message in messages]
         if hasattr(self, "validation_output"):
             self.validation_output.setPlainText(text)
+        if hasattr(self, "validation_list"):
+            role = Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole
+            self.validation_list.clear()
+            for message, target in zip(messages, self.validation_targets):
+                item = QListWidgetItem(message)
+                if target:
+                    item.setData(role, target)
+                self.validation_list.addItem(item)
         if show_dialog:
             if ok:
                 QMessageBox.information(self, "校验通过", text)
@@ -1546,6 +1717,7 @@ class VisualEditorWindow(QMainWindow):
                 "task": 1170,
                 "custom": 1170,
             }
+        self.push_undo()
         counters = {key: 0 for key in columns}
         positions = self.page_positions()
         for node in self.visible_nodes():
@@ -1629,6 +1801,7 @@ class VisualEditorWindow(QMainWindow):
         QMessageBox.warning(self, "Connect cards", f"No supported connection rule for {a.get('type')} -> {b.get('type')}.")
 
     def _connect_pair(self, src: dict[str, Any], dst: dict[str, Any]) -> bool:
+        self.push_undo()
         connected = apply_pair_semantics(src, dst, self.graph, c_ident_func=c_ident, overwrite=True)
         if connected and src.get("type") == "custom.code":
             QMessageBox.information(self, "Connect cards", "Use the Code tab to implement callbacks named by the selected custom card.")
@@ -1638,6 +1811,7 @@ class VisualEditorWindow(QMainWindow):
         if not self.current_node_id:
             return
         try:
+            self.push_undo()
             updated = json.loads(self.node_json_editor.toPlainText())
             if not isinstance(updated, dict):
                 raise ValueError("card JSON must be an object")
@@ -1658,6 +1832,7 @@ class VisualEditorWindow(QMainWindow):
     def delete_selected_node(self) -> None:
         if not self.current_node_id:
             return
+        self.push_undo()
         self.graph["nodes"] = [node for node in self.graph.get("nodes", []) if node.get("id") != self.current_node_id]
         ui = self.graph.get("ui", {})
         ui.get("positions", {}).pop(self.current_node_id, None)
@@ -1678,17 +1853,20 @@ class VisualEditorWindow(QMainWindow):
         path, ok = QInputDialog.getText(self, "Add custom code", "Relative file path (for example app_custom.c):")
         if not ok or not path:
             return
+        self.push_undo()
         self.graph.setdefault("custom_files", []).append({"path": path, "content": DEFAULT_CUSTOM_C if path.endswith(".c") else ""})
         self.current_code_index = len(self.graph["custom_files"]) - 1
         self.refresh_code_list()
         self.refresh_json_editor()
 
-    def apply_code_file(self) -> None:
+    def apply_code_file(self, record_history: bool = True) -> None:
         if self.current_code_index is None:
             return
         files = self.graph.setdefault("custom_files", [])
         if self.current_code_index >= len(files):
             return
+        if record_history:
+            self.push_undo()
         files[self.current_code_index]["content"] = self.code_editor.toPlainText()
         self.refresh_json_editor()
 
@@ -1697,6 +1875,7 @@ class VisualEditorWindow(QMainWindow):
             return
         files = self.graph.setdefault("custom_files", [])
         if self.current_code_index < len(files):
+            self.push_undo()
             del files[self.current_code_index]
         self.current_code_index = None
         self.refresh_code_list()
@@ -1707,6 +1886,7 @@ class VisualEditorWindow(QMainWindow):
             graph = json.loads(self.graph_json_editor.toPlainText())
             if not isinstance(graph, dict):
                 raise ValueError("graph JSON must be an object")
+            self.push_undo()
             self.graph = graph
             self.current_node_id = None
             self.refresh_all()
@@ -1726,11 +1906,13 @@ class VisualEditorWindow(QMainWindow):
         if not ok or not choice:
             return
         self.graph_path = None
+        self.push_undo()
         self.graph = templates[choice]()
         self.current_node_id = None
         self.auto_layout()
 
     def new_graph(self) -> None:
+        self.push_undo()
         self.graph_path = None
         self.graph = self.default_graph()
         self.current_node_id = None
@@ -1741,6 +1923,7 @@ class VisualEditorWindow(QMainWindow):
         if not path:
             return
         self.graph_path = Path(path)
+        self.push_undo()
         self.graph = json.loads(self.graph_path.read_text(encoding="utf-8"))
         self.current_node_id = None
         self.refresh_all()
@@ -1749,7 +1932,7 @@ class VisualEditorWindow(QMainWindow):
         if not self.graph_path:
             self.save_graph_as()
             return
-        self.apply_code_file()
+        self.apply_code_file(record_history=False)
         self.graph_path.write_text(json.dumps(self.graph, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         self.refresh_json_editor()
 
@@ -1761,7 +1944,7 @@ class VisualEditorWindow(QMainWindow):
         self.save_graph()
 
     def generate_application(self) -> None:
-        self.apply_code_file()
+        self.apply_code_file(record_history=False)
         out_dir = QFileDialog.getExistingDirectory(self, "选择输出 application 目录")
         if not out_dir:
             return
@@ -1771,7 +1954,12 @@ class VisualEditorWindow(QMainWindow):
                 json.dump(self.graph, tmp, ensure_ascii=False, indent=2)
                 tmp_path = Path(tmp.name)
             preview = preview_application_files(tmp_path, out_path)
-            summary = "\n".join(f"{item['status']}: {item['path']}" for item in preview[:40])
+            def preview_line(item: dict[str, Any]) -> str:
+                sha = f" {item.get('old_sha', 'new')}→{item.get('new_sha', '')}" if item.get("new_sha") else ""
+                lines = f" lines:{item.get('old_lines', '-')}→{item.get('new_lines', '-')}" if item.get("new_lines") else ""
+                protection = f" ({item.get('protected_by')})" if item.get("protected_by") else ""
+                return f"{item['status']}: {item['path']}{sha}{lines}{protection}"
+            summary = "\n".join(preview_line(item) for item in preview[:60])
             force = False
             if out_path.exists() and any(out_path.iterdir()):
                 answer = QMessageBox.question(self, "Diff 预览 / 覆盖确认", f"输出目录已存在且非空，非生成文件会保留：\n{out_path}\n\n{summary}\n\n是否覆盖生成文件？")

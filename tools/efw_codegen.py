@@ -9,6 +9,7 @@ flows from a 1 ms tick.
 """
 
 import argparse
+import hashlib
 import json
 import re
 import sys
@@ -221,6 +222,8 @@ def expected_callbacks(ctx):
         add(node.get("on_enter"), "void *ctx", f"{node['id']}.on_enter")
         add(node.get("on_update"), "void *ctx", f"{node['id']}.on_update")
         add(node.get("on_exit"), "void *ctx", f"{node['id']}.on_exit")
+    for node in nodes_of(ctx, "state.transition"):
+        add(node.get("action"), "void", f"{node['id']}.action")
     for node in nodes_of(ctx, "logic.if"):
         add(node.get("then"), "void", f"{node['id']}.then")
         add(node.get("else"), "void", f"{node['id']}.else")
@@ -327,6 +330,8 @@ def validate_graph(graph):
         edge_ids.add(edge_id)
         require(edge.get("from") in nodes_by_id, f"edge {edge_id}.from must reference an existing node")
         require(edge.get("to") in nodes_by_id, f"edge {edge_id}.to must reference an existing node")
+        kind = edge.get("kind", "generic")
+        require(kind in {"containment", "data", "control", "event", "state", "code", "generic", "module_contains", "module_data_flow", "event_subscribe"}, f"edge {edge_id}.kind has unsupported semantic kind: {kind}")
     apply_edge_semantics(raw_edges, nodes_by_id)
 
     for node in raw_nodes:
@@ -379,8 +384,16 @@ def validate_graph(graph):
             require(node.get("from") in nodes_by_id and nodes_by_id[node.get("from")]["type"] == "state.state", f"{node['id']}.from must reference state.state")
             require(node.get("to") in nodes_by_id and nodes_by_id[node.get("to")]["type"] == "state.state", f"{node['id']}.to must reference state.state")
             require(nodes_by_id[node.get("from")].get("machine") == node.get("machine") and nodes_by_id[node.get("to")].get("machine") == node.get("machine"), f"{node['id']} endpoints must belong to the same state.machine")
-            if node.get("condition"):
-                require(node.get("condition") == c_ident(node.get("condition")), f"{node['id']}.condition must be a valid C identifier")
+            condition = str(node.get("condition", "")).strip()
+            require(condition, f"{node['id']}.condition must be a non-empty C condition callback")
+            require(condition == c_ident(condition), f"{node['id']}.condition must be a valid C identifier")
+            if node.get("action"):
+                require(node.get("action") == c_ident(node.get("action")), f"{node['id']}.action must be a valid C identifier")
+            priority = int(node.get("priority", 0))
+            require(priority >= 0, f"{node['id']}.priority must be >= 0")
+            timeout_ms = int(node.get("timeout_ms", 0))
+            require(timeout_ms >= 0, f"{node['id']}.timeout_ms must be >= 0")
+            require(isinstance(node.get("event_trigger", ""), str), f"{node['id']}.event_trigger must be a string")
         elif node_type_name in {"logic.if", "logic.loop"}:
             require(isinstance(node.get("condition", ""), str), f"{node['id']}.condition must be a string")
 
@@ -962,6 +975,8 @@ def render_state_logic_blocks(ctx):
     for node in nodes_of(ctx, "state.transition"):
         if node.get("condition"):
             parts.append(f"extern int {c_ident(node['condition'])}(void);\n")
+        if node.get("action"):
+            parts.append(f"extern efw_status_t {c_ident(node['action'])}(void);\n")
     for node in nodes_of(ctx, "logic.if"):
         if node.get("condition"):
             parts.append(f"extern int {c_ident(node['condition'])}(void);\n")
@@ -989,23 +1004,36 @@ def render_state_logic_blocks(ctx):
         parts.append(f"static efw_state_machine_ops_t *g_{m_ident}_states[] = {{ {', '.join('&g_state_' + c_ident(s['id']) for s in states)} }};\n")
         initial = bundle["machine"].get("initial") or (states[0]["id"] if states else "")
         parts.append(f"static uint8_t g_{m_ident}_current = {index.get(initial, 0)}u;\n")
+        parts.append(f"static uint32_t g_{m_ident}_entered_ms;\n")
         parts.append(f"static efw_status_t app_{m_ident}_register(void) {{\n    efw_status_t s;\n")
         for state in states:
             parts.append(f"    s = efw_sm_register(&g_state_{c_ident(state['id'])});\n    if (s != EFW_OK) return s;\n")
         if states:
             parts.append(f"    if (g_{m_ident}_states[g_{m_ident}_current]->on_enter) {{ s = g_{m_ident}_states[g_{m_ident}_current]->on_enter(g_{m_ident}_states[g_{m_ident}_current]->ctx); if (s != EFW_OK) return s; }}\n")
+            parts.append(f"    g_{m_ident}_entered_ms = g_app_elapsed_ms;\n")
         parts.append("    return EFW_OK;\n}\n")
         parts.append(f"static efw_status_t app_{m_ident}_tick(void) {{\n    efw_status_t s;\n")
         if states:
             parts.append(f"    s = g_{m_ident}_states[g_{m_ident}_current]->on_tick(g_{m_ident}_states[g_{m_ident}_current]->ctx);\n    if (s != EFW_OK) return s;\n")
-            for transition in bundle["transitions"]:
-                cond = c_ident(transition["condition"]) + "()" if transition.get("condition") else "1"
+            ordered_transitions = sorted(bundle["transitions"], key=lambda item: int(item.get("priority", 0)))
+            for transition in ordered_transitions:
+                cond_parts = [c_ident(transition["condition"]) + "()"]
+                timeout_ms = int(transition.get("timeout_ms", 0))
+                if timeout_ms > 0:
+                    cond_parts.append(f"((g_app_elapsed_ms - g_{m_ident}_entered_ms) >= {timeout_ms}u)")
+                cond = " && ".join(cond_parts)
                 from_idx = index.get(transition.get("from"), 0)
                 to_idx = index.get(transition.get("to"), 0)
+                if transition.get("event_trigger"):
+                    event_note = str(transition.get("event_trigger")).replace("*/", "* /")
+                    parts.append(f"    /* event_trigger: {event_note} */\n")
                 parts.append(f"    if (g_{m_ident}_current == {from_idx}u && ({cond})) {{\n")
                 parts.append(f"        if (g_{m_ident}_states[g_{m_ident}_current]->on_exit) {{ s = g_{m_ident}_states[g_{m_ident}_current]->on_exit(g_{m_ident}_states[g_{m_ident}_current]->ctx); if (s != EFW_OK) return s; }}\n")
+                if transition.get("action"):
+                    parts.append(f"        s = {c_ident(transition['action'])}();\n        if (s != EFW_OK) return s;\n")
                 parts.append(f"        g_{m_ident}_current = {to_idx}u;\n")
-                parts.append(f"        if (g_{m_ident}_states[g_{m_ident}_current]->on_enter) {{ s = g_{m_ident}_states[g_{m_ident}_current]->on_enter(g_{m_ident}_states[g_{m_ident}_current]->ctx); if (s != EFW_OK) return s; }}\n    }}\n")
+                parts.append(f"        g_{m_ident}_entered_ms = g_app_elapsed_ms;\n")
+                parts.append(f"        if (g_{m_ident}_states[g_{m_ident}_current]->on_enter) {{ s = g_{m_ident}_states[g_{m_ident}_current]->on_enter(g_{m_ident}_states[g_{m_ident}_current]->ctx); if (s != EFW_OK) return s; }}\n        break;\n    }}\n")
         parts.append("    return EFW_OK;\n}\n\n")
     for node in nodes_of(ctx, "logic.if"):
         ident = c_ident(node["id"])
@@ -1256,19 +1284,26 @@ def preview_application_files(graph_path: Path, out_dir: Path):
     preview = []
     for rel_path, content in sorted(files.items()):
         target = out_dir / rel_path
+        new_sha = hashlib.sha256(content.encode("utf-8")).hexdigest()[:12]
+        item = {"path": rel_path, "new_sha": new_sha, "new_lines": content.count("\n") + 1}
         if not target.exists():
-            status = "create"
-        elif target.read_text(encoding="utf-8") == content:
-            status = "same"
+            item["status"] = "create"
         else:
-            status = "backup+overwrite"
-        preview.append({"path": rel_path, "status": status})
+            old_content = target.read_text(encoding="utf-8")
+            item["old_sha"] = hashlib.sha256(old_content.encode("utf-8")).hexdigest()[:12]
+            item["old_lines"] = old_content.count("\n") + 1
+            if old_content == content:
+                item["status"] = "same"
+            else:
+                item["status"] = "backup+overwrite"
+                item["protected_by"] = ".efw_backup"
+        preview.append(item)
     if out_dir.exists():
         generated_set = set(files)
         for target in sorted(path for path in out_dir.rglob("*") if path.is_file()):
             rel = target.relative_to(out_dir).as_posix()
-            if rel not in generated_set:
-                preview.append({"path": rel, "status": "preserve"})
+            if rel not in generated_set and not rel.startswith(".efw_backup/"):
+                preview.append({"path": rel, "status": "preserve", "old_lines": target.read_text(encoding="utf-8", errors="ignore").count("\n") + 1, "protected_by": "user-file-preserve"})
     return preview
 
 
