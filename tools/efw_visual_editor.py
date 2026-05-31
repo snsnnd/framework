@@ -1062,15 +1062,18 @@ class VisualEditorWindow(QMainWindow):
         if not hasattr(self, "page_tabs"):
             return
         self.page_tabs.blockSignals(True)
-        self.page_tabs.clear()
-        for page in self.open_pages:
-            index = self.page_tabs.addTab(page_title(page))
-            self.page_tabs.setTabData(index, page.get("key"))
-            self.page_tabs.setTabToolTip(index, page_hint(page))
-        active_index = next((i for i, page in enumerate(self.open_pages) if page.get("key") == self.active_page_key), 0)
-        self.page_tabs.setCurrentIndex(active_index)
-        self.page_tabs.setTabEnabled(0, True)
-        self.page_tabs.blockSignals(False)
+        try:
+            while self.page_tabs.count():
+                self.page_tabs.removeTab(0)
+            for page in self.open_pages:
+                index = self.page_tabs.addTab(page_title(page))
+                self.page_tabs.setTabData(index, page.get("key"))
+                self.page_tabs.setTabToolTip(index, page_hint(page))
+            active_index = next((i for i, page in enumerate(self.open_pages) if page.get("key") == self.active_page_key), 0)
+            self.page_tabs.setCurrentIndex(active_index)
+            self.page_tabs.setTabEnabled(0, True)
+        finally:
+            self.page_tabs.blockSignals(False)
 
     def page_positions(self) -> dict[str, list[float]]:
         ui = self.graph.setdefault("ui", {})
