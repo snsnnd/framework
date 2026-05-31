@@ -265,4 +265,6 @@ efw_line_tracking_follow_diff("line_sensor_5ch", "line_pid", "left_motor", "righ
 
 ### Studio 语义化蓝图与安全生成
 
-PyQt Studio 现在进一步收敛 Graph 数据模型：连线会写入语义化 `edge.kind`（包含、数据、控制、事件、状态、代码），生成器和 UI 使用同一套 edge 语义推导规则；Pin Planner 使用 Board Profile 下拉选择并做空值/冲突保护；生成前会给出文件 Diff 预览，覆盖的生成文件会备份到 `.efw_backup/`，非生成用户文件会保留。状态机转换卡片要求 `condition`，并支持 `priority/action/timeout_ms/event_trigger` 等轻量状态机字段。
+PyQt Studio 现在进一步收敛 Graph 数据模型：连线会写入语义化 `edge.kind`（contains、data_flow、control_flow、event、state_transition、code），生成器和 UI 使用同一套 edge 语义推导规则；Pin Planner 使用 Board Profile 下拉选择并做空值/冲突保护；生成前会给出文件 Diff 预览，覆盖的生成文件会备份到 `.efw_backup/`，非生成用户文件会保留。状态机转换卡片要求 `condition`，并支持 `priority/action/timeout_ms/event_trigger` 等轻量状态机字段。
+
+Studio 蓝图画布现在只允许从输出端口圆点拖线到输入端口圆点，端口会显示名称并提供 tooltip；页签栏改成轻量 TabBar，不再把蓝图区域分成空白上半区和画布下半区。常用快捷键包括 `Ctrl+S` 保存、`Ctrl+Z/Ctrl+Y` 撤销/重做、`Ctrl+G` 生成、`Ctrl+L` 自动布局和 `F5` 校验。

@@ -52,6 +52,49 @@ PORT_COLORS = {
     "code": "#90a4ae",
 }
 
+PORT_LABELS = {
+    "hal": "硬件接口",
+    "sensor": "传感器数据",
+    "algorithm": "算法输出",
+    "control": "控制命令",
+    "motor_pair": "电机配对",
+    "module": "模块调用",
+    "module_input": "模块输入",
+    "module_output": "模块输出",
+    "flow": "控制流",
+    "group": "模块容器",
+    "topic": "Topic",
+    "event": "事件",
+    "event_source": "事件源",
+    "state_machine": "状态机",
+    "transition_from": "状态转出",
+    "transition_to": "状态转入",
+    "logic_condition": "逻辑条件",
+    "logic_true": "True",
+    "logic_false": "False",
+    "logic_call": "逻辑调用",
+    "logic_body": "循环体",
+    "code": "代码实现",
+}
+
+PORT_DESCRIPTIONS = {
+    "hal": "硬件抽象层输出，可连接到 Sensor 或 Actuator。",
+    "sensor": "传感器数据输出，可连接到 Algorithm、逻辑条件或 Event Publisher。",
+    "algorithm": "算法输出，可连接到模块或控制节点。",
+    "control": "控制命令输入，常用于执行器或模块。",
+    "motor_pair": "电机配对端口，用于 LineFollower 等双电机控制 flow。",
+    "module_input": "模块对外输入接口，根页面模块间数据流的输入端。",
+    "module_output": "模块对外输出接口，根页面模块间数据流的输出端。",
+    "topic": "事件总线 Topic，可连接 Publisher / Subscriber。",
+    "event": "事件输出或订阅结果，可驱动逻辑条件或模块。",
+    "state_machine": "状态机容器端口，只能连接状态或转换。",
+    "transition_from": "状态转换起点，只能从 State 连接到 Transition。",
+    "transition_to": "状态转换终点，只能从 Transition 连接到 State。",
+    "logic_condition": "逻辑条件输入。",
+    "logic_call": "可由任务或模块调度的逻辑调用输出。",
+    "code": "自定义代码实现关系，回调名称仍在属性中声明。",
+}
+
 
 def _c_ident_fallback(value: Any) -> str:
     text = str(value or "node")
@@ -212,11 +255,13 @@ def apply_pair_semantics(src: dict[str, Any], dst: dict[str, Any], graph: dict[s
     return False
 
 EDGE_KIND_LABELS = {
-    "containment": "包含/归属",
-    "data": "数据流",
-    "control": "控制调用",
+    "contains": "包含/归属",
+    "data_flow": "数据流",
+    "control_flow": "控制调用",
     "event": "事件发布订阅",
-    "state": "状态转换",
+    "state_transition": "状态转换",
+    "state_transition_from": "状态转出",
+    "state_transition_to": "状态转入",
     "code": "代码实现",
     "generic": "通用连接",
 }
@@ -227,17 +272,21 @@ def semantic_edge_kind(src: dict[str, Any], dst: dict[str, Any], from_port: str 
     src_type = str(src.get("type", ""))
     dst_type = str(dst.get("type", ""))
     if src_type == "project.module" and dst_type == "project.module":
-        return "data"
+        return "data_flow"
     if src_type == "project.module" or dst.get("module") == src.get("id"):
-        return "containment"
+        return "contains"
     if src_type.startswith("event.") or dst_type.startswith("event."):
         return "event"
+    if from_port == "transition_from" and to_port == "transition_from":
+        return "state_transition_from"
+    if from_port == "transition_to" and to_port == "transition_to":
+        return "state_transition_to"
     if src_type.startswith("state.") or dst_type.startswith("state."):
-        return "state"
+        return "state_transition"
     if src_type.startswith("logic.") or dst_type in {"task.periodic", "module.custom"} and from_port in {"logic_call", "logic_true", "logic_false", "logic_body"}:
-        return "control"
+        return "control_flow"
     if src_type == "custom.code":
         return "code"
     if from_port in {"module_output", "sensor", "algorithm", "hal", "topic"} or to_port in {"module_input", "sensor", "algorithm", "hal", "topic"}:
-        return "data"
+        return "data_flow"
     return "generic"

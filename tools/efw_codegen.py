@@ -331,7 +331,7 @@ def validate_graph(graph):
         require(edge.get("from") in nodes_by_id, f"edge {edge_id}.from must reference an existing node")
         require(edge.get("to") in nodes_by_id, f"edge {edge_id}.to must reference an existing node")
         kind = edge.get("kind", "generic")
-        require(kind in {"containment", "data", "control", "event", "state", "code", "generic", "module_contains", "module_data_flow", "event_subscribe"}, f"edge {edge_id}.kind has unsupported semantic kind: {kind}")
+        require(kind in {"contains", "data_flow", "control_flow", "event", "state_transition", "state_transition_from", "state_transition_to", "code", "generic", "containment", "data", "control", "state", "module_contains", "module_data_flow", "event_subscribe"}, f"edge {edge_id}.kind has unsupported semantic kind: {kind}")
     apply_edge_semantics(raw_edges, nodes_by_id)
 
     for node in raw_nodes:

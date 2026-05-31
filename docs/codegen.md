@@ -347,17 +347,17 @@ python3 tools/efw_studio.py
 - 添加卡片会按当前页面自动归属：模块页写入 `module` / `parent`，状态机页写入 `machine`，通信页写入 `topic`；根页面禁止直接添加普通内部组件。
 - 页面位置改为优先写入 `ui.positions_by_page[page_key]`，避免根页面、模块页、状态机页和通信页互相覆盖布局。
 - 修改卡片 `id` 时会同步 `module`、`parent`、`machine`、`topic`、flow、edge、task 和 UI 位置引用，并刷新打开的页面标签。
-- 根页面模块之间的连线表示 `module_data_flow`，用于表达模块接口关系，而不是把一个模块设置成另一个模块的子模块。
+- 根页面模块之间的连线表示 `data_flow`，用于表达模块接口关系，而不是把一个模块设置成另一个模块的子模块。
 
 ## Studio 语义同步与用户代码保护
 
 最新 Studio/Codegen 约定把可视化连接统一收敛到 `graph.edges[].kind`：
 
-- `containment`：模块包含或页面归属关系。
-- `data`：模块接口、传感器、算法等数据流。
-- `control`：逻辑块、任务、模块调用关系。
+- `contains`：模块包含或页面归属关系。
+- `data_flow`：模块接口、传感器、算法等数据流。
+- `control_flow`：逻辑块、任务、模块调用关系。
 - `event`：Topic、Publisher、Subscriber 的发布订阅关系。
-- `state`：状态机、状态和转换关系。
+- `state_transition` / `state_transition_from` / `state_transition_to`：状态机、状态和转换关系。
 - `code`：自定义代码卡片提供的实现关系。
 
 生成器仍兼容历史 `flows`，但 UI 与 codegen 会优先通过统一 edge 语义推导节点字段，减少「edges / flows / 字段引用」三套模型长期分叉。
@@ -381,3 +381,18 @@ python3 tools/efw_studio.py
 - 实时校验页提供可点击的错误列表，点击后会打开对应模块/状态机/通信页面并选中问题卡片。
 - Studio 提供轻量 Undo / Redo，并把当前 Graph 自动保存到仓库根目录 `.efw_studio_autosave.json`，用于远程 Codespaces/VNC 环境中降低误操作损失。
 - 框架库扫描现在优先使用 `tools/efw_studio_core/component_metadata.py` 中的组件 metadata（字段、回调、include、宏和生成边界），只有缺少 metadata 时才回退到头文件路径推断。
+
+## 蓝图端口与快捷键
+
+蓝图画布不再支持“选中两张卡片后从中心点连线”。连接必须从卡片右侧输出端口圆点拖到另一张卡片左侧输入端口圆点；每个端口都会显示短标签，鼠标悬停会显示完整说明、方向和端口类型。连线会保留 `from_port`、`to_port` 和语义化 `kind`，例如 `data_flow`、`event`、`state_transition_from`、`state_transition_to`。
+
+常用快捷键：
+
+- `Ctrl+N`：新建 Graph。
+- `Ctrl+O`：打开 Graph。
+- `Ctrl+S` / `Ctrl+Shift+S`：保存 / 另存为。
+- `Ctrl+Z` / `Ctrl+Y`：撤销 / 重做。
+- `Ctrl+G`：生成 application。
+- `Ctrl+L`：自动布局当前页面。
+- `F5`：立即校验。
+- `Esc`：返回根项目页面。

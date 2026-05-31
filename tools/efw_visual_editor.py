@@ -19,7 +19,7 @@ import importlib.util
 
 if importlib.util.find_spec("PyQt6") is not None:
     from PyQt6.QtCore import QPointF, Qt
-    from PyQt6.QtGui import QBrush, QColor, QFont, QPen
+    from PyQt6.QtGui import QBrush, QColor, QFont, QKeySequence, QPen, QShortcut
     from PyQt6.QtWidgets import (
         QApplication,
         QFileDialog,
@@ -46,6 +46,7 @@ if importlib.util.find_spec("PyQt6") is not None:
         QSplitter,
         QTableWidget,
         QTableWidgetItem,
+        QTabBar,
         QTabWidget,
         QToolBar,
         QVBoxLayout,
@@ -54,7 +55,7 @@ if importlib.util.find_spec("PyQt6") is not None:
     QT_LIB = "PyQt6"
 elif importlib.util.find_spec("PyQt5") is not None:
     from PyQt5.QtCore import QPointF, Qt
-    from PyQt5.QtGui import QBrush, QColor, QFont, QPen
+    from PyQt5.QtGui import QBrush, QColor, QFont, QKeySequence, QPen
     from PyQt5.QtWidgets import (
         QApplication,
         QFileDialog,
@@ -78,9 +79,11 @@ elif importlib.util.find_spec("PyQt5") is not None:
         QCheckBox,
         QPushButton,
         QPlainTextEdit,
+        QShortcut,
         QSplitter,
         QTableWidget,
         QTableWidgetItem,
+        QTabBar,
         QTabWidget,
         QToolBar,
         QVBoxLayout,
@@ -90,12 +93,12 @@ elif importlib.util.find_spec("PyQt5") is not None:
 else:
     QApplication = None
     QFileDialog = QInputDialog = QMessageBox = None
-    QBrush = QColor = QFont = QPen = QPointF = Qt = object
+    QBrush = QColor = QFont = QKeySequence = QPen = QShortcut = QPointF = Qt = object
     QComboBox = QFormLayout = QGraphicsEllipseItem = QGraphicsItem = object
     QGraphicsLineItem = QGraphicsRectItem = QGraphicsScene = QGraphicsSimpleTextItem = QGraphicsView = object
     QHBoxLayout = QLabel = QListWidget = QListWidgetItem = QMainWindow = object
     QLineEdit = QPushButton = QPlainTextEdit = QSplitter = QTableWidget = QTableWidgetItem = QCheckBox = object
-    QTabWidget = QToolBar = QVBoxLayout = QWidget = object
+    QTabBar = QTabWidget = QToolBar = QVBoxLayout = QWidget = object
     QT_LIB = "missing"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
@@ -105,6 +108,8 @@ if str(REPO_ROOT / "tools") not in sys.path:
 from efw_codegen import c_ident, generate, preview_application_files, validate_graph  # noqa: E402
 from efw_studio_core import (  # noqa: E402
     PORT_COLORS,
+    PORT_DESCRIPTIONS,
+    PORT_LABELS,
     PORT_RULES,
     apply_board_profile_defaults_to_graph,
     apply_pair_semantics,
@@ -478,6 +483,29 @@ for name, types in VISUAL_NODE_CATEGORIES:
         NODE_CATEGORIES.append((name, types))
 
 
+PROPERTY_FIELD_ORDER = {
+    "project.module": ["id", "type", "display_name", "parent", "inputs", "outputs", "description"],
+    "hal.custom": ["id", "type", "module", "hal_type", "ctx_name", "init", "read", "write", "ioctl"],
+    "hal.gpio_line_input": ["id", "type", "module", "channels", "pins"],
+    "sensor.custom": ["id", "type", "module", "sensor_type", "hal_name", "ctx_name", "init", "read"],
+    "sensor.line_tracking": ["id", "type", "module", "input", "channels", "active_value", "binary_mode"],
+    "actuator.custom": ["id", "type", "module", "actuator_type", "hal_name", "ctx_name", "init", "enable", "disable", "write"],
+    "actuator.motor": ["id", "type", "module", "pwm", "dir_pin", "max_speed"],
+    "algorithm.pid": ["id", "type", "module", "kp", "ki", "kd", "out_min", "out_max", "integral_min", "integral_max", "anti_windup"],
+    "algorithm.custom": ["id", "type", "module", "algo_type", "run", "ctx_name", "io_contract"],
+    "module.custom": ["id", "type", "module", "module_type", "ctx_name", "init", "start", "stop", "poll"],
+    "task.periodic": ["id", "type", "module", "period_ms", "call", "flow"],
+    "event.topic": ["id", "type", "module", "topic_id", "payload_type"],
+    "event.publisher": ["id", "type", "module", "topic", "source"],
+    "event.subscriber": ["id", "type", "module", "topic", "target", "callback", "user"],
+    "state.machine": ["id", "type", "module", "initial", "description"],
+    "state.state": ["id", "type", "machine", "on_enter", "on_update", "on_exit"],
+    "state.transition": ["id", "type", "machine", "from", "to", "condition", "priority", "action", "timeout_ms", "event_trigger"],
+    "logic.if": ["id", "type", "module", "condition", "then", "else"],
+    "logic.loop": ["id", "type", "module", "loop", "condition", "body", "max_iterations"],
+}
+
+
 def display_label(template_key: str) -> str:
     template = NODE_TEMPLATES.get(template_key, {})
     node_type = template.get("type", template_key)
@@ -523,9 +551,20 @@ class PortItem(QGraphicsEllipseItem):
         base = QColor(PORT_COLORS.get(port_type, "#90a4ae"))
         self.setBrush(QBrush(base.lighter(115) if direction == "out" else base.darker(115)))
         self.setPen(QPen(QColor("#ffffff"), 1))
-        y = 18 + index * 18
+        y = 18 + index * 20
         x = node_item.WIDTH - self.SIZE / 2 if direction == "out" else -self.SIZE / 2
         self.setPos(x, y)
+        label_text = PORT_LABELS.get(port_type, port_type)
+        desc = PORT_DESCRIPTIONS.get(port_type, label_text)
+        self.setToolTip(f"{label_text} ({port_type})\n方向: {direction}\n{desc}")
+        label = QGraphicsSimpleTextItem(label_text, node_item)
+        label.setBrush(QBrush(QColor("#d8eef5")))
+        label.setToolTip(self.toolTip())
+        label_y = y - 2
+        if direction == "out":
+            label.setPos(node_item.WIDTH - self.SIZE - 8 - len(label_text) * 7, label_y)
+        else:
+            label.setPos(12, label_y)
         self.setZValue(2)
 
     def mousePressEvent(self, event):
@@ -551,7 +590,7 @@ class GraphNodeItem(QGraphicsRectItem):
         label_text = TYPE_LABELS.get(node.get("type"), node.get("type", "unknown"))
         self.WIDTH = max(190, min(360, 58 + max(len(str(title_text)), len(str(label_text)), len(summary_text)) * 7))
         port_count = max(len(PORT_RULES.get(node.get("type"), {}).get("in", [])), len(PORT_RULES.get(node.get("type"), {}).get("out", [])))
-        self.HEIGHT = max(82, 62 + port_count * 14 + (18 if summary_text else 0))
+        self.HEIGHT = max(92, 72 + port_count * 20 + (18 if summary_text else 0))
         super().__init__(0, 0, self.WIDTH, self.HEIGHT)
         self.node = node
         self.editor = editor
@@ -642,6 +681,7 @@ class VisualEditorWindow(QMainWindow):
         self.graph = self.default_graph()
         self.setStyleSheet(WORKBENCH_STYLESHEET)
         self._build_ui()
+        self._install_shortcuts()
         self.refresh_all()
 
     def graph_snapshot(self) -> dict[str, Any]:
@@ -681,6 +721,25 @@ class VisualEditorWindow(QMainWindow):
         self.autosave_graph()
         self.refresh_all()
 
+    def _install_shortcuts(self) -> None:
+        shortcuts = {
+            "Ctrl+N": self.new_graph,
+            "Ctrl+O": self.open_graph,
+            "Ctrl+S": self.save_graph,
+            "Ctrl+Shift+S": self.save_graph_as,
+            "Ctrl+Z": self.undo,
+            "Ctrl+Y": self.redo,
+            "Ctrl+G": self.generate_application,
+            "Ctrl+L": self.auto_layout,
+            "F5": self.validate_current_graph,
+            "Esc": self.exit_module,
+        }
+        self.shortcuts: list[Any] = []
+        for sequence, callback in shortcuts.items():
+            shortcut = QShortcut(QKeySequence(sequence), self)
+            shortcut.activated.connect(callback)
+            self.shortcuts.append(shortcut)
+
     def default_graph(self) -> dict[str, Any]:
         return {
             "project": {"name": "generated_generic_embedded_app", "tick_ms": 1},
@@ -697,8 +756,8 @@ class VisualEditorWindow(QMainWindow):
             ],
             "flows": [],
             "edges": [
-                {"id": "edge_system_uart", "from": "system_core", "to": "uart_debug", "from_port": "group", "to_port": "node", "kind": "module_contains"},
-                {"id": "edge_topic_subscriber", "from": "topic_battery", "to": "subscribe_battery", "from_port": "topic", "to_port": "topic", "kind": "event_subscribe"},
+                {"id": "edge_system_uart", "from": "system_core", "to": "uart_debug", "from_port": "group", "to_port": "node", "kind": "contains"},
+                {"id": "edge_topic_subscriber", "from": "topic_battery", "to": "subscribe_battery", "from_port": "topic", "to_port": "topic", "kind": "event"},
             ],
             "tasks": [
                 {"id": "battery_sample_20ms", "type": "task.periodic", "period_ms": 20, "call": "app_battery_sample_20ms"},
@@ -760,19 +819,18 @@ class VisualEditorWindow(QMainWindow):
 
         canvas = QWidget()
         canvas_layout = QVBoxLayout(canvas)
-        self.page_tabs = QTabWidget()
+        self.page_tabs = QTabBar()
+        self.page_tabs.setExpanding(False)
         self.page_tabs.setTabsClosable(True)
         self.page_tabs.currentChanged.connect(self.switch_page_tab)
         self.page_tabs.tabCloseRequested.connect(self.close_page_tab)
         canvas_layout.addWidget(self.page_tabs)
         page_controls = QHBoxLayout()
-        connect_btn = QPushButton("连接选中")
-        connect_btn.clicked.connect(self.connect_selected_cards)
+        page_controls.addWidget(QLabel("连线：从输出端口圆点拖到输入端口圆点"))
         layout_btn = QPushButton("自动布局")
         layout_btn.clicked.connect(self.auto_layout)
         root_btn = QPushButton("返回根项目")
         root_btn.clicked.connect(self.exit_module)
-        page_controls.addWidget(connect_btn)
         page_controls.addWidget(layout_btn)
         page_controls.addWidget(root_btn)
         canvas_layout.addLayout(page_controls)
@@ -801,6 +859,9 @@ class VisualEditorWindow(QMainWindow):
         layout = QVBoxLayout(widget)
         self.selected_label = QLabel("未选择卡片")
         layout.addWidget(self.selected_label)
+        self.ports_label = QLabel("端口：未选择")
+        self.ports_label.setWordWrap(True)
+        layout.addWidget(self.ports_label)
         self.property_table = QTableWidget(0, 3)
         self.property_table.setHorizontalHeaderLabels(["属性", "值", "控件类型"])
         layout.addWidget(self.property_table)
@@ -1003,8 +1064,9 @@ class VisualEditorWindow(QMainWindow):
         self.page_tabs.blockSignals(True)
         self.page_tabs.clear()
         for page in self.open_pages:
-            tab = QWidget()
-            self.page_tabs.addTab(tab, page_title(page))
+            index = self.page_tabs.addTab(page_title(page))
+            self.page_tabs.setTabData(index, page.get("key"))
+            self.page_tabs.setTabToolTip(index, page_hint(page))
         active_index = next((i for i, page in enumerate(self.open_pages) if page.get("key") == self.active_page_key), 0)
         self.page_tabs.setCurrentIndex(active_index)
         self.page_tabs.setTabEnabled(0, True)
@@ -1036,32 +1098,65 @@ class VisualEditorWindow(QMainWindow):
             self.node_items[node.get("id")] = item
         self.refresh_edges()
 
+    def port_scene_center(self, node_id: str | None, port_type: str | None, direction: str) -> QPointF | None:
+        if not node_id or node_id not in self.node_items:
+            return None
+        item = self.node_items[node_id]
+        preferred = [port for port in item.ports if port.direction == direction and (not port_type or port.port_type == port_type)]
+        if not preferred:
+            preferred = [port for port in item.ports if port.direction == direction]
+        if preferred:
+            return preferred[0].sceneBoundingRect().center()
+        rect = item.sceneBoundingRect()
+        if direction == "out":
+            return QPointF(rect.right(), rect.center().y())
+        return QPointF(rect.left(), rect.center().y())
+
+    def edge_color(self, edge: dict[str, Any]) -> QColor:
+        kind = edge.get("kind", "generic")
+        by_kind = {
+            "contains": "#7e57c2",
+            "data_flow": "#42a5f5",
+            "control_flow": "#ec407a",
+            "event": "#ff7043",
+            "state_transition": "#26a69a",
+            "state_transition_from": "#26a69a",
+            "state_transition_to": "#80cbc4",
+            "code": "#90a4ae",
+            "generic": "#78909c",
+        }
+        return QColor(by_kind.get(str(kind), "#78909c"))
+
     def refresh_edges(self) -> None:
         for edge in self.edge_items:
             self.scene.removeItem(edge)
         self.edge_items = []
-        pairs = [(edge.get("from"), edge.get("to")) for edge in self.graph.get("edges", [])]
+        edges: list[dict[str, Any]] = [edge for edge in self.graph.get("edges", []) if isinstance(edge, dict)]
         for flow in self.graph.get("flows", []):
             if flow.get("type") == "control.line_follower":
                 sensor = flow.get("sensor")
                 sensor_node = self._find_node(sensor)
-                pairs.extend([
-                    (sensor_node.get("input") if sensor_node else self._line_input_id(), sensor),
-                    (sensor, flow.get("left_motor")),
-                    (sensor, flow.get("right_motor")),
-                    (flow.get("pid"), flow.get("left_motor")),
-                    (flow.get("pid"), flow.get("right_motor")),
+                edges.extend([
+                    {"from": sensor_node.get("input") if sensor_node else self._line_input_id(), "from_port": "hal", "to": sensor, "to_port": "hal", "kind": "data_flow"},
+                    {"from": sensor, "from_port": "sensor", "to": flow.get("pid"), "to_port": "sensor", "kind": "data_flow"},
+                    {"from": sensor, "from_port": "sensor", "to": flow.get("left_motor"), "to_port": "control", "kind": "control_flow"},
+                    {"from": sensor, "from_port": "sensor", "to": flow.get("right_motor"), "to_port": "control", "kind": "control_flow"},
+                    {"from": flow.get("pid"), "from_port": "algorithm", "to": flow.get("left_motor"), "to_port": "control", "kind": "control_flow"},
+                    {"from": flow.get("pid"), "from_port": "algorithm", "to": flow.get("right_motor"), "to_port": "control", "kind": "control_flow"},
                 ])
-        for src, dst in pairs:
+        for edge in edges:
+            src = edge.get("from")
+            dst = edge.get("to")
             if src in self.node_items and dst in self.node_items:
+                a = self.port_scene_center(src, edge.get("from_port"), "out")
+                b = self.port_scene_center(dst, edge.get("to_port"), "in")
+                if not a or not b:
+                    continue
                 line = QGraphicsLineItem()
-                src_item = self.node_items[src]
-                dst_item = self.node_items[dst]
-                a = src_item.sceneBoundingRect().center()
-                b = dst_item.sceneBoundingRect().center()
                 line.setLine(a.x(), a.y(), b.x(), b.y())
-                src_type = self.node_items[src].node.get("type") if src in self.node_items else "custom.card"
-                line.setPen(QPen(QColor(node_theme(src_type)["accent"]), 2))
+                line.setPen(QPen(self.edge_color(edge), 2))
+                tooltip = f"{edge.get('kind', 'generic')}: {src}.{edge.get('from_port', 'out')} → {dst}.{edge.get('to_port', 'in')}"
+                line.setToolTip(tooltip)
                 line.setZValue(-1)
                 self.scene.addItem(line)
                 self.edge_items.append(line)
@@ -1087,6 +1182,16 @@ class VisualEditorWindow(QMainWindow):
                 return node.get("id")
         return None
 
+    def node_port_summary(self, node: dict[str, Any]) -> str:
+        rules = PORT_RULES.get(node.get("type"), {})
+        parts = []
+        for direction_label, direction_key in [("输入", "in"), ("输出", "out")]:
+            ports = rules.get(direction_key, [])
+            if ports:
+                labels = [f"{PORT_LABELS.get(port, port)}({port})" for port in ports]
+                parts.append(f"{direction_label}: " + ", ".join(labels))
+        return "端口：" + ("；".join(parts) if parts else "无")
+
     def select_node(self, node_id: str | None) -> None:
         self.current_node_id = node_id
         node = self._find_node(node_id) if node_id else None
@@ -1096,11 +1201,15 @@ class VisualEditorWindow(QMainWindow):
                 self.current_node_id = node.get("id")
         if not node:
             self.selected_label.setText("未选择卡片")
+            if hasattr(self, "ports_label"):
+                self.ports_label.setText("端口：未选择")
             self.node_json_editor.clear()
             self.property_table.setRowCount(0)
             return
         prefix = "页面属性" if node.get("id") == self.active_page().get("id") else "已选择"
         self.selected_label.setText(f"{prefix}: {node.get('id')} ({TYPE_LABELS.get(node.get('type'), node.get('type'))})")
+        if hasattr(self, "ports_label"):
+            self.ports_label.setText(self.node_port_summary(node))
         self.node_json_editor.setPlainText(json.dumps(node, ensure_ascii=False, indent=2))
         self.populate_property_form(node)
 
@@ -1252,7 +1361,10 @@ class VisualEditorWindow(QMainWindow):
 
     def populate_property_form(self, node: dict[str, Any]) -> None:
         self.property_table.setRowCount(0)
-        for key, value in node.items():
+        ordered_keys = list(PROPERTY_FIELD_ORDER.get(str(node.get("type")), []))
+        ordered_keys.extend(key for key in node if key not in ordered_keys)
+        for key in ordered_keys:
+            value = node.get(key, "")
             row = self.property_table.rowCount()
             self.property_table.insertRow(row)
             self.property_table.setItem(row, 0, QTableWidgetItem(str(key)))
@@ -1784,21 +1896,7 @@ class VisualEditorWindow(QMainWindow):
 
 
     def connect_selected_cards(self) -> None:
-        selected = [item for item in self.scene.selectedItems() if isinstance(item, GraphNodeItem)]
-        if len(selected) != 2:
-            QMessageBox.information(self, "Connect cards", "Select exactly two cards on the canvas, then click Connect Selected.")
-            return
-        a = selected[0].node
-        b = selected[1].node
-        if self._connect_pair(a, b):
-            self.add_graph_edge(a, b, "selected", "selected", "selected")
-            self.refresh_all()
-            return
-        if self._connect_pair(b, a):
-            self.add_graph_edge(b, a, "selected", "selected", "selected")
-            self.refresh_all()
-            return
-        QMessageBox.warning(self, "Connect cards", f"No supported connection rule for {a.get('type')} -> {b.get('type')}.")
+        QMessageBox.information(self, "端口连线", "请从卡片右侧输出端口圆点拖拽到另一张卡片左侧输入端口圆点；Studio 不再支持中心点选中连线。")
 
     def _connect_pair(self, src: dict[str, Any], dst: dict[str, Any]) -> bool:
         self.push_undo()
