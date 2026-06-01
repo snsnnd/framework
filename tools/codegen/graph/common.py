@@ -17,6 +17,8 @@ GENERATION_LEVEL_LABELS = {
 VALID_EDGE_KINDS = {
     "contains",
     "data_flow",
+    "hardware_dependency",
+    "schedule",
     "control_flow",
     "event",
     "state_transition",
@@ -50,7 +52,7 @@ CALLBACK_SIGNATURES = {
     "task.call": "void",
     "state.lifecycle": "void *ctx",
     "transition.action": "void",
-    "logic.call": "void",
+    "processor.process": "void *ctx, const void *in, void *out",
     "topic.callback": "uint16_t topic_id, const void *data, uint16_t size, void *user",
     "condition": "void",
 }

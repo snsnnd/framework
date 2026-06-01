@@ -36,6 +36,7 @@ Codegen 的验证入口已拆到 `tools/codegen/validate.py`，渲染/预览/写
 | `actuator.custom` | 完整生成 | 生成 actuator 注册 glue；`write/init/enable/disable` 回调由用户实现。 |
 | `algorithm.pid` | 完整生成 | 使用 EFW 内置 PID，生成 PID ctx 和 algorithm 注册。 |
 | `algorithm.custom` | 完整生成 | 生成 algorithm 注册 glue；`run` 回调由用户实现；接入 LineFollower 时必须声明 `io_contract=efw_pid`。 |
+| `processor.custom` | 轻量 glue | 生成数据契约 wrapper；`process(ctx, in, out)` 由用户实现，用于原始数据到标准反馈/命令的转换。 |
 | `module.custom` | 完整生成 | 生成 module 注册和 lifecycle 调用；模块行为由用户回调实现。 |
 | `task.periodic` | 完整生成 | 生成 tick scheduler 调用；`period_ms` 必须是 `project.tick_ms` 整数倍。 |
 | `project.module` | 说明/文档 | 当前只表示 Studio 页面、分组和归属，不是独立编译单元。 |
@@ -45,8 +46,6 @@ Codegen 的验证入口已拆到 `tools/codegen/validate.py`，渲染/预览/写
 | `state.machine` | 轻量 glue | 生成轻量状态机 runner，不是完整状态机引擎。 |
 | `state.state` | 轻量 glue | 生成状态 entry；`on_enter/on_update/on_exit` 由用户实现。 |
 | `state.transition` | 轻量 glue | 生成条件转换 glue；`condition` 必填，`event_trigger` 当前只作为注释/语义标记。 |
-| `logic.if` | 轻量 glue | 生成 `app_logic_<id>()` if wrapper；条件和分支函数由用户实现。 |
-| `logic.loop` | 轻量 glue | 生成带 `max_iterations` 防护的 loop wrapper；条件和 body 由用户实现。 |
 | `custom.card` | 说明/文档 | 纯说明卡片，不产生 C 输出。 |
 | `custom.code` | 说明/文档 | 描述代码实现关系；源码内容仍保存在 `custom_files` 或 `board_adapters`。 |
 

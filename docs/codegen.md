@@ -99,6 +99,7 @@ examples/projects/generic_embedded_app.efw_project.json
 | `actuator.custom` | 自定义执行器，write/init/enable/disable 回调由 `custom_files` 或 `board_adapters` 实现 |
 | `algorithm.pid` | 内置 PID 控制器 |
 | `algorithm.custom` | 自定义算法，run 回调由 `custom_files` 实现并注册为 `efw_algo_ops_t` |
+| `processor.custom` | 自定义数据处理器，process 回调由 `custom_files` 实现，用于 `input_contract → output_contract` 的数据适配 |
 | `module.custom` | 自定义模块，init/start/stop/poll 回调由 `custom_files` 实现并注册为 `efw_module_ops_t` |
 | `task.periodic` | 周期任务卡片，生成到 tick scheduler 中 |
 | `project.module` | 项目模块/子系统分组卡片，用于表达一个项目由多个模块组成 |
@@ -106,7 +107,6 @@ examples/projects/generic_embedded_app.efw_project.json
 | `event.publisher` | 发布者说明卡片，用于表达某个模块/传感器会向 topic 发布数据 |
 | `event.subscriber` | 订阅者卡片，会在 bind 阶段生成 `efw_topic_subscribe()` |
 | `state.machine` / `state.state` / `state.transition` | 生成轻量状态机 glue：状态注册、当前状态索引、进入/更新/退出回调与条件转换 |
-| `logic.if` / `logic.loop` | 生成 `app_logic_<id>()` wrapper；`logic.loop` 使用 `max_iterations` 防止不可控死循环 |
 | `custom.card` | 纯说明/占位卡片，用于记录硬件、调参或未来模板 |
 | `custom.code` | 自定义代码说明卡片，代码正文放在 `custom_files` |
 
@@ -250,7 +250,7 @@ python3 tools/efw.py studio
 - **项目结构 / 文件树 / 调度视图**：展示模块分组、Graph → application 文件树预览，以及 flow/task 的周期调度关系。
 - **一键生成缺失回调**：根据 HAL/Sensor/Actuator/Algorithm/Module/Task/Event 节点声明，向 `app_custom.c` 追加缺失 callback stub。
 - **自动布局**：将节点按类型粗略分列排列，适合导入 JSON 后快速整理画布。
-- **模板库 / 组件市场感**：左侧面板按项目结构、硬件、传感器、执行器、算法、模块/任务、通信、状态机、逻辑控制、自定义分组展示模板，分组元数据已抽到 `tools/studio/model.py`。
+- **模板库 / 组件市场感**：左侧面板按 System View 与 Module Internal View 分层展示模板；逻辑控制卡片已移除，数据适配由 `processor.custom` 承担，分组元数据位于 `tools/studio/model.py`。
 - **分类配色**：画布卡片、端口和连线会按 HAL、Sensor、Actuator、Algorithm、Module、Task、Event、Project Module 等类型使用不同颜色，降低大型 Graph 的阅读成本。
 
 > Code 面板目前仍是普通文本编辑器，适合先承载自定义算法、BSP glue 和临时代码。后续可以再增强为带语法高亮、符号索引和 LSP 的代码区。
@@ -261,7 +261,7 @@ python3 tools/efw.py studio
 
 - **完整生成**：HAL/Sensor/Actuator/Algorithm/Module/Task、LineFollower flow 等会生成 C 注册、bind 或调度代码。
 - **部分生成**：例如 `event.topic` 会生成 `APP_TOPIC_*` 宏，`event.subscriber` 会生成 `efw_topic_subscribe()`，但 `event.publisher` 的 `efw_topic_publish()` 调用仍应写在用户任务或模块代码中。
-- **轻量生成**：`state.machine`、`state.state`、`state.transition`、`logic.if`、`logic.loop` 已生成可编译 glue，但业务条件和动作仍由 `custom_files` 回调实现。
+- **轻量生成**：`state.machine`、`state.state`、`state.transition` 和 `processor.custom` 已生成可编译 glue；状态条件、动作和 processor 数据转换仍由 `custom_files` 回调实现。
 
 编辑器的“生成映射”面板会显示每个节点的生成状态，避免用户误以为所有卡片都已经具备完整代码生成能力。
 
@@ -291,7 +291,7 @@ efw_ringbuf_push(&rx_rb, byte);
 - 左侧模板库会扫描 `include/efw/device/sensor`、`include/efw/device/actuator`、`include/efw/algorithm` 下的框架头文件，并把可安全映射到现有 Graph schema 的条目放入“框架库扫描”分组。
 - 右侧属性表单对 `module`、`hal_name`、`topic`、`machine`、状态转换 `from/to`、`hal_type`、`sensor_type`、`actuator_type` 等字段使用下拉选择，减少手写字符串引用错误。
 - `state.machine`、`state.state`、`state.transition` 已从占位升级为生成轻量状态机 glue：生成状态注册、当前状态索引、`on_enter/on_update/on_exit` 调用以及带 `condition` 的转换判断。
-- `logic.if` 和 `logic.loop` 已从占位升级为生成 `app_logic_<id>()` wrapper；循环节点带 `max_iterations` 防护，避免在裸机主循环里产生不可控死循环。
+- 低代码式逻辑卡片已从 Studio 主模型移除；数据格式不匹配改由 `processor.custom` 显式表达 `input_contract → process() → output_contract`。
 - `project.module` 仍然是项目结构分组，但在可视化编辑器中可双击进入子模块页面，根视图/模块视图之间可以切换。
 - Board Profile 数据库位于 `examples/board_profiles/board_profiles.json`，当前内置 `generic-mock`、`stm32-basic`、`esp32-basic`，Pin Planner 会基于 profile 生成默认资源规划草稿并检查冲突。
 - 端口连线现在会先调用统一连接语义，只有合法连接才写入 `graph.edges`；无效连接会高亮并提示。
@@ -312,7 +312,7 @@ efw_ringbuf_push(&rx_rb, byte);
 - 右侧属性表单继续保留表格布局，但常见引用字段已经变成下拉选择器；复杂数组/对象仍放在高级 JSON 区编辑。
 - `project.module` 现在支持双击进入模块视图；在模块视图里新建非模块卡片会自动归属当前模块，工具栏可返回根项目。
 - 生成预览增加 `backup+overwrite` 状态；实际生成覆盖已有生成文件前会把旧内容保存到 `.efw_backup/`，额外用户文件仍标记为 `preserve` 并保持不动。
-- 卡片摘要进一步包含 PID 参数、transition 条件、logic 条件、motor PWM/DIR 和 GPIO 输入首个引脚，方便在大图里快速辨认节点。
+- 卡片摘要进一步包含 PID 参数、transition 条件、processor 数据契约、motor PWM/DIR 和 GPIO 输入首个引脚，方便在大图里快速辨认节点。
 
 
 ## 工具入口与解耦
@@ -333,7 +333,7 @@ python3 tools/efw.py studio
 - `tools/studio/editor.py` 继续保留为 PyQt 画布/面板实现，但不再承载所有纯逻辑；后续可以继续拆成 scene、palette、properties、pin planner、code panel 等 UI 子模块。
 - UI 连接规则与 codegen 的 `apply_edge_semantics()` 已共享同一组 pair-level 语义函数，减少“UI 允许连接但生成器不理解”的风险；状态机端口也区分为 `state_machine`、`transition_from`、`transition_to`。
 - `project.module` 已显式包含 `inputs`、`outputs`、`subgraph` 字段，当前 UI 仍以同一 Graph 的模块视图方式呈现，模块内部独立子图和跨模块接口编译会作为下一阶段继续强化。
-- “一键创建条件函数”会单独为 `state.transition`、`logic.if`、`logic.loop` 的 `condition` 生成 `int condition(void)` stub；“一键生成缺失回调”仍负责完整回调 stub。
+- “一键创建条件函数”只为 `state.transition` 的 `condition` 生成 `int condition(void)` stub；“一键生成缺失回调”负责 HAL/Sensor/Processor/Algorithm/Module/Task/Event/State 的完整回调 stub。
 - 框架库扫描会附带 `framework_header`、`library_module`、`callbacks`、`schema_fields`、`scan_quality`、`generation` 等元数据；它仍是头文件路径推断，不等价于完整 C 反射，因此复杂依赖宏/回调契约仍需后续用组件描述文件补齐。
 
 ### 页面化蓝图与专用视图
@@ -345,7 +345,7 @@ python3 tools/efw.py studio
 
 ### 模块化页面语义补强
 
-- 根页面现在只展示顶层 `project.module`、顶层 `state.machine`、顶层 `event.topic` 和 root 说明卡片；模块内部 HAL/Sensor/Algorithm/Actuator/Task 不再平铺到根页面。
+- 根页面现在是系统模块视图，只展示顶层 `project.module`、顶层事件发布订阅和 root 说明卡片；模块内部 HAL/Sensor/Processor/Algorithm/Actuator/Task/StateMachine 不再平铺到根页面。
 - 添加卡片会按当前页面自动归属：模块页写入 `module` / `parent`，状态机页写入 `machine`，通信页写入 `topic`；根页面禁止直接添加普通内部组件。
 - 页面位置改为优先写入 `ui.positions_by_page[page_key]`，避免根页面、模块页、状态机页和通信页互相覆盖布局。
 - 修改卡片 `id` 时会同步 `module`、`parent`、`machine`、`topic`、flow、edge、task 和 UI 位置引用，并刷新打开的页面标签。
@@ -357,7 +357,9 @@ python3 tools/efw.py studio
 
 - `contains`：模块包含或页面归属关系。
 - `data_flow`：模块接口、传感器、算法等数据流。
-- `control_flow`：逻辑块、任务、模块调用关系。
+- `hardware_dependency`：HAL / COMM 到 Sensor / Actuator 的硬件依赖关系。
+- `schedule`：Task 到模块、flow 或用户回调的调度关系。
+- `control_flow`：Processor / Algorithm 到 Actuator 的控制命令关系。
 - `event`：Topic、Publisher、Subscriber 的发布订阅关系。
 - `state_transition` / `state_transition_from` / `state_transition_to`：状态机、状态和转换关系。
 - `code`：自定义代码卡片提供的实现关系。

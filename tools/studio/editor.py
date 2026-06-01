@@ -112,6 +112,7 @@ from codegen.graph import (
     PORT_DESCRIPTIONS,
     PORT_LABELS,
     PORT_RULES,
+    EDGE_KIND_LABELS,
     callback_signature,
     CALLBACK_SIGNATURES,
     NODE_CONTRACTS,
@@ -216,6 +217,18 @@ NODE_TEMPLATES: dict[str, dict[str, Any]] = {
         "run": "app_custom_algo_run",
         "io_contract": "custom",
     },
+    "processor.custom": {
+        "id": "custom_processor",
+        "type": "processor.custom",
+        "input_contract": "raw_bytes",
+        "output_contract": "line_error",
+        "input_type": "custom",
+        "output_type": "float",
+        "output_desc": "normalized processor output",
+        "ctx": "0",
+        "process": "app_custom_processor_process",
+        "description": "把模块内部原始数据转换为下游算法/执行器需要的标准数据契约。",
+    },
     "module.custom": {
         "id": "custom_module",
         "type": "module.custom",
@@ -293,45 +306,6 @@ NODE_TEMPLATES: dict[str, dict[str, Any]] = {
         "action": "",
         "timeout_ms": 0,
         "event_trigger": "",
-    },
-    "logic.if": {
-        "id": "if_condition",
-        "type": "logic.if",
-        "name": "if_condition",
-        "description": "条件分支：condition 返回非 0 时执行 then，否则执行 else。",
-        "condition": "app_if_condition",
-        "then": "app_if_then",
-        "else": "app_if_else",
-    },
-    "logic.loop": {
-        "id": "loop_block",
-        "type": "logic.loop",
-        "name": "loop_block",
-        "description": "受保护循环：condition 返回非 0 时重复执行 body，最多 max_iterations 次。",
-        "loop": "while",
-        "condition": "app_loop_condition",
-        "body": "app_loop_body",
-        "max_iterations": 1,
-    },
-    "logic.switch": {
-        "id": "switch_block",
-        "type": "logic.switch",
-        "name": "switch_block",
-        "expression": "state",
-        "cases": ["case_a", "case_b"],
-        "default": "default_case",
-        "description": "Switch-style decision block. Implement the actual switch in custom code.",
-    },
-    "logic.for": {
-        "id": "for_block",
-        "type": "logic.for",
-        "name": "for_block",
-        "iterator": "i",
-        "start": 0,
-        "end": 10,
-        "step": 1,
-        "body": "app_for_body",
-        "description": "Bounded for-loop block. Implement the actual loop in custom code.",
     },
     "data.enum": {
         "id": "enum_type",
@@ -462,12 +436,12 @@ NODE_THEMES = {
     "sensor": {"bg": "#172a21", "border": "#72d083", "accent": "#45c36c"},
     "actuator": {"bg": "#302414", "border": "#ffb766", "accent": "#f59e42"},
     "algorithm": {"bg": "#291d33", "border": "#c28cff", "accent": "#a66cff"},
+    "processor": {"bg": "#13283a", "border": "#55c7ff", "accent": "#29a9e8"},
     "module": {"bg": "#2d2818", "border": "#f5d36a", "accent": "#d7ae36"},
     "task": {"bg": "#17253a", "border": "#6ea8fe", "accent": "#4c8dff"},
     "project": {"bg": "#221f3a", "border": "#9b8cff", "accent": "#7c6cff"},
     "event": {"bg": "#331d1f", "border": "#ff8a80", "accent": "#ff6b5f"},
     "state": {"bg": "#142b2a", "border": "#5ed6c9", "accent": "#35bdb2"},
-    "logic": {"bg": "#2d301a", "border": "#d9e76c", "accent": "#b8c946"},
     "custom": {"bg": "#242a36", "border": "#9aa8bd", "accent": "#7d8da6"},
 }
 
@@ -519,7 +493,8 @@ TYPE_LABELS = {
     "actuator.custom": "执行器 · 自定义",
     "algorithm.pid": "算法 · PID",
     "algorithm.custom": "算法 · 自定义",
-    "module.custom": "模块 · 自定义",
+    "processor.custom": "处理器 · 自定义",
+    "module.custom": "业务模块 · 生命周期",
     "task.periodic": "任务 · 周期",
     "project.module": "项目 · 模块分组",
     "event.topic": "通信 · Topic",
@@ -528,10 +503,6 @@ TYPE_LABELS = {
     "state.machine": "状态机 · 容器",
     "state.state": "状态机 · 状态",
     "state.transition": "状态机 · 转换",
-    "logic.if": "逻辑 · if条件",
-    "logic.loop": "逻辑 · 循环",
-    "logic.switch": "逻辑 · switch选择",
-    "logic.for": "逻辑 · for循环",
     "data.enum": "数据 · enum枚举",
     "data.struct": "数据 · struct结构体",
     "custom.card": "说明卡片",
@@ -565,6 +536,7 @@ PROPERTY_FIELD_ORDER = {
     "actuator.motor": ["id", "type", "module", "pwm", "dir_pin", "max_speed"],
     "algorithm.pid": ["id", "type", "module", "input_type", "output_type", "output_desc", "kp", "ki", "kd", "out_min", "out_max", "integral_min", "integral_max", "anti_windup"],
     "algorithm.custom": ["id", "type", "module", "algo_type", "input_type", "output_type", "output_desc", "run", "ctx_name", "io_contract"],
+    "processor.custom": ["id", "type", "module", "input_contract", "output_contract", "input_type", "output_type", "output_desc", "process", "ctx_name", "description"],
     "module.custom": ["id", "type", "module", "module_type", "input_type", "output_type", "output_desc", "ctx_name", "init", "start", "stop", "poll"],
     "task.periodic": ["id", "type", "module", "period_ms", "call", "flow"],
     "event.topic": ["id", "type", "module", "topic_id", "payload_type", "description"],
@@ -573,10 +545,6 @@ PROPERTY_FIELD_ORDER = {
     "state.machine": ["id", "type", "module", "initial", "description"],
     "state.state": ["id", "type", "machine", "on_enter", "on_update", "on_exit"],
     "state.transition": ["id", "type", "machine", "from", "to", "condition", "priority", "action", "timeout_ms", "event_trigger"],
-    "logic.if": ["id", "type", "module", "condition", "then", "else"],
-    "logic.loop": ["id", "type", "module", "loop", "condition", "body", "max_iterations"],
-    "logic.switch": ["id", "type", "name", "description", "module", "expression", "cases", "default"],
-    "logic.for": ["id", "type", "name", "description", "module", "iterator", "start", "end", "step", "body"],
     "data.enum": ["id", "type", "name", "description", "module", "data_type", "values"],
     "data.struct": ["id", "type", "name", "description", "module", "data_type", "fields"],
 }
@@ -1801,6 +1769,8 @@ Esc       返回根项目页面
         by_kind = {
             "contains": "#7e57c2",
             "data_flow": "#42a5f5",
+            "hardware_dependency": "#26c6da",
+            "schedule": "#5c6bc0",
             "control_flow": "#ec407a",
             "event": "#ff7043",
             "state_transition": "#26a69a",
@@ -1810,6 +1780,26 @@ Esc       返回根项目页面
             "generic": "#78909c",
         }
         return QColor(by_kind.get(str(kind), "#78909c"))
+
+    def edge_pen(self, edge: dict[str, Any]) -> QPen:
+        kind = str(edge.get("kind", "generic"))
+        width = 3 if kind == "control_flow" else 2
+        pen = QPen(self.edge_color(edge), width)
+        style_name = {
+            "contains": "DashLine",
+            "event": "DashDotLine",
+            "hardware_dependency": "DotLine",
+            "schedule": "DashLine",
+            "code": "DotLine",
+        }.get(kind)
+        if style_name:
+            try:
+                style = getattr(Qt.PenStyle, style_name)
+            except AttributeError:
+                style = getattr(Qt, style_name, None)
+            if style is not None:
+                pen.setStyle(style)
+        return pen
 
     def refresh_edges(self) -> None:
         for edge in self.edge_items:
@@ -1821,7 +1811,7 @@ Esc       返回根项目页面
                 sensor = flow.get("sensor")
                 sensor_node = self._find_node(sensor)
                 edges.extend([
-                    {"from": sensor_node.get("input") if sensor_node else self._line_input_id(), "from_port": "hal", "to": sensor, "to_port": "hal", "kind": "data_flow"},
+                    {"from": sensor_node.get("input") if sensor_node else self._line_input_id(), "from_port": "hal", "to": sensor, "to_port": "hal", "kind": "hardware_dependency"},
                     {"from": sensor, "from_port": "sensor", "to": flow.get("pid"), "to_port": "sensor", "kind": "data_flow"},
                     {"from": sensor, "from_port": "sensor", "to": flow.get("left_motor"), "to_port": "control", "kind": "control_flow"},
                     {"from": sensor, "from_port": "sensor", "to": flow.get("right_motor"), "to_port": "control", "kind": "control_flow"},
@@ -1838,8 +1828,9 @@ Esc       返回根项目页面
                     continue
                 line = QGraphicsLineItem()
                 line.setLine(a.x(), a.y(), b.x(), b.y())
-                line.setPen(QPen(self.edge_color(edge), 2))
-                tooltip = f"{edge.get('kind', 'generic')}: {src}.{edge.get('from_port', 'out')} → {dst}.{edge.get('to_port', 'in')}"
+                line.setPen(self.edge_pen(edge))
+                kind_label = EDGE_KIND_LABELS.get(str(edge.get('kind', 'generic')), str(edge.get('kind', 'generic')))
+                tooltip = f"{kind_label}: {src}.{edge.get('from_port', 'out')} → {dst}.{edge.get('to_port', 'in')}"
                 line.setToolTip(tooltip)
                 line.setZValue(-1)
                 self.scene.addItem(line)
@@ -1893,10 +1884,8 @@ Esc       返回根项目页面
     def node_action_hint(self, node: dict[str, Any]) -> str:
         node_type = str(node.get("type"))
         contract = NODE_CONTRACTS.get(node_type, {})
-        if node_type == "logic.if":
-            return "行动：实现 condition/then/else 三个函数；condition 返回非 0 走 then，返回 0 走 else。"
-        if node_type == "logic.loop":
-            return "行动：实现 condition/body；condition 返回非 0 时循环执行 body，max_iterations 防止死循环。"
+        if node_type == "processor.custom":
+            return "行动：实现 process(ctx, in, out)，把 input_contract 转换为 output_contract；用于 Sensor/算法/PID/Actuator 之间的数据适配。"
         if node_type == "event.publisher":
             return "行动：在 custom_files 的 task/module 回调中手写 efw_topic_publish()；该卡片只表达发布关系。"
         if node_type == "project.module":
@@ -2097,9 +2086,9 @@ Esc       返回根项目页面
         owner_id = page.get("id")
         node_type = template.get("type")
         if kind == "root":
-            allowed = {"project.module", "state.machine", "event.topic", "custom.card"}
+            allowed = {"project.module", "event.topic", "event.publisher", "event.subscriber", "custom.card"}
             if node_type not in allowed:
-                QMessageBox.warning(self, "不能添加到根页面", "根页面只显示顶层模块、状态机、Topic 和说明卡片；请进入模块页面后再添加 HAL/Sensor/Algorithm/Actuator/Task。")
+                QMessageBox.warning(self, "不能添加到系统模块视图", "系统模块视图只显示 project.module、模块输入/输出契约和事件发布订阅；请进入模块内部视图后再添加 HAL/Sensor/Processor/Algorithm/Actuator/Task/StateMachine。")
                 return False
             if node_type == "custom.card":
                 template.setdefault("scope", "root")
@@ -2765,6 +2754,7 @@ Esc       返回根项目页面
                 ("write", "efw_status_t {name}(void *ctx, const void *cmd)", "    EFW_UNUSED(ctx);\n    EFW_UNUSED(cmd);\n    return EFW_OK;"),
                 ("poll", "efw_status_t {name}(void *ctx)", "    EFW_UNUSED(ctx);\n    return EFW_OK;"),
                 ("run", "efw_status_t {name}(void *ctx, const void *in, void *out)", "    EFW_UNUSED(ctx);\n    EFW_UNUSED(in);\n    EFW_UNUSED(out);\n    return EFW_OK;"),
+                ("process", "efw_status_t {name}(void *ctx, const void *in, void *out)", "    EFW_UNUSED(ctx);\n    EFW_UNUSED(in);\n    EFW_UNUSED(out);\n    return EFW_OK;"),
             ]:
                 name = node.get(field)
                 if name and not has_symbol(str(name)):
@@ -2782,19 +2772,11 @@ Esc       返回根项目页面
                     name = node.get(field)
                     if name and not has_symbol(str(name)):
                         stubs.append(f"efw_status_t {name}(void *ctx) {{\n    EFW_UNUSED(ctx);\n    return EFW_OK;\n}}\n")
-            if ntype in {"state.transition", "logic.if", "logic.loop"} and node.get("condition") and not has_symbol(str(node.get("condition"))):
+            if ntype == "state.transition" and node.get("condition") and not has_symbol(str(node.get("condition"))):
                 name = node.get("condition")
                 stubs.append(f"int {name}(void) {{\n    return 0;\n}}\n")
             if ntype == "state.transition" and node.get("action") and not has_symbol(str(node.get("action"))):
                 name = node.get("action")
-                stubs.append(f"efw_status_t {name}(void) {{\n    return EFW_OK;\n}}\n")
-            if ntype == "logic.if":
-                for field in ["then", "else"]:
-                    name = node.get(field)
-                    if name and not has_symbol(str(name)):
-                        stubs.append(f"efw_status_t {name}(void) {{\n    return EFW_OK;\n}}\n")
-            if ntype == "logic.loop" and node.get("body") and not has_symbol(str(node.get("body"))):
-                name = node.get("body")
                 stubs.append(f"efw_status_t {name}(void) {{\n    return EFW_OK;\n}}\n")
         for task in self.graph.get("tasks", []) + [n for n in self.graph.get("nodes", []) if n.get("type") == "task.periodic"]:
             name = task.get("call")
@@ -2808,7 +2790,7 @@ Esc       返回根项目页面
         existing_content = "\n".join(file.get("content", "") for file in self.graph.get("custom_files", []))
         stubs: list[str] = []
         for node in self.graph.get("nodes", []):
-            if node.get("type") in {"state.transition", "logic.if", "logic.loop"}:
+            if node.get("type") == "state.transition":
                 name = str(node.get("condition", "")).strip()
                 if name and name not in existing_content:
                     stubs.append(f"int {name}(void) {{\n  /* TODO: return non-zero when this condition should pass. */\n  return 0;\n}}\n")

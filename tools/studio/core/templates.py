@@ -132,13 +132,12 @@ def node_summary(node: dict[str, Any]) -> str:
         "state.machine": ["initial"],
         "state.state": ["machine", "on_update"],
         "state.transition": ["from", "to", "condition", "priority", "timeout_ms"],
-        "logic.if": ["condition", "then", "else"],
-        "logic.loop": ["condition", "body", "max_iterations"],
         "event.topic": ["topic_id", "payload_type"],
         "event.subscriber": ["topic", "callback"],
         "hal.custom": ["hal_type", "bus_id"],
         "sensor.custom": ["sensor_type", "output_type", "read"],
         "algorithm.custom": ["input_type", "output_type", "run"],
+        "processor.custom": ["input_contract", "output_contract", "process"],
         "module.custom": ["input_type", "output_type", "poll"],
         "actuator.custom": ["actuator_type", "hal_name", "write"],
     }
@@ -158,11 +157,11 @@ def property_choices(graph: dict[str, Any], node: dict[str, Any], key: str, node
     if key in {"input", "hal_name"}:
         return [""] + [n.get("id", "") for n in graph.get("nodes", []) if str(n.get("type", "")).startswith("hal.")]
     if key in {"sensor", "source"}:
-        return [""] + [n.get("id", "") for n in graph.get("nodes", []) if str(n.get("type", "")).startswith(("sensor.", "module."))]
+        return [""] + [n.get("id", "") for n in graph.get("nodes", []) if str(n.get("type", "")).startswith(("sensor.", "processor.", "module."))]
     if key in {"pid", "algorithm"}:
         return [""] + [n.get("id", "") for n in graph.get("nodes", []) if str(n.get("type", "")).startswith("algorithm.")]
     if key in {"left_motor", "right_motor", "target"}:
-        return [""] + [n.get("id", "") for n in graph.get("nodes", []) if str(n.get("type", "")).startswith(("actuator.", "module."))]
+        return [""] + [n.get("id", "") for n in graph.get("nodes", []) if str(n.get("type", "")).startswith(("actuator.", "processor.", "module."))]
     if key == "topic":
         return [""] + by_type("event.topic")
     if key == "machine":
@@ -186,8 +185,9 @@ def property_choices(graph: dict[str, Any], node: dict[str, Any], key: str, node
         return ["EFW_ALGO_CUSTOM", "EFW_ALGO_PID", "EFW_ALGO_FILTER", "EFW_ALGO_ESTIMATOR"]
     if key == "io_contract":
         return ["custom", "efw_pid", "scalar", "vector", "event"]
-    if key == "loop":
-        return ["while", "for"]
+    if key in {"input_contract", "output_contract"}:
+        custom_types = [str(n.get("name", "")) for n in graph.get("nodes", []) if n.get("type") in {"data.enum", "data.struct"} and n.get("name")]
+        return ["", "raw_bytes", "line_error", "speed_feedback", "control_cmd", "event_payload", "custom"] + custom_types
     if key in {"input_type", "output_type", "payload_type", "data_type"}:
         custom_types = [str(n.get("name", "")) for n in graph.get("nodes", []) if n.get("type") in {"data.enum", "data.struct"} and n.get("name")]
         return ["", "bool", "int", "uint8_t", "uint16_t", "uint32_t", "float", "double", "struct", "enum", "custom"] + custom_types

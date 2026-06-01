@@ -154,10 +154,10 @@ def render_manifest(ctx):
 #define APP_USE_MOTOR               {c_bool(len(nodes_of(ctx, 'actuator.motor')))}
 #define APP_USE_ALGORITHM           {c_bool(len(nodes_of(ctx, 'algorithm.pid') + nodes_of(ctx, 'algorithm.custom')))}
 #define APP_USE_PID                 {c_bool(len(nodes_of(ctx, 'algorithm.pid')))}
+#define APP_USE_PROCESSOR           {c_bool(len(nodes_of(ctx, 'processor.custom')))}
 #define APP_USE_MODULE              {c_bool(len(nodes_of(ctx, 'module.custom')))}
 #define APP_USE_EVENT               {c_bool(len(nodes_of(ctx, 'event.topic') + nodes_of(ctx, 'event.publisher') + nodes_of(ctx, 'event.subscriber')))}
 #define APP_USE_STATE_MACHINE       {c_bool(len(nodes_of(ctx, 'state.machine') + nodes_of(ctx, 'state.state') + nodes_of(ctx, 'state.transition')))}
-#define APP_USE_LOGIC               {c_bool(len(nodes_of(ctx, 'logic.if') + nodes_of(ctx, 'logic.loop')))}
 
 #define APP_PROJECT_TICK_MS          {int(ctx["project"].get("tick_ms", 1))}u
 
@@ -165,10 +165,10 @@ def render_manifest(ctx):
 #define APP_SENSOR_COUNT            {len(nodes_of(ctx, 'sensor.line_tracking') + nodes_of(ctx, 'sensor.custom'))}
 #define APP_ACTUATOR_COUNT          {len(nodes_of(ctx, 'actuator.motor') + nodes_of(ctx, 'actuator.custom'))}
 #define APP_ALGO_COUNT              {len(nodes_of(ctx, 'algorithm.pid') + nodes_of(ctx, 'algorithm.custom'))}
+#define APP_PROCESSOR_COUNT         {len(nodes_of(ctx, 'processor.custom'))}
 #define APP_MODULE_COUNT            {len(nodes_of(ctx, 'module.custom'))}
 #define APP_TOPIC_COUNT             {len(nodes_of(ctx, 'event.topic'))}
 #define APP_STATE_COUNT             {len(nodes_of(ctx, 'state.state'))}
-#define APP_LOGIC_COUNT             {len(nodes_of(ctx, 'logic.if') + nodes_of(ctx, 'logic.loop'))}
 
 {render_topic_macros(ctx)}
 #endif
@@ -560,7 +560,7 @@ def states_by_machine(ctx):
 def render_state_logic_blocks(ctx):
     parts = []
     machines = states_by_machine(ctx)
-    if machines or nodes_of(ctx, "logic.if") or nodes_of(ctx, "logic.loop"):
+    if machines:
         parts.append("static efw_status_t app_noop_status(void *ctx) { EFW_UNUSED(ctx); return EFW_OK; }\n")
     for node in nodes_of(ctx, "state.state"):
         for cb, sig in [("on_enter", "void *ctx"), ("on_update", "void *ctx"), ("on_exit", "void *ctx")]:
@@ -571,17 +571,6 @@ def render_state_logic_blocks(ctx):
             parts.append(f"extern int {c_ident(node['condition'])}(void);\n")
         if node.get("action"):
             parts.append(f"extern efw_status_t {c_ident(node['action'])}(void);\n")
-    for node in nodes_of(ctx, "logic.if"):
-        if node.get("condition"):
-            parts.append(f"extern int {c_ident(node['condition'])}(void);\n")
-        for cb in ["then", "else"]:
-            if node.get(cb):
-                parts.append(f"extern efw_status_t {c_ident(node[cb])}(void);\n")
-    for node in nodes_of(ctx, "logic.loop"):
-        if node.get("condition"):
-            parts.append(f"extern int {c_ident(node['condition'])}(void);\n")
-        if node.get("body"):
-            parts.append(f"extern efw_status_t {c_ident(node['body'])}(void);\n")
     if parts:
         parts.append("\n")
     for mid, bundle in machines.items():
@@ -629,24 +618,17 @@ def render_state_logic_blocks(ctx):
                 parts.append(f"        g_{m_ident}_entered_ms = g_app_elapsed_ms;\n")
                 parts.append(f"        if (g_{m_ident}_states[g_{m_ident}_current]->on_enter) {{ s = g_{m_ident}_states[g_{m_ident}_current]->on_enter(g_{m_ident}_states[g_{m_ident}_current]->ctx); if (s != EFW_OK) return s; }}\n        break;\n    }}\n")
         parts.append("    return EFW_OK;\n}\n\n")
-    for node in nodes_of(ctx, "logic.if"):
-        ident = c_ident(node["id"])
-        cond = c_ident(node["condition"]) + "()" if node.get("condition") else "1"
-        parts.append(f"static efw_status_t app_logic_{ident}(void) {{\n    efw_status_t s;\n    if ({cond}) {{\n")
-        if node.get("then"):
-            parts.append(f"        s = {c_ident(node['then'])}();\n        if (s != EFW_OK) return s;\n")
-        parts.append("    } else {\n")
-        if node.get("else"):
-            parts.append(f"        s = {c_ident(node['else'])}();\n        if (s != EFW_OK) return s;\n")
-        parts.append("    }\n    return EFW_OK;\n}\n\n")
-    for node in nodes_of(ctx, "logic.loop"):
-        ident = c_ident(node["id"])
-        cond = c_ident(node["condition"]) + "()" if node.get("condition") else "1"
-        max_iter = int(node.get("max_iterations", 1))
-        parts.append(f"static efw_status_t app_logic_{ident}(void) {{\n    efw_status_t s;\n    uint16_t guard = 0u;\n    while (({cond}) && guard++ < {max_iter}u) {{\n")
-        if node.get("body"):
-            parts.append(f"        s = {c_ident(node['body'])}();\n        if (s != EFW_OK) return s;\n")
-        parts.append("    }\n    return EFW_OK;\n}\n\n")
+    for node in nodes_of(ctx, "processor.custom"):
+        if node.get("process"):
+            process = c_ident(node["process"])
+            ident = c_ident(node["id"])
+            input_contract = str(node.get("input_contract", "custom")).replace("*/", "* /")
+            output_contract = str(node.get("output_contract", "custom")).replace("*/", "* /")
+            parts.append(f"extern efw_status_t {process}(void *ctx, const void *in, void *out);\n")
+            parts.append(f"static efw_status_t app_processor_{ident}(const void *in, void *out) {{\n")
+            parts.append(f"    /* input_contract={input_contract}; output_contract={output_contract} */\n")
+            parts.append(f"    return {process}({node.get('ctx', '0')}, in, out);\n")
+            parts.append("}\n\n")
     return "".join(parts)
 
 def render_bootstrap_c(ctx):
@@ -765,10 +747,6 @@ static efw_status_t app_bind_handles(void) {
             parts.append(f"    if ({condition}) {{\n        s = efw_line_follower_update(&g_{ident}, 0, 0);\n        if (s != EFW_OK) return s;\n    }}\n")
     for machine_id in states_by_machine(ctx):
         parts.append(f"    s = app_{c_ident(machine_id)}_tick();\n    if (s != EFW_OK) return s;\n")
-    for node in nodes_of(ctx, "logic.if") + nodes_of(ctx, "logic.loop"):
-        period = int(node.get("period_ms", ctx["project"].get("tick_ms", 1)))
-        condition = "1" if period <= int(ctx["project"].get("tick_ms", 1)) else f"(g_app_elapsed_ms % {period}u) == 0u"
-        parts.append(f"    if ({condition}) {{\n        s = app_logic_{c_ident(node['id'])}();\n        if (s != EFW_OK) return s;\n    }}\n")
     if nodes_of(ctx, "module.custom"):
         parts.append("    s = efw_module_poll_all();\n    if (s != EFW_OK) return s;\n")
     parts.append("    return EFW_OK;\n}\n\n")

@@ -174,7 +174,7 @@ def validate_callback_implementations(ctx: dict[str, Any]) -> None:
         definition = topic_definitions.get(callback)
         require(definition, f"missing topic subscriber callback implementation for {node['id']}: {callback}")
         require(definition["params"] == topic_params, f"topic callback {callback} in {definition['path']} has signature ({definition['params']}), expected ({topic_params})")
-    for node in nodes_of(ctx, "state.transition") + nodes_of(ctx, "logic.if") + nodes_of(ctx, "logic.loop"):
+    for node in nodes_of(ctx, "state.transition"):
         condition = node.get("condition")
         if condition:
             cname = c_ident(condition)
@@ -298,8 +298,11 @@ def validate_graph(graph: dict[str, Any]) -> dict[str, Any]:
             require(int(node.get("priority", 0)) >= 0, f"{node['id']}.priority must be >= 0")
             require(int(node.get("timeout_ms", 0)) >= 0, f"{node['id']}.timeout_ms must be >= 0")
             require(isinstance(node.get("event_trigger", ""), str), f"{node['id']}.event_trigger must be a string")
-        elif node_type_name in {"logic.if", "logic.loop"}:
-            require(isinstance(node.get("condition", ""), str), f"{node['id']}.condition must be a string")
+        elif node_type_name == "processor.custom":
+            process = node.get("process")
+            require(isinstance(process, str) and process == c_ident(process), f"{node['id']}.process must be a valid C identifier")
+            require(isinstance(node.get("input_contract", "custom"), str), f"{node['id']}.input_contract must be a string")
+            require(isinstance(node.get("output_contract", "custom"), str), f"{node['id']}.output_contract must be a string")
 
     module_ids = {node["id"] for node in raw_nodes if node.get("type") == "project.module"}
     for node in raw_nodes:

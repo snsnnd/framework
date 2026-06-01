@@ -48,7 +48,7 @@ def is_root_visible_node(node: dict[str, Any]) -> bool:
         return not node.get("parent")
     if node_type == "custom.card":
         return node.get("scope", "root") == "root" and not node.get("module")
-    if node_type in {"state.machine", "event.topic"}:
+    if node_type in {"event.topic", "event.publisher", "event.subscriber"}:
         return not node.get("module")
     return False
 
@@ -60,7 +60,7 @@ def visible_nodes_for_page(graph: dict[str, Any], page: Page | None) -> list[dic
     kind = page.get("kind")
     node_id = page.get("id")
     if kind == "module":
-        return [node for node in nodes if (node.get("module") == node_id or node.get("parent") == node_id) and node.get("type") not in {"event.publisher", "event.subscriber"}]
+        return [node for node in nodes if node.get("module") == node_id or node.get("parent") == node_id]
     if kind == "state":
         scope = page.get("key")
         return [node for node in nodes if node.get("id") == node_id or node.get("machine") == node_id or (node.get("type") == "custom.card" and node.get("scope") == scope)]
@@ -72,9 +72,9 @@ def visible_nodes_for_page(graph: dict[str, Any], page: Page | None) -> list[dic
 
 def page_hint(page: Page | None) -> str:
     if not page or page.get("kind") == "root":
-        return "根项目：只显示顶层模块、顶层状态机、顶层 Topic 和根级说明卡片；双击进入专用页面查看内部。"
+        return "系统模块视图：只展示 project.module、模块公共输入/输出和事件发布订阅关系；双击模块进入内部实现视图。"
     if page.get("kind") == "module":
-        return "模块页面：显示模块接口与内部节点；新卡片会自动归属当前模块，子模块会写入 parent。"
+        return "模块内部视图：可放 HAL / Sensor / processor.custom / Algorithm / Actuator / Task / StateMachine / CustomCode；新卡片会自动归属当前模块。"
     if page.get("kind") == "state":
         return "状态机页面：只建议添加 State / Transition；新状态或转换会自动绑定当前状态机。"
     if page.get("kind") == "comm":

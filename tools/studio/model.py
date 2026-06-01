@@ -15,16 +15,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 VISUAL_NODE_CATEGORIES = [
     ("框架库扫描", []),
-    ("项目结构", ["project.module"]),
-    ("HAL / 硬件", ["hal.gpio_line_input", "hal.custom"]),
-    ("传感器", ["sensor.line_tracking", "sensor.custom"]),
-    ("执行器", ["actuator.motor", "actuator.custom"]),
-    ("算法", ["algorithm.pid", "algorithm.custom"]),
-    ("模块 / 任务", ["module.custom", "task.periodic"]),
-    ("通信发布订阅", ["event.topic", "event.publisher", "event.subscriber"]),
-    ("状态机", ["state.machine", "state.state", "state.transition"]),
-    ("逻辑 / 数据建模", ["logic.if", "logic.loop", "logic.switch", "logic.for", "data.enum", "data.struct"]),
-    ("自定义", ["custom.card", "custom.code"]),
+    ("System View · 系统层", ["project.module", "event.topic", "event.publisher", "event.subscriber", "custom.card"]),
+    ("Module Internal · HAL / 通信", ["hal.gpio_line_input", "hal.custom"]),
+    ("Module Internal · Sensor", ["sensor.line_tracking", "sensor.custom"]),
+    ("Module Internal · Processor", ["processor.custom"]),
+    ("Module Internal · Algorithm", ["algorithm.pid", "algorithm.custom"]),
+    ("Module Internal · Actuator", ["actuator.motor", "actuator.custom"]),
+    ("Module Internal · Task / Module", ["module.custom", "task.periodic"]),
+    ("Module Internal · StateMachine", ["state.machine", "state.state", "state.transition"]),
+    ("Module Internal · 数据契约 / 自定义代码", ["data.enum", "data.struct", "custom.code"]),
 ]
 
 GENERATED_APPLICATION_TREE = [
