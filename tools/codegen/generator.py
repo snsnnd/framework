@@ -13,7 +13,7 @@ import json
 import re
 from pathlib import Path
 
-from codegen.validate import validate_graph
+from codegen.validate import BUILTIN_CONTRACTS, validate_graph
 
 
 def c_ident(value: str, fallback: str = "app") -> str:
@@ -745,6 +745,21 @@ def render_dataflow_pipelines(ctx):
     return "".join(parts)
 
 
+def render_contract_size_checks(ctx):
+    lines = ["/* Built-in contract ABI checks: keep metadata sizes synchronized with EFW C structs. */"]
+    for name in sorted(ctx.get("contracts", {})):
+        if name not in BUILTIN_CONTRACTS:
+            continue
+        contract = ctx["contracts"][name]
+        c_type = str(contract.get("c_type") or BUILTIN_CONTRACTS[name].get("c_type") or name)
+        size = int(contract.get("size", 0) or 0)
+        if size <= 0:
+            continue
+        ident = macro_ident(name).lower()
+        lines.append(f"typedef char app_contract_size_check_{ident}[(sizeof({c_type}) == {size}u) ? 1 : -1];")
+    return "\n".join(lines) + "\n\n"
+
+
 def render_bootstrap_c(ctx):
     parts = ["""
 /**
@@ -785,6 +800,7 @@ typedef union {
 } app_dataflow_buffer_t;
 
 """]
+    parts.append(render_contract_size_checks(ctx))
     parts.append(render_state_logic_blocks(ctx))
     parts.append(render_dataflow_pipelines(ctx))
     for flow in ctx["flows"]:

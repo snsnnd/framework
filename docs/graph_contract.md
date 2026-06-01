@@ -87,7 +87,7 @@ Codegen 的验证入口已拆到 `tools/codegen/validate.py`，渲染/预览/写
 ## 数据契约与运行管线
 
 - 顶层可选 `contracts[]`、`project.module.inputs/outputs`、`processor.custom.input_contract/output_contract` 会被合并为 contract registry，并生成 `APP_CONTRACT_*` 宏。
-- Contract 可以声明 `c_type`、`size`、`align`；自动 dataflow 要求参与传递的 contract 有确定 `size`，生成器会用最大 contract size 决定 `APP_DATAFLOW_BUFFER_SIZE`。内置 contract 包括 `efw_line_tracking_data_t`、`efw_pid_input_t`、`efw_pid_output_t`、`efw_motor_cmd_t` 和常见标量。
+- Contract 可以声明 `c_type`、`size`、`align`；自动 dataflow 要求参与传递的 contract 有确定 `size`，生成器会用最大 contract size 决定 `APP_DATAFLOW_BUFFER_SIZE`。内置 contract 包括 `efw_line_tracking_data_t`、`efw_pid_input_t`、`efw_pid_output_t`、`efw_motor_cmd_t` 和常见标量。内置 size 是 codegen 元数据，必须与 C 头文件 ABI 同步；生成的 `app_bootstrap.c` 会包含 `sizeof(c_type)` 编译期检查，防止结构体 padding/ABI 变化后继续生成错误缓冲区。
 - `project.module` 仍是 Studio 页面/系统结构节点，不生成独立编译单元；强类型接口生成留给后续模块编译阶段。
 - `data_flow` / `control_flow` edge 如果组成 contract 兼容的 `Sensor → Processor/Algorithm → Actuator` 路径，codegen 会生成 `app_dataflow_<path>()` 并在 `app_update_1ms()` 中按周期执行。
 - `algorithm.pid` 的输入 contract 固定为 `efw_pid_input_t`，输出固定为 `efw_pid_output_t`；不允许普通 sensor 数据绕过 processor 直接进入 PID 自动管线。

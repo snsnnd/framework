@@ -2593,23 +2593,133 @@ Esc       返回根项目页面
             lines.append(f"  {path}                    # custom_files")
         self.file_tree_output.setPlainText("\n".join(lines))
 
+    def runtime_dataflow_preview_paths(self) -> list[list[str]]:
+        """Mirror codegen's automatic dataflow discovery for the schedule preview."""
+        nodes_by_id = {node.get("id"): node for node in self.graph.get("nodes", []) if node.get("id")}
+        runtime_types = {
+            "sensor.custom",
+            "sensor.line_tracking",
+            "processor.custom",
+            "algorithm.pid",
+            "algorithm.custom",
+            "actuator.motor",
+            "actuator.custom",
+        }
+        flow_owned: set[str] = set()
+        for flow in self.graph.get("flows", []):
+            if flow.get("type") == "control.line_follower":
+                flow_owned.update(
+                    str(flow.get(key))
+                    for key in ("sensor", "pid", "left_motor", "right_motor")
+                    if flow.get(key)
+                )
+        include_flow_owned = bool(self.graph.get("project", {}).get("auto_dataflow_include_line_follower", False))
+        adjacency: dict[str, list[str]] = {}
+        for edge in self.graph.get("edges", []):
+            if edge.get("kind", "generic") not in {"data_flow", "control_flow"}:
+                continue
+            src = nodes_by_id.get(edge.get("from"))
+            dst = nodes_by_id.get(edge.get("to"))
+            if not src or not dst:
+                continue
+            if src.get("type") not in runtime_types or dst.get("type") not in runtime_types:
+                continue
+            if not include_flow_owned and (src["id"] in flow_owned or dst["id"] in flow_owned):
+                continue
+            adjacency.setdefault(src["id"], []).append(dst["id"])
+
+        starts = [
+            str(node["id"])
+            for node in self.graph.get("nodes", [])
+            if node.get("type") in {"sensor.custom", "sensor.line_tracking"} and node.get("id") in adjacency
+        ]
+        paths: list[list[str]] = []
+
+        def walk(node_id: str, path: list[str], seen: set[str]) -> None:
+            next_ids = [item for item in adjacency.get(node_id, []) if item not in seen]
+            if not next_ids:
+                if len(path) > 1:
+                    paths.append(path[:])
+                return
+            for next_id in next_ids:
+                walk(next_id, path + [next_id], seen | {next_id})
+
+        for start in starts:
+            walk(start, [start], {start})
+
+        unique: list[list[str]] = []
+        seen_keys: set[tuple[str, ...]] = set()
+        for path in paths:
+            key = tuple(path)
+            if key not in seen_keys:
+                seen_keys.add(key)
+                unique.append(path)
+        return unique
+
+    def runtime_plan_preview(self) -> dict[int, list[tuple[int, str]]]:
+        tick = int(self.graph.get("project", {}).get("tick_ms", 1))
+        nodes_by_id = {node.get("id"): node for node in self.graph.get("nodes", []) if node.get("id")}
+        plan: dict[int, list[tuple[int, str]]] = {}
+
+        def add(period: int, order: int, label: str) -> None:
+            plan.setdefault(max(int(period or tick), tick), []).append((order, label))
+
+        for index, path in enumerate(self.runtime_dataflow_preview_paths(), start=1):
+            period = max(int(nodes_by_id.get(node_id, {}).get("period_ms", tick) or tick) for node_id in path)
+            names = [c_ident(node_id) for node_id in path]
+            fn = "app_dataflow_" + "_".join(names[:4])
+            if len(names) > 4:
+                fn += f"_{index}"
+            add(period, 1, f"{fn}()    # 自动 dataflow: {' → '.join(path)}")
+
+        task_owned_flows: set[str] = {str(task.get("flow")) for task in self.graph.get("tasks", []) if task.get("flow")}
+        for node in self.graph.get("nodes", []):
+            if node.get("type") == "task.periodic" and node.get("flow"):
+                task_owned_flows.add(str(node.get("flow")))
+        for flow in self.graph.get("flows", []):
+            if flow.get("type") != "control.line_follower" or flow.get("id") in task_owned_flows:
+                continue
+            add(int(flow.get("period_ms", tick) or tick), 2, f"efw_line_follower_update({flow.get('id')})")
+
+        for task in self.graph.get("tasks", []):
+            target = f"{task.get('call')}()" if task.get("call") else f"flow:{task.get('flow')}"
+            add(int(task.get("period_ms", tick) or tick), 3, f"task {task.get('id')} → {target}")
+        for node in self.graph.get("nodes", []):
+            if node.get("type") == "task.periodic":
+                target = f"{node.get('call')}()" if node.get("call") else f"flow:{node.get('flow')}"
+                add(int(node.get("period_ms", tick) or tick), 3, f"task node {node.get('id')} → {target}")
+
+        machine_ids = sorted(str(node.get("id")) for node in self.graph.get("nodes", []) if node.get("type") == "state.machine" and node.get("id"))
+        for machine_id in machine_ids:
+            add(tick, 4, f"app_{c_ident(machine_id)}_tick()")
+        if any(node.get("type") == "module.custom" for node in self.graph.get("nodes", [])):
+            add(tick, 5, "efw_module_poll_all()")
+        return plan
+
     def refresh_schedule_view(self) -> None:
         if not hasattr(self, "schedule_output"):
             return
         tick = int(self.graph.get("project", {}).get("tick_ms", 1))
-        lines = [f"任务调度视图（tick = {tick} ms）", ""]
-        for flow in self.graph.get("flows", []):
-            lines.append(f"- flow {flow.get('id')} [{flow.get('type')}] period={flow.get('period_ms', tick)}ms")
-        for task in self.graph.get("tasks", []):
-            target = task.get("call") or f"flow:{task.get('flow')}"
-            lines.append(f"- task {task.get('id')} → {target} period={task.get('period_ms', tick)}ms")
-        for node in self.graph.get("nodes", []):
-            if node.get("type") == "task.periodic":
-                target = node.get("call") or f"flow:{node.get('flow')}"
-                lines.append(f"- node-task {node.get('id')} → {target} period={node.get('period_ms', tick)}ms")
-        if len(lines) == 2:
-            lines.append("暂无 flow/task。")
-        self.schedule_output.setPlainText("\n".join(lines))
+        lines = [f"运行计划预览（tick = {tick} ms）", ""]
+        plan = self.runtime_plan_preview()
+        if plan:
+            for period in sorted(plan):
+                lines.append(f"{period}ms:")
+                for order, label in sorted(plan[period], key=lambda item: (item[0], item[1])):
+                    lines.append(f"  {order}. {label}")
+                lines.append("")
+        else:
+            lines.append("暂无自动 dataflow、flow、task、state machine 或 module poll。")
+            lines.append("")
+        lines.append("调度语义：")
+        lines.append("  1. 自动 dataflow pipelines")
+        lines.append("  2. 未被 task.periodic 接管的 control.line_follower flows")
+        lines.append("  3. task.periodic")
+        lines.append("  4. state.machine tick")
+        lines.append("  5. efw_module_poll_all()")
+        lines.append("说明：同一周期按编号顺序生成；多个 dataflow 仅按发现顺序执行，不表达跨 pipeline 依赖。")
+        lines.append("如果需要严格顺序、共享状态仲裁或避免 task/module 重复处理，请收敛到 task.periodic 或 module.custom.poll。")
+        self.schedule_output.setPlainText("\n".join(lines).rstrip())
 
     def generation_readiness_lines(self) -> list[str]:
         missing_callbacks = self.missing_callback_requirements()

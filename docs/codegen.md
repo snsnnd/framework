@@ -131,6 +131,7 @@ Sensor → algorithm.* → actuator.*
 - 每条边的上游 output contract 必须等于下游 input contract。
 - `algorithm.pid` 输入固定要求 `efw_pid_input_t`，输出固定为 `efw_pid_output_t`；普通 Sensor 不能直接连 PID，必须先经过 processor.custom 转成 PID 输入结构。`actuator.motor` 输入固定为内置 `efw_motor_cmd_t` contract。
 - 每个参与自动 dataflow 的 contract 必须有 `size`；可在 `contracts[]`、processor `input_size/output_size` 或内置 contract 表中提供。内置表包含 `efw_line_tracking_data_t`、`efw_pid_input_t`、`efw_pid_output_t`、`efw_motor_cmd_t` 和常见标量类型；`sensor.line_tracking` 默认输出 `efw_line_tracking_data_t`。
+- 内置 contract 的 `size/align` 是 codegen 元数据，必须和 EFW C 头文件中的真实 `sizeof()` 同步维护。生成器会在 `app_bootstrap.c` 写入 `typedef char app_contract_size_check_*[(sizeof(type) == size) ? 1 : -1];`，让 C 编译阶段暴露 ABI/布局不一致；长期应由头文件 metadata 或提取脚本自动生成这些 size。
 - `APP_DATAFLOW_BUFFER_SIZE` 会取 `project.dataflow_buffer_size`、默认 64 和 contract 最大 size 的最大值。
 - 如果某个 sensor/pid/motor 已经属于 `control.line_follower` flow，默认不会再生成普通 dataflow；除非显式设置 `project.auto_dataflow_include_line_follower=true`。
 
@@ -146,7 +147,7 @@ Sensor → algorithm.* → actuator.*
 5. efw_module_poll_all()
 ```
 
-多个自动 dataflow 之间只按生成顺序执行，不表达跨 pipeline 依赖；如果需要严格顺序、共享状态仲裁或避免 task/module 重复处理同一份数据，应把该逻辑收敛到 `task.periodic` 或 `module.custom.poll`。生成的 `app_update_1ms()` 也会写入这段顺序注释，方便审查。
+多个自动 dataflow 之间只按生成顺序执行，不表达跨 pipeline 依赖；如果需要严格顺序、共享状态仲裁或避免 task/module 重复处理同一份数据，应把该逻辑收敛到 `task.periodic` 或 `module.custom.poll`。生成的 `app_update_1ms()` 也会写入这段顺序注释，方便审查；Studio 的“任务调度/运行计划”页会按周期预览同样的执行列表，例如 `1ms: app_dataflow_xxx() → efw_line_follower_update() → app_state_tick() → efw_module_poll_all()`，避免自动 dataflow 变成不可见的隐式调度。
 
 
 事件总线已经可以用三类卡片表达：
