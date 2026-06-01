@@ -124,9 +124,17 @@ Sensor → processor.custom → algorithm.*
 Sensor → algorithm.* → actuator.*
 ```
 
-每条链会生成一个 `static efw_status_t app_dataflow_<path>(void)`：先调用 `efw_sensor_read()`，再依次调用 `app_processor_<id>()` / `efw_algo_run()`，如果末端是 actuator 则调用 `efw_actuator_write()`。中间缓冲使用 `APP_DATAFLOW_BUFFER_SIZE`（可在 `project.dataflow_buffer_size` 配置，默认 64 字节）。链路周期取路径中节点 `period_ms` 的最大值，且仍必须是 `project.tick_ms` 的整数倍。
+每条链会生成一个 `static efw_status_t app_dataflow_<path>(void)`：先调用 `efw_sensor_read()`，再依次调用 `app_processor_<id>()` / `efw_algo_run()`，如果末端是 actuator 则调用 `efw_actuator_write()`。中间缓冲使用对齐 union：`raw[APP_DATAFLOW_BUFFER_SIZE]`、`float`、`uint32_t` 和 `void *` 共用一个 `app_dataflow_buffer_t`，避免把 `uint8_t*` 直接当结构体指针使用时出现常见对齐问题。
 
-与此不同，`processor.custom → project.module`、`project.module → processor.custom`、`event.subscriber → processor.custom`、`processor.custom → event.publisher` 这类连接主要是接口/事件语义：Studio tooltip 会说明“声明模块输入”“事件进入处理器”“发布意图”等效果，不会伪装成模块调用。
+自动 dataflow 不是只看字符串能连就生成：
+
+- 每条边的上游 output contract 必须等于下游 input contract。
+- `algorithm.pid` 输入固定要求 `efw_pid_input_t`，输出固定为 `efw_pid_output_t`；普通 Sensor 不能直接连 PID，必须先经过 processor.custom 转成 PID 输入结构。
+- 每个参与自动 dataflow 的 contract 必须有 `size`；可在 `contracts[]`、processor `input_size/output_size` 或内置 contract 表中提供。
+- `APP_DATAFLOW_BUFFER_SIZE` 会取 `project.dataflow_buffer_size`、默认 64 和 contract 最大 size 的最大值。
+- 如果某个 sensor/pid/motor 已经属于 `control.line_follower` flow，默认不会再生成普通 dataflow；除非显式设置 `project.auto_dataflow_include_line_follower=true`。
+
+链路周期取路径中节点 `period_ms` 的最大值，且仍必须是 `project.tick_ms` 的整数倍。与此不同，`processor.custom → project.module`、`project.module → processor.custom`、`event.subscriber → processor.custom`、`processor.custom → event.publisher` 这类连接主要是接口/事件语义：Studio tooltip 会说明“声明模块输入”“事件进入处理器”“发布意图”等效果，不会伪装成模块调用。
 
 事件总线已经可以用三类卡片表达：
 

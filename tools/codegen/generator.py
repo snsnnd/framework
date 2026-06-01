@@ -82,6 +82,8 @@ def dataflow_paths(ctx):
     may pass through processor.custom and algorithm.* nodes, and may optionally
     terminate at an actuator.  Branching creates one executable path per branch.
     """
+    if "runtime_dataflows" in ctx:
+        return [list(path) for path in ctx.get("runtime_dataflows", [])]
     runtime_types = {"sensor.custom", "sensor.line_tracking", "processor.custom", "algorithm.pid", "algorithm.custom", "actuator.motor", "actuator.custom"}
     adjacency = {}
     incoming = {}
@@ -119,6 +121,12 @@ def dataflow_period_ms(ctx, path):
     tick_ms = int(ctx["project"].get("tick_ms", 1))
     periods = [int(ctx["nodes_by_id"][node_id].get("period_ms", tick_ms)) for node_id in path]
     return max(periods or [tick_ms])
+
+
+def dataflow_buffer_size(ctx):
+    configured = int(ctx["project"].get("dataflow_buffer_size", 0) or 0)
+    contract_sizes = [int(contract.get("size", 0) or 0) for contract in ctx.get("contracts", {}).values()]
+    return max([configured, 64] + contract_sizes)
 
 
 def pin_expr(pin):
@@ -194,7 +202,7 @@ def render_topic_macros(ctx):
     for node in nodes_of(ctx, "event.topic"):
         lines.append(f"#define APP_TOPIC_{macro_ident(node['id'])} {int(node.get('topic_id', 0))}u")
     for index, contract in enumerate(sorted(ctx.get("contracts", {}).values(), key=lambda item: item["name"]), start=1):
-        lines.append(f"#define APP_CONTRACT_{macro_ident(contract['name'])} {index}u /* type={contract.get('type', 'custom')} */")
+        lines.append(f"#define APP_CONTRACT_{macro_ident(contract['name'])} {index}u /* c_type={contract.get('c_type', contract.get('type', 'custom'))}; size={int(contract.get('size', 0) or 0)} */")
     return "\n".join(lines)
 
 
@@ -235,7 +243,7 @@ def render_manifest(ctx):
 #define APP_ALGO_COUNT              {len(nodes_of(ctx, 'algorithm.pid') + nodes_of(ctx, 'algorithm.custom'))}
 #define APP_PROCESSOR_COUNT         {len(nodes_of(ctx, 'processor.custom'))}
 #define APP_DATAFLOW_PIPELINE_COUNT {len(dataflow_paths(ctx))}
-#define APP_DATAFLOW_BUFFER_SIZE    {int(ctx["project"].get("dataflow_buffer_size", 64))}u
+#define APP_DATAFLOW_BUFFER_SIZE    {dataflow_buffer_size(ctx)}u
 #define APP_MODULE_COUNT            {len(nodes_of(ctx, 'module.custom'))}
 #define APP_TOPIC_COUNT             {len(nodes_of(ctx, 'event.topic'))}
 #define APP_CONTRACT_COUNT          {len(ctx.get("contracts", {}))}
@@ -711,10 +719,10 @@ def render_dataflow_pipelines(ctx):
             fn += f"_{index}"
         parts.append(f"static efw_status_t {fn}(void) {{\n")
         parts.append("    efw_status_t s;\n")
-        parts.append("    uint8_t buf_a[APP_DATAFLOW_BUFFER_SIZE];\n")
-        parts.append("    uint8_t buf_b[APP_DATAFLOW_BUFFER_SIZE];\n")
-        current = "buf_a"
-        scratch = "buf_b"
+        parts.append("    app_dataflow_buffer_t buf_a;\n")
+        parts.append("    app_dataflow_buffer_t buf_b;\n")
+        current = "buf_a.raw"
+        scratch = "buf_b.raw"
         first = ctx["nodes_by_id"][path[0]]
         parts.append(f"    s = efw_sensor_read({c_str(first['id'])}, {current});\n")
         parts.append("    if (s != EFW_OK) return s;\n")
@@ -768,6 +776,13 @@ static const efw_module_ops_t *g_module_pool[APP_MODULE_COUNT];
 #endif
 
 static uint32_t g_app_elapsed_ms;
+
+typedef union {
+    uint8_t raw[APP_DATAFLOW_BUFFER_SIZE];
+    float align_f;
+    uint32_t align_u32;
+    void *align_ptr;
+} app_dataflow_buffer_t;
 
 """]
     parts.append(render_state_logic_blocks(ctx))

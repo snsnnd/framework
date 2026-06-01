@@ -35,6 +35,93 @@ def nodes_of(ctx: dict[str, Any], type_name: str) -> list[dict[str, Any]]:
     return [node for node in ctx["nodes"] if node.get("type") == type_name]
 
 
+BUILTIN_CONTRACTS: dict[str, dict[str, Any]] = {
+    "efw_pid_input_t": {"type": "efw_pid_input_t", "c_type": "efw_pid_input_t", "size": 16, "align": 4},
+    "efw_pid_output_t": {"type": "efw_pid_output_t", "c_type": "efw_pid_output_t", "size": 12, "align": 4},
+    "float": {"type": "float", "c_type": "float", "size": 4, "align": 4},
+    "uint8_t": {"type": "uint8_t", "c_type": "uint8_t", "size": 1, "align": 1},
+    "uint16_t": {"type": "uint16_t", "c_type": "uint16_t", "size": 2, "align": 2},
+    "uint32_t": {"type": "uint32_t", "c_type": "uint32_t", "size": 4, "align": 4},
+}
+
+
+def contract_name_for_output(node: dict[str, Any]) -> str:
+    node_type_name = str(node.get("type", ""))
+    if node_type_name == "processor.custom":
+        return str(node.get("output_contract") or node.get("output_type") or "custom")
+    if node_type_name == "algorithm.pid":
+        return "efw_pid_output_t"
+    if node_type_name == "algorithm.custom":
+        return str(node.get("output_contract") or node.get("output_type") or node.get("io_contract") or "custom")
+    if node_type_name.startswith("sensor."):
+        return str(node.get("output_contract") or node.get("output_type") or "custom")
+    return str(node.get("output_contract") or node.get("output_type") or "custom")
+
+
+def contract_name_for_input(node: dict[str, Any]) -> str:
+    node_type_name = str(node.get("type", ""))
+    if node_type_name == "processor.custom":
+        return str(node.get("input_contract") or node.get("input_type") or "custom")
+    if node_type_name == "algorithm.pid":
+        return "efw_pid_input_t"
+    if node_type_name == "algorithm.custom":
+        return str(node.get("input_contract") or node.get("input_type") or node.get("io_contract") or "custom")
+    if node_type_name == "actuator.motor":
+        return str(node.get("input_contract") or "efw_motor_cmd_t")
+    if node_type_name == "actuator.custom":
+        return str(node.get("input_contract") or node.get("input_type") or "custom")
+    return str(node.get("input_contract") or node.get("input_type") or "custom")
+
+
+def line_follower_node_ids(flows: list[dict[str, Any]]) -> set[str]:
+    result: set[str] = set()
+    for flow in flows:
+        if isinstance(flow, dict) and flow.get("type") == "control.line_follower":
+            result.update(str(flow.get(key, "")) for key in ["sensor", "pid", "left_motor", "right_motor"] if flow.get(key))
+    return result
+
+
+def runtime_dataflow_paths(raw_nodes: list[dict[str, Any]], raw_edges: list[dict[str, Any]], nodes_by_id: dict[str, dict[str, Any]], raw_flows: list[dict[str, Any]], project: dict[str, Any]) -> list[list[str]]:
+    runtime_types = {"sensor.custom", "sensor.line_tracking", "processor.custom", "algorithm.pid", "algorithm.custom", "actuator.motor", "actuator.custom"}
+    flow_owned = line_follower_node_ids(raw_flows)
+    include_flow_owned = bool(project.get("auto_dataflow_include_line_follower", False))
+    adjacency: dict[str, list[str]] = {}
+    for edge in raw_edges:
+        if edge.get("kind", "generic") not in {"data_flow", "control_flow"}:
+            continue
+        src = nodes_by_id.get(edge.get("from"))
+        dst = nodes_by_id.get(edge.get("to"))
+        if not src or not dst:
+            continue
+        if src.get("type") not in runtime_types or dst.get("type") not in runtime_types:
+            continue
+        if not include_flow_owned and (src.get("id") in flow_owned or dst.get("id") in flow_owned):
+            continue
+        adjacency.setdefault(src["id"], []).append(dst["id"])
+    starts = [node["id"] for node in raw_nodes if node.get("type") in {"sensor.custom", "sensor.line_tracking"} and node.get("id") in adjacency]
+    paths: list[list[str]] = []
+
+    def walk(node_id: str, path: list[str], seen: set[str]) -> None:
+        next_ids = [item for item in adjacency.get(node_id, []) if item not in seen]
+        if not next_ids:
+            if len(path) > 1:
+                paths.append(path[:])
+            return
+        for next_id in next_ids:
+            walk(next_id, path + [next_id], seen | {next_id})
+
+    for start in starts:
+        walk(start, [start], {start})
+    unique: list[list[str]] = []
+    seen_keys: set[tuple[str, ...]] = set()
+    for path in paths:
+        key = tuple(path)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            unique.append(path)
+    return unique
+
+
 def validate_contract_fields(node: dict[str, Any]) -> None:
     contract = NODE_CONTRACTS[node["type"]]
     for field in contract.get("required", []):
@@ -197,26 +284,44 @@ def apply_edge_semantics(raw_edges: list[dict[str, Any]], nodes_by_id: dict[str,
 def contract_registry(graph: dict[str, Any], nodes_by_id: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
     registry: dict[str, dict[str, Any]] = {}
 
-    def add_contract(name: object, c_type: object = "custom", producer: object = "", consumer: object = "") -> None:
+    def add_contract(name: object, c_type: object = "custom", producer: object = "", consumer: object = "", size: object = None, align: object = None) -> None:
         if not name:
             return
         key = str(name)
-        item = registry.setdefault(key, {"name": key, "type": str(c_type or "custom"), "producers": [], "consumers": []})
-        if c_type and item.get("type") in {"", "custom"}:
+        builtin = BUILTIN_CONTRACTS.get(key, {})
+        resolved_type = str(c_type or builtin.get("type") or key or "custom")
+        item = registry.setdefault(
+            key,
+            {
+                "name": key,
+                "type": resolved_type,
+                "c_type": str(builtin.get("c_type") or resolved_type),
+                "size": int(builtin.get("size", 0)),
+                "align": int(builtin.get("align", 1)),
+                "producers": [],
+                "consumers": [],
+            },
+        )
+        if c_type and item.get("type") in {"", "custom", key}:
             item["type"] = str(c_type)
+            item["c_type"] = str(c_type)
+        if size not in (None, ""):
+            item["size"] = int(size)
+        if align not in (None, ""):
+            item["align"] = int(align)
         if producer and producer not in item["producers"]:
             item["producers"].append(producer)
         if consumer and consumer not in item["consumers"]:
             item["consumers"].append(consumer)
 
     for item in graph.get("contracts", []) or []:
-        if isinstance(item, dict):
-            add_contract(item.get("name"), item.get("type", "custom"), item.get("producer", ""), item.get("consumer", ""))
+        require(isinstance(item, dict), "contracts[] entries must be objects")
+        add_contract(item.get("name"), item.get("c_type") or item.get("type", "custom"), item.get("producer", ""), item.get("consumer", ""), item.get("size"), item.get("align"))
     for node in nodes_by_id.values():
         node_type_name = node.get("type")
         if node_type_name == "processor.custom":
-            add_contract(node.get("input_contract"), node.get("input_type", "custom"), consumer=node.get("id"))
-            add_contract(node.get("output_contract"), node.get("output_type", "custom"), producer=node.get("id"))
+            add_contract(node.get("input_contract"), node.get("input_type", "custom"), consumer=node.get("id"), size=node.get("input_size"), align=node.get("input_align"))
+            add_contract(node.get("output_contract"), node.get("output_type", "custom"), producer=node.get("id"), size=node.get("output_size"), align=node.get("output_align"))
         elif node_type_name == "project.module":
             for name in node.get("inputs", []) or []:
                 add_contract(name, "custom", consumer=node.get("id"))
@@ -225,11 +330,33 @@ def contract_registry(graph: dict[str, Any], nodes_by_id: dict[str, dict[str, An
         elif node_type_name == "event.topic":
             add_contract(node.get("id"), node.get("payload_type", "custom"), producer=node.get("id"), consumer=node.get("id"))
         else:
-            if node.get("output_type"):
-                add_contract(node.get("output_type"), node.get("output_type"), producer=node.get("id"))
-            if node.get("input_type"):
-                add_contract(node.get("input_type"), node.get("input_type"), consumer=node.get("id"))
+            if node.get("output_contract") or node.get("output_type"):
+                add_contract(contract_name_for_output(node), node.get("output_type") or contract_name_for_output(node), producer=node.get("id"), size=node.get("output_size"), align=node.get("output_align"))
+            if node.get("input_contract") or node.get("input_type"):
+                add_contract(contract_name_for_input(node), node.get("input_type") or contract_name_for_input(node), consumer=node.get("id"), size=node.get("input_size"), align=node.get("input_align"))
     return registry
+
+
+def validate_runtime_dataflows(paths: list[list[str]], nodes_by_id: dict[str, dict[str, Any]], contracts: dict[str, dict[str, Any]], project: dict[str, Any], tick_ms: int) -> None:
+    for path in paths:
+        for node_id in path:
+            period = int(nodes_by_id[node_id].get("period_ms", tick_ms))
+            require(period > 0, f"{node_id}.period_ms must be > 0")
+            require(period % tick_ms == 0, f"{node_id}.period_ms must be a multiple of project.tick_ms")
+        for src_id, dst_id in zip(path, path[1:]):
+            src = nodes_by_id[src_id]
+            dst = nodes_by_id[dst_id]
+            out_contract = contract_name_for_output(src)
+            in_contract = contract_name_for_input(dst)
+            require(out_contract == in_contract, f"dataflow contract mismatch: {src_id} outputs {out_contract}, but {dst_id} expects {in_contract}")
+            if dst.get("type") == "algorithm.pid":
+                require(in_contract == "efw_pid_input_t", f"{dst_id} is algorithm.pid and must receive efw_pid_input_t; add a processor.custom adapter before PID")
+            if src.get("type") == "algorithm.pid":
+                require(out_contract == "efw_pid_output_t", f"{src_id} is algorithm.pid and must output efw_pid_output_t")
+            for contract_name in {out_contract, in_contract}:
+                contract = contracts.get(contract_name)
+                require(contract is not None, f"dataflow references unknown contract: {contract_name}")
+                require(int(contract.get("size", 0)) > 0, f"contract {contract_name} needs size for automatic dataflow; add contracts[].size or node input/output_size")
 
 
 def validate_graph(graph: dict[str, Any]) -> dict[str, Any]:
@@ -356,6 +483,9 @@ def validate_graph(graph: dict[str, Any]) -> dict[str, Any]:
             for name in node.get("inputs", []) + node.get("outputs", []):
                 require(str(name) in contracts, f"{node['id']} references unknown contract: {name}")
 
+    runtime_paths = runtime_dataflow_paths(raw_nodes, raw_edges, nodes_by_id, raw_flows, project)
+    validate_runtime_dataflows(runtime_paths, nodes_by_id, contracts, project, tick_ms)
+
     flows = []
     flow_ids = set()
     for flow in raw_flows:
@@ -411,6 +541,7 @@ def validate_graph(graph: dict[str, Any]) -> dict[str, Any]:
         "tasks": tasks,
         "edges": raw_edges,
         "contracts": contracts,
+        "runtime_dataflows": runtime_paths,
         "custom_files": custom_files,
         "board_adapters": board_adapters,
     }

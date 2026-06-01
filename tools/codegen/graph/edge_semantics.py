@@ -278,7 +278,7 @@ EDGE_EFFECT_DESCRIPTIONS = {
     "module_to_processor_input": "声明接口：把 project.module 的输出/公共契约作为 processor 输入；不会读取模块实现。",
     "event_to_processor": "事件订阅输出进入 processor；实际事件回调仍由 subscriber callback 承接。",
     "processor_to_event": "发布意图：把 processor 输出声明为 event.publisher.source；实际 publish 仍在用户代码中触发。",
-    "runtime_dataflow": "运行管线：codegen 会按 Sensor → Processor/Algorithm → Actuator 生成周期执行链。",
+    "runtime_dataflow": "运行管线：contract 名称、size 和 PID 输入/输出规则校验通过后，codegen 会按 Sensor → Processor/Algorithm → Actuator 生成周期执行链。",
     "hardware_dependency": "硬件依赖：写入 HAL 绑定字段或表达 HAL/COMM 到设备的依赖。",
     "schedule": "调度关系：Task 周期调度模块 poll、flow 或用户回调。",
     "event": "事件关系：写入 topic/source/target 字段；发布动作仍由用户代码决定。",

@@ -79,7 +79,7 @@ NODE_CONTRACTS: dict[str, dict[str, Any]] = {
         "generation": GEN_GLUE,
         "owner": "user-callback",
         "required": ["id", "type", "process"],
-        "optional": ["input_contract", "output_contract", "input_type", "output_type", "ctx", "module", "description"],
+        "optional": ["input_contract", "output_contract", "input_type", "output_type", "input_size", "output_size", "input_align", "output_align", "ctx", "module", "description"],
         "callbacks": {"process": "processor.process"},
         "generated": ["processor callback extern", "data-contract glue wrapper"],
         "boundary": "Codegen exposes a typed data-contract boundary and calls the user process callback; EFW core is unchanged.",
