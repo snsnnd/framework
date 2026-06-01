@@ -850,7 +850,9 @@ static efw_status_t app_bind_handles(void) {
     for machine_id in states_by_machine(ctx):
         parts.append(f"    s = app_{c_ident(machine_id)}_register();\n    if (s != EFW_OK) return s;\n")
     parts.append("    return EFW_OK;\n}\n\n")
-    parts.append("static efw_status_t app_update_1ms(void) {\n    efw_status_t s;\n    g_app_elapsed_ms += APP_PROJECT_TICK_MS;\n")
+    parts.append("static efw_status_t app_update_1ms(void) {\n    efw_status_t s;\n    g_app_elapsed_ms += APP_PROJECT_TICK_MS;\n    /* Scheduler order: generated dataflow pipelines -> line_follower flows -> tasks -> state machines -> module poll_all. */\n    /* Dataflow pipelines are independent leaf paths discovered from graph.edges; use tasks/modules for explicit cross-pipeline ordering. */\n")
+    if dataflow_paths(ctx):
+        parts.append("    /* 1. Generated runtime dataflow pipelines. */\n")
     for index, path in enumerate(dataflow_paths(ctx), start=1):
         names = [c_ident(node_id) for node_id in path]
         fn = "app_dataflow_" + "_".join(names[:4])
@@ -860,6 +862,8 @@ static efw_status_t app_bind_handles(void) {
         condition = "1" if period <= int(ctx["project"].get("tick_ms", 1)) else f"(g_app_elapsed_ms % {period}u) == 0u"
         parts.append(f"    if ({condition}) {{\n        s = {fn}();\n        if (s != EFW_OK) return s;\n    }}\n")
     flow_tasks = {task.get("flow") for task in ctx["tasks"] if task.get("flow")}
+    if ctx["flows"]:
+        parts.append("    /* 2. control.line_follower flows not owned by task.periodic. */\n")
     for flow in ctx["flows"]:
         if flow["id"] in flow_tasks:
             continue
@@ -867,6 +871,8 @@ static efw_status_t app_bind_handles(void) {
         period = int(flow.get("period_ms", ctx["project"].get("tick_ms", 1)))
         condition = "1" if period <= int(ctx["project"].get("tick_ms", 1)) else f"(g_app_elapsed_ms % {period}u) == 0u"
         parts.append(f"    if ({condition}) {{\n        s = efw_line_follower_update(&g_{ident}, 0, 0);\n        if (s != EFW_OK) return s;\n    }}\n")
+    if ctx["tasks"]:
+        parts.append("    /* 3. Explicit task.periodic entries. */\n")
     for task in ctx["tasks"]:
         period = int(task.get("period_ms", ctx["project"].get("tick_ms", 1)))
         condition = "1" if period <= int(ctx["project"].get("tick_ms", 1)) else f"(g_app_elapsed_ms % {period}u) == 0u"
@@ -875,9 +881,12 @@ static efw_status_t app_bind_handles(void) {
         elif task.get("flow"):
             ident = c_ident(task["flow"])
             parts.append(f"    if ({condition}) {{\n        s = efw_line_follower_update(&g_{ident}, 0, 0);\n        if (s != EFW_OK) return s;\n    }}\n")
+    if states_by_machine(ctx):
+        parts.append("    /* 4. State-machine ticks. */\n")
     for machine_id in states_by_machine(ctx):
         parts.append(f"    s = app_{c_ident(machine_id)}_tick();\n    if (s != EFW_OK) return s;\n")
     if nodes_of(ctx, "module.custom"):
+        parts.append("    /* 5. Module lifecycle poll_all. */\n")
         parts.append("    s = efw_module_poll_all();\n    if (s != EFW_OK) return s;\n")
     parts.append("    return EFW_OK;\n}\n\n")
     parts.append("""static const efw_app_manifest_t g_app_manifest = {

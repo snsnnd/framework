@@ -38,6 +38,8 @@ def nodes_of(ctx: dict[str, Any], type_name: str) -> list[dict[str, Any]]:
 BUILTIN_CONTRACTS: dict[str, dict[str, Any]] = {
     "efw_pid_input_t": {"type": "efw_pid_input_t", "c_type": "efw_pid_input_t", "size": 16, "align": 4},
     "efw_pid_output_t": {"type": "efw_pid_output_t", "c_type": "efw_pid_output_t", "size": 12, "align": 4},
+    "efw_motor_cmd_t": {"type": "efw_motor_cmd_t", "c_type": "efw_motor_cmd_t", "size": 8, "align": 4},
+    "efw_line_tracking_data_t": {"type": "efw_line_tracking_data_t", "c_type": "efw_line_tracking_data_t", "size": 18, "align": 2},
     "float": {"type": "float", "c_type": "float", "size": 4, "align": 4},
     "uint8_t": {"type": "uint8_t", "c_type": "uint8_t", "size": 1, "align": 1},
     "uint16_t": {"type": "uint16_t", "c_type": "uint16_t", "size": 2, "align": 2},
@@ -53,6 +55,8 @@ def contract_name_for_output(node: dict[str, Any]) -> str:
         return "efw_pid_output_t"
     if node_type_name == "algorithm.custom":
         return str(node.get("output_contract") or node.get("output_type") or node.get("io_contract") or "custom")
+    if node_type_name == "sensor.line_tracking":
+        return str(node.get("output_contract") or "efw_line_tracking_data_t")
     if node_type_name.startswith("sensor."):
         return str(node.get("output_contract") or node.get("output_type") or "custom")
     return str(node.get("output_contract") or node.get("output_type") or "custom")
@@ -282,7 +286,18 @@ def apply_edge_semantics(raw_edges: list[dict[str, Any]], nodes_by_id: dict[str,
 
 
 def contract_registry(graph: dict[str, Any], nodes_by_id: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    registry: dict[str, dict[str, Any]] = {}
+    registry: dict[str, dict[str, Any]] = {
+        name: {
+            "name": name,
+            "type": str(meta.get("type", name)),
+            "c_type": str(meta.get("c_type", meta.get("type", name))),
+            "size": int(meta.get("size", 0)),
+            "align": int(meta.get("align", 1)),
+            "producers": [],
+            "consumers": [],
+        }
+        for name, meta in BUILTIN_CONTRACTS.items()
+    }
 
     def add_contract(name: object, c_type: object = "custom", producer: object = "", consumer: object = "", size: object = None, align: object = None) -> None:
         if not name:
@@ -302,7 +317,7 @@ def contract_registry(graph: dict[str, Any], nodes_by_id: dict[str, dict[str, An
                 "consumers": [],
             },
         )
-        if c_type and item.get("type") in {"", "custom", key}:
+        if c_type and str(c_type) != "custom" and item.get("type") in {"", "custom", key}:
             item["type"] = str(c_type)
             item["c_type"] = str(c_type)
         if size not in (None, ""):
@@ -322,6 +337,13 @@ def contract_registry(graph: dict[str, Any], nodes_by_id: dict[str, dict[str, An
         if node_type_name == "processor.custom":
             add_contract(node.get("input_contract"), node.get("input_type", "custom"), consumer=node.get("id"), size=node.get("input_size"), align=node.get("input_align"))
             add_contract(node.get("output_contract"), node.get("output_type", "custom"), producer=node.get("id"), size=node.get("output_size"), align=node.get("output_align"))
+        elif node_type_name == "sensor.line_tracking":
+            add_contract(contract_name_for_output(node), "efw_line_tracking_data_t", producer=node.get("id"))
+        elif node_type_name == "actuator.motor":
+            add_contract(contract_name_for_input(node), "efw_motor_cmd_t", consumer=node.get("id"))
+        elif node_type_name == "algorithm.pid":
+            add_contract("efw_pid_input_t", "efw_pid_input_t", consumer=node.get("id"))
+            add_contract("efw_pid_output_t", "efw_pid_output_t", producer=node.get("id"))
         elif node_type_name == "project.module":
             for name in node.get("inputs", []) or []:
                 add_contract(name, "custom", consumer=node.get("id"))

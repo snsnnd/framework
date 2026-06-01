@@ -129,12 +129,25 @@ Sensor → algorithm.* → actuator.*
 自动 dataflow 不是只看字符串能连就生成：
 
 - 每条边的上游 output contract 必须等于下游 input contract。
-- `algorithm.pid` 输入固定要求 `efw_pid_input_t`，输出固定为 `efw_pid_output_t`；普通 Sensor 不能直接连 PID，必须先经过 processor.custom 转成 PID 输入结构。
-- 每个参与自动 dataflow 的 contract 必须有 `size`；可在 `contracts[]`、processor `input_size/output_size` 或内置 contract 表中提供。
+- `algorithm.pid` 输入固定要求 `efw_pid_input_t`，输出固定为 `efw_pid_output_t`；普通 Sensor 不能直接连 PID，必须先经过 processor.custom 转成 PID 输入结构。`actuator.motor` 输入固定为内置 `efw_motor_cmd_t` contract。
+- 每个参与自动 dataflow 的 contract 必须有 `size`；可在 `contracts[]`、processor `input_size/output_size` 或内置 contract 表中提供。内置表包含 `efw_line_tracking_data_t`、`efw_pid_input_t`、`efw_pid_output_t`、`efw_motor_cmd_t` 和常见标量类型；`sensor.line_tracking` 默认输出 `efw_line_tracking_data_t`。
 - `APP_DATAFLOW_BUFFER_SIZE` 会取 `project.dataflow_buffer_size`、默认 64 和 contract 最大 size 的最大值。
 - 如果某个 sensor/pid/motor 已经属于 `control.line_follower` flow，默认不会再生成普通 dataflow；除非显式设置 `project.auto_dataflow_include_line_follower=true`。
 
 链路周期取路径中节点 `period_ms` 的最大值，且仍必须是 `project.tick_ms` 的整数倍。与此不同，`processor.custom → project.module`、`project.module → processor.custom`、`event.subscriber → processor.custom`、`processor.custom → event.publisher` 这类连接主要是接口/事件语义：Studio tooltip 会说明“声明模块输入”“事件进入处理器”“发布意图”等效果，不会伪装成模块调用。
+
+调度顺序固定为：
+
+```text
+1. 自动生成的 dataflow pipelines
+2. 未被 task.periodic 接管的 control.line_follower flows
+3. task.periodic
+4. state.machine tick
+5. efw_module_poll_all()
+```
+
+多个自动 dataflow 之间只按生成顺序执行，不表达跨 pipeline 依赖；如果需要严格顺序、共享状态仲裁或避免 task/module 重复处理同一份数据，应把该逻辑收敛到 `task.periodic` 或 `module.custom.poll`。生成的 `app_update_1ms()` 也会写入这段顺序注释，方便审查。
+
 
 事件总线已经可以用三类卡片表达：
 

@@ -187,10 +187,10 @@ def property_choices(graph: dict[str, Any], node: dict[str, Any], key: str, node
         return ["custom", "efw_pid", "scalar", "vector", "event"]
     if key in {"input_contract", "output_contract"}:
         custom_types = [str(n.get("name", "")) for n in graph.get("nodes", []) if n.get("type") in {"data.enum", "data.struct"} and n.get("name")]
-        return ["", "raw_bytes", "efw_pid_input_t", "efw_pid_output_t", "line_error", "speed_feedback", "control_cmd", "event_payload", "custom"] + custom_types
+        return ["", "raw_bytes", "efw_line_tracking_data_t", "efw_pid_input_t", "efw_pid_output_t", "efw_motor_cmd_t", "line_error", "speed_feedback", "control_cmd", "event_payload", "custom"] + custom_types
     if key in {"input_type", "output_type", "payload_type", "data_type"}:
         custom_types = [str(n.get("name", "")) for n in graph.get("nodes", []) if n.get("type") in {"data.enum", "data.struct"} and n.get("name")]
-        return ["", "bool", "int", "uint8_t", "uint16_t", "uint32_t", "float", "double", "efw_pid_input_t", "efw_pid_output_t", "struct", "enum", "custom"] + custom_types
+        return ["", "bool", "int", "uint8_t", "uint16_t", "uint32_t", "float", "double", "efw_line_tracking_data_t", "efw_pid_input_t", "efw_pid_output_t", "efw_motor_cmd_t", "struct", "enum", "custom"] + custom_types
     if key in {"anti_windup"}:
         return ["true", "false"]
     return []
