@@ -273,6 +273,36 @@ EDGE_KIND_LABELS = {
     "generic": "通用连接",
 }
 
+EDGE_EFFECT_DESCRIPTIONS = {
+    "processor_to_module_input": "声明接口：把 processor 的 output_contract 追加到目标 project.module.inputs；不会调用模块。",
+    "module_to_processor_input": "声明接口：把 project.module 的输出/公共契约作为 processor 输入；不会读取模块实现。",
+    "event_to_processor": "事件订阅输出进入 processor；实际事件回调仍由 subscriber callback 承接。",
+    "processor_to_event": "发布意图：把 processor 输出声明为 event.publisher.source；实际 publish 仍在用户代码中触发。",
+    "runtime_dataflow": "运行管线：codegen 会按 Sensor → Processor/Algorithm → Actuator 生成周期执行链。",
+    "hardware_dependency": "硬件依赖：写入 HAL 绑定字段或表达 HAL/COMM 到设备的依赖。",
+    "schedule": "调度关系：Task 周期调度模块 poll、flow 或用户回调。",
+    "event": "事件关系：写入 topic/source/target 字段；发布动作仍由用户代码决定。",
+    "contains": "归属关系：只影响 Studio 页面/模块组织，不生成独立编译单元。",
+}
+
+
+def edge_effect_description(src: dict[str, Any], dst: dict[str, Any], from_port: str | None = None, to_port: str | None = None) -> str:
+    src_type = str(src.get("type", ""))
+    dst_type = str(dst.get("type", ""))
+    if src_type == "processor.custom" and dst_type == "project.module":
+        return EDGE_EFFECT_DESCRIPTIONS["processor_to_module_input"]
+    if src_type == "project.module" and dst_type == "processor.custom":
+        return EDGE_EFFECT_DESCRIPTIONS["module_to_processor_input"]
+    if src_type == "event.subscriber" and dst_type == "processor.custom":
+        return EDGE_EFFECT_DESCRIPTIONS["event_to_processor"]
+    if src_type == "processor.custom" and dst_type == "event.publisher":
+        return EDGE_EFFECT_DESCRIPTIONS["processor_to_event"]
+    if src_type.startswith("sensor.") or dst_type.startswith(("processor.", "algorithm.", "actuator.")):
+        if from_port in {"sensor", "processor", "algorithm", "control"} or to_port in {"sensor", "processor", "algorithm", "control"}:
+            return EDGE_EFFECT_DESCRIPTIONS["runtime_dataflow"]
+    kind = semantic_edge_kind(src, dst, from_port, to_port)
+    return EDGE_EFFECT_DESCRIPTIONS.get(kind, "说明关系：保存为 graph.edges，供校验、文档和后续生成能力使用。")
+
 
 def semantic_edge_kind(src: dict[str, Any], dst: dict[str, Any], from_port: str | None = None, to_port: str | None = None) -> str:
     """Return a normalized edge.kind instead of UI-only labels like selected/port."""

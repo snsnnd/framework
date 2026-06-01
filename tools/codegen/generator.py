@@ -55,6 +55,72 @@ def nodes_of(ctx, type_name):
     return [node for node in ctx["nodes"] if node.get("type") == type_name]
 
 
+def graph_edges_of(ctx, kinds=None):
+    selected = []
+    kind_set = set(kinds or [])
+    for edge in ctx.get("edges", []):
+        if not isinstance(edge, dict):
+            continue
+        if kinds and edge.get("kind", "generic") not in kind_set:
+            continue
+        src = ctx["nodes_by_id"].get(edge.get("from"))
+        dst = ctx["nodes_by_id"].get(edge.get("to"))
+        if src and dst:
+            selected.append((edge, src, dst))
+    return selected
+
+
+def dataflow_edges(ctx):
+    return graph_edges_of(ctx, {"data_flow", "control_flow"})
+
+
+def dataflow_paths(ctx):
+    """Return executable Sensor -> Processor/Algorithm -> Actuator paths.
+
+    The graph can still document module interfaces and event relations, but only
+    concrete runtime-capable nodes are scheduled here.  A path starts at a sensor,
+    may pass through processor.custom and algorithm.* nodes, and may optionally
+    terminate at an actuator.  Branching creates one executable path per branch.
+    """
+    runtime_types = {"sensor.custom", "sensor.line_tracking", "processor.custom", "algorithm.pid", "algorithm.custom", "actuator.motor", "actuator.custom"}
+    adjacency = {}
+    incoming = {}
+    for _edge, src, dst in dataflow_edges(ctx):
+        if src.get("type") not in runtime_types or dst.get("type") not in runtime_types:
+            continue
+        adjacency.setdefault(src["id"], []).append(dst["id"])
+        incoming.setdefault(dst["id"], []).append(src["id"])
+    starts = [node["id"] for node in ctx["nodes"] if node.get("type") in {"sensor.custom", "sensor.line_tracking"} and node.get("id") in adjacency]
+    paths = []
+
+    def walk(node_id, path, seen):
+        next_ids = [item for item in adjacency.get(node_id, []) if item not in seen]
+        if not next_ids:
+            if len(path) > 1:
+                paths.append(path[:])
+            return
+        for next_id in next_ids:
+            walk(next_id, path + [next_id], seen | {next_id})
+
+    for start in starts:
+        walk(start, [start], {start})
+    # Keep longest/leaf paths only; prefixes are implementation details of a longer executable chain.
+    unique = []
+    seen_keys = set()
+    for path in paths:
+        key = tuple(path)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            unique.append(path)
+    return unique
+
+
+def dataflow_period_ms(ctx, path):
+    tick_ms = int(ctx["project"].get("tick_ms", 1))
+    periods = [int(ctx["nodes_by_id"][node_id].get("period_ms", tick_ms)) for node_id in path]
+    return max(periods or [tick_ms])
+
+
 def pin_expr(pin):
     port = str(pin.get("port", "A")).upper()
     require(port in {"A", "B", "C"}, f"unsupported GPIO port: {port}")
@@ -127,6 +193,8 @@ def render_topic_macros(ctx):
     lines = []
     for node in nodes_of(ctx, "event.topic"):
         lines.append(f"#define APP_TOPIC_{macro_ident(node['id'])} {int(node.get('topic_id', 0))}u")
+    for index, contract in enumerate(sorted(ctx.get("contracts", {}).values(), key=lambda item: item["name"]), start=1):
+        lines.append(f"#define APP_CONTRACT_{macro_ident(contract['name'])} {index}u /* type={contract.get('type', 'custom')} */")
     return "\n".join(lines)
 
 
@@ -166,8 +234,11 @@ def render_manifest(ctx):
 #define APP_ACTUATOR_COUNT          {len(nodes_of(ctx, 'actuator.motor') + nodes_of(ctx, 'actuator.custom'))}
 #define APP_ALGO_COUNT              {len(nodes_of(ctx, 'algorithm.pid') + nodes_of(ctx, 'algorithm.custom'))}
 #define APP_PROCESSOR_COUNT         {len(nodes_of(ctx, 'processor.custom'))}
+#define APP_DATAFLOW_PIPELINE_COUNT {len(dataflow_paths(ctx))}
+#define APP_DATAFLOW_BUFFER_SIZE    {int(ctx["project"].get("dataflow_buffer_size", 64))}u
 #define APP_MODULE_COUNT            {len(nodes_of(ctx, 'module.custom'))}
 #define APP_TOPIC_COUNT             {len(nodes_of(ctx, 'event.topic'))}
+#define APP_CONTRACT_COUNT          {len(ctx.get("contracts", {}))}
 #define APP_STATE_COUNT             {len(nodes_of(ctx, 'state.state'))}
 
 {render_topic_macros(ctx)}
@@ -631,6 +702,41 @@ def render_state_logic_blocks(ctx):
             parts.append("}\n\n")
     return "".join(parts)
 
+def render_dataflow_pipelines(ctx):
+    parts = []
+    for index, path in enumerate(dataflow_paths(ctx), start=1):
+        names = [c_ident(node_id) for node_id in path]
+        fn = "app_dataflow_" + "_".join(names[:4])
+        if len(names) > 4:
+            fn += f"_{index}"
+        parts.append(f"static efw_status_t {fn}(void) {{\n")
+        parts.append("    efw_status_t s;\n")
+        parts.append("    uint8_t buf_a[APP_DATAFLOW_BUFFER_SIZE];\n")
+        parts.append("    uint8_t buf_b[APP_DATAFLOW_BUFFER_SIZE];\n")
+        current = "buf_a"
+        scratch = "buf_b"
+        first = ctx["nodes_by_id"][path[0]]
+        parts.append(f"    s = efw_sensor_read({c_str(first['id'])}, {current});\n")
+        parts.append("    if (s != EFW_OK) return s;\n")
+        for node_id in path[1:]:
+            node = ctx["nodes_by_id"][node_id]
+            node_type = node.get("type")
+            if node_type == "processor.custom":
+                parts.append(f"    s = app_processor_{c_ident(node['id'])}({current}, {scratch});\n")
+                parts.append("    if (s != EFW_OK) return s;\n")
+                current, scratch = scratch, current
+            elif node_type in {"algorithm.pid", "algorithm.custom"}:
+                parts.append(f"    s = efw_algo_run({c_str(node['id'])}, {current}, {scratch});\n")
+                parts.append("    if (s != EFW_OK) return s;\n")
+                current, scratch = scratch, current
+            elif node_type in {"actuator.motor", "actuator.custom"}:
+                parts.append(f"    s = efw_actuator_write({c_str(node['id'])}, {current});\n")
+                parts.append("    if (s != EFW_OK) return s;\n")
+        parts.append("    return EFW_OK;\n")
+        parts.append("}\n\n")
+    return "".join(parts)
+
+
 def render_bootstrap_c(ctx):
     parts = ["""
 /**
@@ -665,6 +771,7 @@ static uint32_t g_app_elapsed_ms;
 
 """]
     parts.append(render_state_logic_blocks(ctx))
+    parts.append(render_dataflow_pipelines(ctx))
     for flow in ctx["flows"]:
         ident = c_ident(flow["id"])
         weights = ", ".join(c_float(value) for value in flow["weights"])
@@ -729,6 +836,14 @@ static efw_status_t app_bind_handles(void) {
         parts.append(f"    s = app_{c_ident(machine_id)}_register();\n    if (s != EFW_OK) return s;\n")
     parts.append("    return EFW_OK;\n}\n\n")
     parts.append("static efw_status_t app_update_1ms(void) {\n    efw_status_t s;\n    g_app_elapsed_ms += APP_PROJECT_TICK_MS;\n")
+    for index, path in enumerate(dataflow_paths(ctx), start=1):
+        names = [c_ident(node_id) for node_id in path]
+        fn = "app_dataflow_" + "_".join(names[:4])
+        if len(names) > 4:
+            fn += f"_{index}"
+        period = dataflow_period_ms(ctx, path)
+        condition = "1" if period <= int(ctx["project"].get("tick_ms", 1)) else f"(g_app_elapsed_ms % {period}u) == 0u"
+        parts.append(f"    if ({condition}) {{\n        s = {fn}();\n        if (s != EFW_OK) return s;\n    }}\n")
     flow_tasks = {task.get("flow") for task in ctx["tasks"] if task.get("flow")}
     for flow in ctx["flows"]:
         if flow["id"] in flow_tasks:

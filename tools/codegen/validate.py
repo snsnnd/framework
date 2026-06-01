@@ -194,6 +194,44 @@ def apply_edge_semantics(raw_edges: list[dict[str, Any]], nodes_by_id: dict[str,
         apply_pair_semantics(src, dst, graph_view, c_ident_func=c_ident, overwrite=False)
 
 
+def contract_registry(graph: dict[str, Any], nodes_by_id: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
+    registry: dict[str, dict[str, Any]] = {}
+
+    def add_contract(name: object, c_type: object = "custom", producer: object = "", consumer: object = "") -> None:
+        if not name:
+            return
+        key = str(name)
+        item = registry.setdefault(key, {"name": key, "type": str(c_type or "custom"), "producers": [], "consumers": []})
+        if c_type and item.get("type") in {"", "custom"}:
+            item["type"] = str(c_type)
+        if producer and producer not in item["producers"]:
+            item["producers"].append(producer)
+        if consumer and consumer not in item["consumers"]:
+            item["consumers"].append(consumer)
+
+    for item in graph.get("contracts", []) or []:
+        if isinstance(item, dict):
+            add_contract(item.get("name"), item.get("type", "custom"), item.get("producer", ""), item.get("consumer", ""))
+    for node in nodes_by_id.values():
+        node_type_name = node.get("type")
+        if node_type_name == "processor.custom":
+            add_contract(node.get("input_contract"), node.get("input_type", "custom"), consumer=node.get("id"))
+            add_contract(node.get("output_contract"), node.get("output_type", "custom"), producer=node.get("id"))
+        elif node_type_name == "project.module":
+            for name in node.get("inputs", []) or []:
+                add_contract(name, "custom", consumer=node.get("id"))
+            for name in node.get("outputs", []) or []:
+                add_contract(name, "custom", producer=node.get("id"))
+        elif node_type_name == "event.topic":
+            add_contract(node.get("id"), node.get("payload_type", "custom"), producer=node.get("id"), consumer=node.get("id"))
+        else:
+            if node.get("output_type"):
+                add_contract(node.get("output_type"), node.get("output_type"), producer=node.get("id"))
+            if node.get("input_type"):
+                add_contract(node.get("input_type"), node.get("input_type"), consumer=node.get("id"))
+    return registry
+
+
 def validate_graph(graph: dict[str, Any]) -> dict[str, Any]:
     require(isinstance(graph, dict), "graph root must be an object")
     project = graph.get("project", {})
@@ -201,6 +239,9 @@ def validate_graph(graph: dict[str, Any]) -> dict[str, Any]:
     require(isinstance(project.get("name", "generated_app"), str), "project.name must be a string")
     tick_ms = int(project.get("tick_ms", 1))
     require(tick_ms > 0, "project.tick_ms must be > 0")
+
+    contracts_decl = graph.get("contracts", [])
+    require(isinstance(contracts_decl, list), "contracts must be an array when present")
 
     board = graph.get("board", {})
     require(isinstance(board, dict), "board must be an object when present")
@@ -305,9 +346,15 @@ def validate_graph(graph: dict[str, Any]) -> dict[str, Any]:
             require(isinstance(node.get("output_contract", "custom"), str), f"{node['id']}.output_contract must be a string")
 
     module_ids = {node["id"] for node in raw_nodes if node.get("type") == "project.module"}
+    contracts = contract_registry(graph, nodes_by_id)
     for node in raw_nodes:
         if node.get("module"):
             require(node.get("module") in module_ids, f"{node['id']}.module must reference project.module")
+        if node.get("type") == "project.module":
+            require(isinstance(node.get("inputs", []), list), f"{node['id']}.inputs must be an array")
+            require(isinstance(node.get("outputs", []), list), f"{node['id']}.outputs must be an array")
+            for name in node.get("inputs", []) + node.get("outputs", []):
+                require(str(name) in contracts, f"{node['id']} references unknown contract: {name}")
 
     flows = []
     flow_ids = set()
@@ -363,6 +410,7 @@ def validate_graph(graph: dict[str, Any]) -> dict[str, Any]:
         "flows": flows,
         "tasks": tasks,
         "edges": raw_edges,
+        "contracts": contracts,
         "custom_files": custom_files,
         "board_adapters": board_adapters,
     }

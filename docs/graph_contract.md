@@ -36,7 +36,7 @@ Codegen 的验证入口已拆到 `tools/codegen/validate.py`，渲染/预览/写
 | `actuator.custom` | 完整生成 | 生成 actuator 注册 glue；`write/init/enable/disable` 回调由用户实现。 |
 | `algorithm.pid` | 完整生成 | 使用 EFW 内置 PID，生成 PID ctx 和 algorithm 注册。 |
 | `algorithm.custom` | 完整生成 | 生成 algorithm 注册 glue；`run` 回调由用户实现；接入 LineFollower 时必须声明 `io_contract=efw_pid`。 |
-| `processor.custom` | 轻量 glue | 生成数据契约 wrapper；`process(ctx, in, out)` 由用户实现，用于原始数据到标准反馈/命令的转换。 |
+| `processor.custom` | 部分生成 | 生成数据契约 wrapper；位于 `Sensor → Processor → Algorithm/Actuator` edge 链上时自动纳入周期数据流调度；`process(ctx, in, out)` 由用户实现。 |
 | `module.custom` | 完整生成 | 生成 module 注册和 lifecycle 调用；模块行为由用户回调实现。 |
 | `task.periodic` | 完整生成 | 生成 tick scheduler 调用；`period_ms` 必须是 `project.tick_ms` 整数倍。 |
 | `project.module` | 说明/文档 | 当前只表示 Studio 页面、分组和归属，不是独立编译单元。 |
@@ -61,6 +61,7 @@ Codegen 的验证入口已拆到 `tools/codegen/validate.py`，渲染/预览/写
 | Sensor read | `efw_status_t fn(void *ctx, void *out)` |
 | Actuator write | `efw_status_t fn(void *ctx, const void *cmd)` |
 | Algorithm run | `efw_status_t fn(void *ctx, const void *in, void *out)` |
+| Processor process | `efw_status_t fn(void *ctx, const void *in, void *out)` |
 | Module lifecycle | `efw_status_t fn(void *ctx)` |
 | Periodic task | `efw_status_t fn(void)` |
 | Topic subscriber | `void fn(uint16_t topic_id, const void *data, uint16_t size, void *user)` |
@@ -82,3 +83,10 @@ Codegen 的验证入口已拆到 `tools/codegen/validate.py`，渲染/预览/写
 4. 最后更新示例 Graph 和本文档。
 
 当前阶段不让 EFW 追随 UI 频繁变化。只有多个生成场景暴露出同一个底层缺口时，才小步补充 EFW API。
+
+## 数据契约与运行管线
+
+- 顶层可选 `contracts[]`、`project.module.inputs/outputs`、`processor.custom.input_contract/output_contract` 会被合并为 contract registry，并生成 `APP_CONTRACT_*` 宏。
+- `project.module` 仍是 Studio 页面/系统结构节点，不生成独立编译单元；强类型接口生成留给后续模块编译阶段。
+- `data_flow` / `control_flow` edge 如果组成 `Sensor → Processor/Algorithm → Actuator` 路径，codegen 会生成 `app_dataflow_<path>()` 并在 `app_update_1ms()` 中按周期执行。
+- `processor.custom → project.module` 这类跨层连接只声明接口契约，不表示 processor 调用模块。

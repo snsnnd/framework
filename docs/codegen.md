@@ -112,7 +112,21 @@ examples/projects/generic_embedded_app.efw_project.json
 
 ## 模块分组与发布-订阅可视化
 
-一个真实嵌入式项目通常不是单个大流程，而是由多个模块/子系统组成，例如 `power_module`、`motion_module`、`ui_module`。Graph 中可以添加 `project.module` 卡片，并在其它节点上填写 `module` 字段，把 HAL、Sensor、Algorithm、Module、Task、Event 卡片归属到对应模块。当前生成器会校验 `module` 引用是否存在；这一层主要用于可视化组织、文档交接和后续生成更细粒度的模块文件。
+一个真实嵌入式项目通常不是单个大流程，而是由多个模块/子系统组成，例如 `power_module`、`motion_module`、`ui_module`。Graph 中可以添加 `project.module` 卡片，并在其它节点上填写 `module` 字段，把 HAL、Sensor、Processor、Algorithm、Module、Task、Event 卡片归属到对应模块。当前生成器会校验 `module` 引用是否存在，并会把 `project.module.inputs/outputs`、`processor.custom.input_contract/output_contract` 和可选的顶层 `contracts[]` 合并为 contract registry，生成 `APP_CONTRACT_*` 宏。注意：`project.module` 仍然不是独立编译单元，不会生成独立 `app_xxx_module.c/.h`。
+
+## Processor 数据流管线
+
+`processor.custom` 不再只是单独 wrapper。生成器会扫描 `graph.edges` 中的运行时数据流，并把下面这类链路生成到 `app_update_1ms()`：
+
+```text
+Sensor → processor.custom → algorithm.* → actuator.*
+Sensor → processor.custom → algorithm.*
+Sensor → algorithm.* → actuator.*
+```
+
+每条链会生成一个 `static efw_status_t app_dataflow_<path>(void)`：先调用 `efw_sensor_read()`，再依次调用 `app_processor_<id>()` / `efw_algo_run()`，如果末端是 actuator 则调用 `efw_actuator_write()`。中间缓冲使用 `APP_DATAFLOW_BUFFER_SIZE`（可在 `project.dataflow_buffer_size` 配置，默认 64 字节）。链路周期取路径中节点 `period_ms` 的最大值，且仍必须是 `project.tick_ms` 的整数倍。
+
+与此不同，`processor.custom → project.module`、`project.module → processor.custom`、`event.subscriber → processor.custom`、`processor.custom → event.publisher` 这类连接主要是接口/事件语义：Studio tooltip 会说明“声明模块输入”“事件进入处理器”“发布意图”等效果，不会伪装成模块调用。
 
 事件总线已经可以用三类卡片表达：
 
@@ -259,9 +273,9 @@ python3 tools/efw.py studio
 
 当前可视化卡片分为三类：
 
-- **完整生成**：HAL/Sensor/Actuator/Algorithm/Module/Task、LineFollower flow 等会生成 C 注册、bind 或调度代码。
+- **完整生成**：HAL/Sensor/Actuator/Algorithm/Module/Task、LineFollower flow，以及由 `graph.edges` 推导出的 Sensor → Processor/Algorithm → Actuator 数据流管线等会生成 C 注册、bind 或调度代码。
 - **部分生成**：例如 `event.topic` 会生成 `APP_TOPIC_*` 宏，`event.subscriber` 会生成 `efw_topic_subscribe()`，但 `event.publisher` 的 `efw_topic_publish()` 调用仍应写在用户任务或模块代码中。
-- **轻量生成**：`state.machine`、`state.state`、`state.transition` 和 `processor.custom` 已生成可编译 glue；状态条件、动作和 processor 数据转换仍由 `custom_files` 回调实现。
+- **轻量生成**：`state.machine`、`state.state`、`state.transition` 生成可编译 glue；`processor.custom` 的单个处理函数由 `custom_files` 实现，但当它位于运行时数据流链路中时会被自动纳入调度管线。
 
 编辑器的“生成映射”面板会显示每个节点的生成状态，避免用户误以为所有卡片都已经具备完整代码生成能力。
 
@@ -332,7 +346,7 @@ python3 tools/efw.py studio
 - `tools/efw.py` 是唯一推荐工具入口；Studio 内部位于 `tools/studio/`，codegen 和 Graph 契约位于 `tools/codegen/`。
 - `tools/studio/editor.py` 继续保留为 PyQt 画布/面板实现，但不再承载所有纯逻辑；后续可以继续拆成 scene、palette、properties、pin planner、code panel 等 UI 子模块。
 - UI 连接规则与 codegen 的 `apply_edge_semantics()` 已共享同一组 pair-level 语义函数，减少“UI 允许连接但生成器不理解”的风险；状态机端口也区分为 `state_machine`、`transition_from`、`transition_to`。
-- `project.module` 已显式包含 `inputs`、`outputs`、`subgraph` 字段，当前 UI 仍以同一 Graph 的模块视图方式呈现，模块内部独立子图和跨模块接口编译会作为下一阶段继续强化。
+- `project.module` 已显式包含 `inputs`、`outputs`、`subgraph` 字段；`inputs/outputs` 会进入 contract registry 校验和宏生成，但当前 UI 仍以同一 Graph 的模块视图方式呈现，模块内部独立子图和跨模块接口编译会作为下一阶段继续强化。
 - “一键创建条件函数”只为 `state.transition` 的 `condition` 生成 `int condition(void)` stub；“一键生成缺失回调”负责 HAL/Sensor/Processor/Algorithm/Module/Task/Event/State 的完整回调 stub。
 - 框架库扫描会附带 `framework_header`、`library_module`、`callbacks`、`schema_fields`、`scan_quality`、`generation` 等元数据；它仍是头文件路径推断，不等价于完整 C 反射，因此复杂依赖宏/回调契约仍需后续用组件描述文件补齐。
 

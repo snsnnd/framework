@@ -120,6 +120,7 @@ from codegen.graph import (
     can_connect_ports,
     pair_has_semantics,
     semantic_edge_kind,
+    edge_effect_description,
     node_generation_label,
 )
 from studio.core import (
@@ -1739,10 +1740,12 @@ Esc       返回根项目页面
                 continue
             if direction == "out" and edge.get("from") == node_id and edge.get("from_port") == port_type:
                 target = self._find_node(str(edge.get("to")))
-                matches.append(f"连接到 {edge.get('to')} · {TYPE_LABELS.get(target.get('type'), target.get('type')) if target else 'unknown'} · {edge.get('kind', 'generic')}")
+                effect = edge_effect_description(node, target, edge.get("from_port"), edge.get("to_port")) if target else ""
+                matches.append(f"连接到 {edge.get('to')} · {TYPE_LABELS.get(target.get('type'), target.get('type')) if target else 'unknown'} · {edge.get('kind', 'generic')} · {effect}")
             if direction == "in" and edge.get("to") == node_id and edge.get("to_port") == port_type:
                 source = self._find_node(str(edge.get("from")))
-                matches.append(f"来自 {edge.get('from')} · {TYPE_LABELS.get(source.get('type'), source.get('type')) if source else 'unknown'} · {edge.get('kind', 'generic')}")
+                effect = edge_effect_description(source, node, edge.get("from_port"), edge.get("to_port")) if source else ""
+                matches.append(f"来自 {edge.get('from')} · {TYPE_LABELS.get(source.get('type'), source.get('type')) if source else 'unknown'} · {edge.get('kind', 'generic')} · {effect}")
         if matches:
             lines.append("当前连接：")
             lines.extend(f"- {item}" for item in matches)
@@ -1830,7 +1833,12 @@ Esc       返回根项目页面
                 line.setLine(a.x(), a.y(), b.x(), b.y())
                 line.setPen(self.edge_pen(edge))
                 kind_label = EDGE_KIND_LABELS.get(str(edge.get('kind', 'generic')), str(edge.get('kind', 'generic')))
-                tooltip = f"{kind_label}: {src}.{edge.get('from_port', 'out')} → {dst}.{edge.get('to_port', 'in')}"
+                effect = ""
+                src_node = self._find_node(src)
+                dst_node = self._find_node(dst)
+                if src_node and dst_node:
+                    effect = "\n生成/语义：" + edge_effect_description(src_node, dst_node, edge.get('from_port'), edge.get('to_port'))
+                tooltip = f"{kind_label}: {src}.{edge.get('from_port', 'out')} → {dst}.{edge.get('to_port', 'in')}{effect}"
                 line.setToolTip(tooltip)
                 line.setZValue(-1)
                 self.scene.addItem(line)
@@ -1885,11 +1893,11 @@ Esc       返回根项目页面
         node_type = str(node.get("type"))
         contract = NODE_CONTRACTS.get(node_type, {})
         if node_type == "processor.custom":
-            return "行动：实现 process(ctx, in, out)，把 input_contract 转换为 output_contract；用于 Sensor/算法/PID/Actuator 之间的数据适配。"
+            return "行动：实现 process(ctx, in, out)。当它位于 Sensor → Processor → Algorithm/Actuator 数据流上时，codegen 会生成周期执行链；连接到 project.module 只声明模块接口。"
         if node_type == "event.publisher":
             return "行动：在 custom_files 的 task/module 回调中手写 efw_topic_publish()；该卡片只表达发布关系。"
         if node_type == "project.module":
-            return "行动：把节点归属到该模块以整理页面；当前不会生成独立模块 .c/.h 或强类型接口。"
+            return "行动：把节点归属到该模块以整理页面；inputs/outputs 会进入 contract registry 校验，但当前仍不会生成独立 app_xxx_module.c/.h。"
         if node_type == "actuator.motor":
             return "行动：host mock 可编译验证；真实板卡需在板级适配中把 speed/dir 接到 PWM/GPIO。"
         if node_type == "hal.gpio_line_input":
@@ -2974,9 +2982,10 @@ Esc       返回根项目页面
         dst_label = f"{dst.get('id')} ({TYPE_LABELS.get(dst.get('type'), dst.get('type'))})"
         if src.get("id") == dst.get("id"):
             return "不能把卡片连接到自身；请连接到另一个节点。"
+        effect = edge_effect_description(src, dst, out_port.port_type, in_port.port_type)
         if not pair_has_semantics(src, dst):
             return f"{src_label} -> {dst_label} 没有定义 Graph 语义；当前不会自动推导字段或生成代码关系。"
-        return f"端口类型不兼容：{from_label}({out_port.port_type}) 不能连接到 {to_label}({in_port.port_type})。\n输出端口说明：{PORT_DESCRIPTIONS.get(out_port.port_type, '无')}\n输入端口说明：{PORT_DESCRIPTIONS.get(in_port.port_type, '无')}"
+        return f"端口类型不兼容：{from_label}({out_port.port_type}) 不能连接到 {to_label}({in_port.port_type})。\n输出端口说明：{PORT_DESCRIPTIONS.get(out_port.port_type, '无')}\n输入端口说明：{PORT_DESCRIPTIONS.get(in_port.port_type, '无')}\n如果改用兼容端口，本关系的生成/语义效果：{effect}"
 
 
     def connect_selected_cards(self) -> None:
