@@ -131,7 +131,7 @@ Sensor → algorithm.* → actuator.*
 - 每条边的上游 output contract 必须等于下游 input contract。
 - `algorithm.pid` 输入固定要求 `efw_pid_input_t`，输出固定为 `efw_pid_output_t`；普通 Sensor 不能直接连 PID，必须先经过 processor.custom 转成 PID 输入结构。`actuator.motor` 输入固定为内置 `efw_motor_cmd_t` contract。
 - 每个参与自动 dataflow 的 contract 必须有 `size`；可在 `contracts[]`、processor `input_size/output_size` 或内置 contract 表中提供。内置表包含 `efw_line_tracking_data_t`、`efw_pid_input_t`、`efw_pid_output_t`、`efw_motor_cmd_t` 和常见标量类型；`sensor.line_tracking` 默认输出 `efw_line_tracking_data_t`。
-- 内置 contract 的 `size/align` 是 codegen 元数据，必须和 EFW C 头文件中的真实 `sizeof()` 同步维护。生成器会在 `app_bootstrap.c` 写入 `typedef char app_contract_size_check_*[(sizeof(type) == size) ? 1 : -1];`，让 C 编译阶段暴露 ABI/布局不一致；长期应由头文件 metadata 或提取脚本自动生成这些 size。
+- 内置 contract 的 `size/align` 是 codegen 元数据，必须和 EFW C 头文件中的真实 `sizeof()` 同步维护。生成器会在 `app_bootstrap.c` 写入 `typedef char app_contract_size_check_*[(sizeof(type) == size) ? 1 : -1];`，让 C 编译阶段暴露 ABI/布局不一致；仓库中的 `efw_contract_sizes` 主机侧测试也会直接校验内置 contract 的 `sizeof`/对齐；长期应由头文件 metadata 或提取脚本自动生成这些 size。
 - `APP_DATAFLOW_BUFFER_SIZE` 会取 `project.dataflow_buffer_size`、默认 64 和 contract 最大 size 的最大值。
 - 如果某个 sensor/pid/motor 已经属于 `control.line_follower` flow，默认不会再生成普通 dataflow；除非显式设置 `project.auto_dataflow_include_line_follower=true`。
 
