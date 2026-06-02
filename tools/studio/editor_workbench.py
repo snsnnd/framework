@@ -519,9 +519,9 @@ class WorkbenchMixin:
                 b = self.port_scene_center(dst, edge.get("to_port"), "in")
                 if not a or not b:
                     continue
-                line = QGraphicsLineItem()
+                line = EdgeItem(edge, self)
                 line.setLine(a.x(), a.y(), b.x(), b.y())
-                line.setPen(self.edge_pen(edge))
+                line.setPen(self.edge_pen_for_item(edge, selected=str(edge.get("id")) == getattr(self, "selected_edge_id", None)))
                 kind_label = EDGE_KIND_LABELS.get(str(edge.get("kind", "generic")), str(edge.get("kind", "generic")))
                 effect = ""
                 src_node = self._find_node(src)
@@ -601,6 +601,10 @@ class WorkbenchMixin:
         return "行动：检查 Graph 引用和周期，校验通过后即可生成 application。"
 
     def select_node(self, node_id: str | None) -> None:
+        if node_id is not None:
+            self.selected_edge_id = None
+            for item in self.edge_items:
+                item.setPen(self.edge_pen_for_item(item.edge, selected=False))
         self.current_node_id = node_id
         node = self._find_node(node_id) if node_id else None
         if not node and node_id is None:

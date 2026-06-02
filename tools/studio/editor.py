@@ -789,6 +789,24 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
         self.current_node_id = None
         self.refresh_all()
 
+    def delete_selected_edge(self) -> None:
+        edge = self.selected_edge()
+        if not edge:
+            return
+        edge_id = str(edge.get("id", ""))
+        if not edge_id:
+            return
+        self.push_undo()
+        self.graph["edges"] = [item for item in self.graph.get("edges", []) if str(item.get("id")) != edge_id]
+        self.selected_edge_id = None
+        self.refresh_all()
+
+    def delete_selected_object(self) -> None:
+        if self.selected_edge_id:
+            self.delete_selected_edge()
+            return
+        self.delete_selected_node()
+
 
     def new_graph(self) -> None:
         if not self._confirm_discard_changes():

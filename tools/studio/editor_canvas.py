@@ -151,6 +151,22 @@ class PortItem(QGraphicsRectItem):
         event.accept()
 
 
+class EdgeItem(QGraphicsLineItem):
+    def __init__(self, edge: dict[str, Any], editor: "VisualEditorWindow"):
+        super().__init__()
+        self.edge = edge
+        self.editor = editor
+        try:
+            selectable = QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
+        except AttributeError:
+            selectable = QGraphicsItem.ItemIsSelectable
+        self.setFlag(selectable, True)
+
+    def mousePressEvent(self, event):
+        self.editor.select_edge(self.edge)
+        super().mousePressEvent(event)
+
+
 def node_theme(node_type: str) -> dict[str, str]:
     """Return accent/bg/border colors for a given node type."""
     accent = PORT_COLORS.get("hal", "#26c6da")
