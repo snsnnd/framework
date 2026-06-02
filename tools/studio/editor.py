@@ -18,7 +18,7 @@ from typing import Any
 import importlib.util
 
 if importlib.util.find_spec("PyQt6") is not None:
-    from PyQt6.QtCore import QMimeData, QPointF, Qt
+    from PyQt6.QtCore import QMimeData, QPointF, QTimer, Qt
     from PyQt6.QtGui import QBrush, QColor, QDrag, QFont, QFontMetrics, QKeySequence, QPen, QShortcut
     from PyQt6.QtWidgets import (
         QApplication,
@@ -55,7 +55,7 @@ if importlib.util.find_spec("PyQt6") is not None:
     )
     QT_LIB = "PyQt6"
 elif importlib.util.find_spec("PyQt5") is not None:
-    from PyQt5.QtCore import QMimeData, QPointF, Qt
+    from PyQt5.QtCore import QMimeData, QPointF, QTimer, Qt
     from PyQt5.QtGui import QBrush, QColor, QDrag, QFont, QFontMetrics, QKeySequence, QPen
     from PyQt5.QtWidgets import (
         QApplication,
@@ -135,211 +135,8 @@ from studio.core import (
     visible_nodes_for_page,
     property_choices as core_property_choices,
 )
-from studio.model import BOARD_PROFILES, GENERATED_APPLICATION_TREE, NODE_GENERATION_STATUS, VISUAL_NODE_CATEGORIES
-
-
-
-NODE_TEMPLATES: dict[str, dict[str, Any]] = {
-    "hal.gpio_line_input": {
-        "id": "line_input",
-        "type": "hal.gpio_line_input",
-        "channels": 5,
-        "pins": [
-            {"port": "A", "pin": 0},
-            {"port": "A", "pin": 1},
-            {"port": "A", "pin": 2},
-            {"port": "A", "pin": 3},
-            {"port": "A", "pin": 4},
-        ],
-    },
-    "hal.custom": {
-        "id": "uart_debug",
-        "type": "hal.custom",
-        "hal_type": "uart",
-        "bus_id": 1,
-        "ctx": "0",
-        "init": "app_uart_debug_init",
-        "write": "app_uart_debug_write",
-    },
-    "sensor.line_tracking": {
-        "id": "line_sensor_5ch",
-        "type": "sensor.line_tracking",
-        "input": "line_input",
-    },
-    "actuator.motor": {
-        "id": "motor",
-        "type": "actuator.motor",
-        "pwm": {"timer": 1, "channel": 1},
-        "dir_pin": {"port": "B", "pin": 0},
-    },
-    "actuator.custom": {
-        "id": "status_led",
-        "type": "actuator.custom",
-        "actuator_type": "led",
-        "ctx": "0",
-        "write": "app_status_led_write",
-    },
-    "algorithm.pid": {
-        "id": "line_pid",
-        "type": "algorithm.pid",
-        "input_type": "float",
-        "output_type": "float",
-        "output_desc": "PID control value",
-        "kp": 18.0,
-        "ki": 0.0,
-        "kd": 2.5,
-        "kff": 0.0,
-        "integral_min": -20.0,
-        "integral_max": 20.0,
-        "out_min": -60.0,
-        "out_max": 60.0,
-        "anti_windup": True,
-    },
-    "sensor.custom": {
-        "id": "custom_sensor",
-        "type": "sensor.custom",
-        "sensor_type": "custom",
-        "output_type": "float",
-        "output_desc": "sensor sample",
-        "channel_count": 1,
-        "hal_name": "",
-        "comm_name": "",
-        "ctx": "0",
-        "read": "app_custom_sensor_read",
-    },
-    "algorithm.custom": {
-        "id": "custom_algo",
-        "type": "algorithm.custom",
-        "algo_type": "EFW_ALGO_CUSTOM",
-        "input_type": "custom",
-        "output_type": "custom",
-        "output_desc": "algorithm output",
-        "ctx": "0",
-        "run": "app_custom_algo_run",
-        "io_contract": "custom",
-    },
-    "processor.custom": {
-        "id": "custom_processor",
-        "type": "processor.custom",
-        "input_contract": "raw_bytes",
-        "output_contract": "efw_pid_input_t",
-        "input_type": "uint8_t",
-        "output_type": "efw_pid_input_t",
-        "input_size": 8,
-        "output_size": 16,
-        "output_desc": "normalized processor output",
-        "ctx": "0",
-        "process": "app_custom_processor_process",
-        "description": "把模块内部原始数据转换为下游算法/执行器需要的标准数据契约。",
-    },
-    "module.custom": {
-        "id": "custom_module",
-        "type": "module.custom",
-        "module_type": "EFW_MODULE_CUSTOM",
-        "input_type": "custom",
-        "output_type": "custom",
-        "output_desc": "module side effect or data output",
-        "ctx": "0",
-        "init": "app_custom_module_init",
-        "start": "",
-        "stop": "",
-        "poll": "app_custom_module_poll",
-    },
-    "task.periodic": {
-        "id": "custom_task_10ms",
-        "type": "task.periodic",
-        "period_ms": 10,
-        "call": "app_custom_task_10ms",
-    },
-    "project.module": {
-        "id": "control_module",
-        "type": "project.module",
-        "display_name": "控制模块",
-        "description": "用于把一组 HAL/Sensor/Algorithm/Task 归到同一个应用模块或子系统。",
-        "inputs": [],
-        "outputs": [],
-        "subgraph": {"nodes": [], "edges": []},
-    },
-    "event.topic": {
-        "id": "topic_battery",
-        "type": "event.topic",
-        "topic_id": 1,
-        "payload_type": "float",
-        "description": "电池电压事件",
-    },
-    "event.publisher": {
-        "id": "publish_battery",
-        "type": "event.publisher",
-        "topic": "topic_battery",
-        "source": "battery_sensor",
-        "data_type": "float",
-        "data_expr": "&battery_voltage",
-        "size_expr": "sizeof(battery_voltage)",
-    },
-    "event.subscriber": {
-        "id": "subscribe_battery",
-        "type": "event.subscriber",
-        "topic": "topic_battery",
-        "target": "health_service",
-        "callback": "app_on_battery_topic",
-        "user": "0",
-    },
-    "state.machine": {
-        "id": "main_state_machine",
-        "type": "state.machine",
-        "initial": "idle",
-        "description": "状态机容器，生成 EFW state_machine 注册和轻量转换调度。",
-    },
-    "state.state": {
-        "id": "idle",
-        "type": "state.state",
-        "machine": "main_state_machine",
-        "on_enter": "",
-        "on_update": "",
-        "on_exit": "",
-    },
-    "state.transition": {
-        "id": "idle_to_run",
-        "type": "state.transition",
-        "machine": "main_state_machine",
-        "from": "idle",
-        "to": "run",
-        "condition": "app_can_run",
-        "priority": 0,
-        "action": "",
-        "timeout_ms": 0,
-        "event_trigger": "",
-    },
-    "data.enum": {
-        "id": "enum_type",
-        "type": "data.enum",
-        "name": "app_state_t",
-        "data_type": "enum",
-        "values": ["APP_STATE_IDLE", "APP_STATE_RUN", "APP_STATE_ERROR"],
-        "description": "Project enum type. Define the C enum in custom_files.",
-    },
-    "data.struct": {
-        "id": "struct_type",
-        "type": "data.struct",
-        "name": "app_payload_t",
-        "data_type": "struct",
-        "fields": [{"type": "uint16_t", "name": "value"}],
-        "description": "Project struct type. Define the C struct in custom_files.",
-    },
-    "custom.card": {
-        "id": "custom_note",
-        "type": "custom.card",
-        "note": "Documentation-only card for hardware, tuning notes, or future generator templates.",
-    },
-    "custom.code": {
-        "id": "custom_code_note",
-        "type": "custom.code",
-        "note": "Use the Code tab to add custom .c/.h files. This card documents the custom extension point.",
-    },
-}
-
-FRAMEWORK_SCAN_TEMPLATES, FRAMEWORK_SCAN_ORDER = discover_framework_templates(NODE_TEMPLATES, REPO_ROOT)
-NODE_TEMPLATES.update(FRAMEWORK_SCAN_TEMPLATES)
+from studio.editor_registry import NODE_CATEGORIES, NODE_TEMPLATES, PROPERTY_FIELD_ORDER, TYPE_LABELS
+from studio.model import BOARD_PROFILES, GENERATED_APPLICATION_TREE, NODE_GENERATION_STATUS
 
 DEFAULT_FLOW = {
     "id": "line_follower",
@@ -484,365 +281,24 @@ def node_family(node_type: str | None) -> str:
     return str(node_type or "custom").split(".")[0]
 
 
-def node_theme(node_type: str | None) -> dict[str, str]:
-    return NODE_THEMES.get(node_family(node_type), NODE_THEMES["custom"])
 
-TYPE_LABELS = {
-    "hal.gpio_line_input": "HAL · GPIO循迹输入",
-    "hal.custom": "HAL · 自定义外设",
-    "sensor.line_tracking": "传感器 · 循迹",
-    "sensor.custom": "传感器 · 自定义",
-    "actuator.motor": "执行器 · 电机",
-    "actuator.custom": "执行器 · 自定义",
-    "algorithm.pid": "算法 · PID",
-    "algorithm.custom": "算法 · 自定义",
-    "processor.custom": "处理器 · 自定义",
-    "module.custom": "业务模块 · 生命周期",
-    "task.periodic": "任务 · 周期",
-    "project.module": "项目 · 模块分组",
-    "event.topic": "通信 · Topic",
-    "event.publisher": "通信 · 发布者",
-    "event.subscriber": "通信 · 订阅者",
-    "state.machine": "状态机 · 容器",
-    "state.state": "状态机 · 状态",
-    "state.transition": "状态机 · 转换",
-    "data.enum": "数据 · enum枚举",
-    "data.struct": "数据 · struct结构体",
-    "custom.card": "说明卡片",
-    "custom.code": "代码卡片",
-}
+# Import extracted modules
+from studio.editor_canvas import (
+    BlueprintView, GraphNodeItem, PortItem, TemplatePalette,
+    add_wrapped_text, card_description, card_display_name,
+    card_port_lines, card_ports_by_direction, compact_text,
+    form_value_text, node_theme, parse_form_value,
+)
+from studio.editor_callbacks import CallbackMixin
+from studio.editor_ui import UIBuilderMixin
+from studio.editor_workbench import WorkbenchMixin
+from studio.editor_shortcuts import (
+    SHORTCUT_DEFAULTS, SHORTCUT_SEPARATOR, SHORTCUT_CALLBACKS,
+    SHORTCUTS_CONFIG_PATH, ShortcutsEditor,
+    load_custom_shortcuts, save_custom_shortcuts,
+)
 
-def framework_scan_categories() -> list[tuple[str, list[str]]]:
-    grouped: dict[str, list[str]] = {}
-    labels = {"hal": "框架扫描 · HAL", "sensor": "框架扫描 · 传感器", "actuator": "框架扫描 · 执行器", "algorithm": "框架扫描 · 算法", "module": "框架扫描 · 模块", "event": "框架扫描 · 通信", "state": "框架扫描 · 状态机"}
-    for key in FRAMEWORK_SCAN_ORDER:
-        module = str(NODE_TEMPLATES.get(key, {}).get("library_module", "other"))
-        grouped.setdefault(module, []).append(key)
-    return [(labels.get(module, f"框架扫描 · {module}"), keys) for module, keys in grouped.items()]
-
-
-NODE_CATEGORIES = []
-for name, types in VISUAL_NODE_CATEGORIES:
-    if name == "框架库扫描":
-        NODE_CATEGORIES.extend(framework_scan_categories())
-    else:
-        NODE_CATEGORIES.append((name, types))
-
-
-PROPERTY_FIELD_ORDER = {
-    "project.module": ["id", "type", "display_name", "parent", "inputs", "outputs", "description"],
-    "hal.custom": ["id", "type", "module", "hal_type", "ctx_name", "init", "read", "write", "ioctl"],
-    "hal.gpio_line_input": ["id", "type", "module", "channels", "pins"],
-    "sensor.custom": ["id", "type", "module", "sensor_type", "output_contract", "output_type", "output_size", "output_align", "output_desc", "hal_name", "ctx_name", "init", "read"],
-    "sensor.line_tracking": ["id", "type", "module", "input", "channels", "active_value", "binary_mode"],
-    "actuator.custom": ["id", "type", "module", "actuator_type", "input_contract", "input_type", "input_size", "input_align", "hal_name", "ctx_name", "init", "enable", "disable", "write"],
-    "actuator.motor": ["id", "type", "module", "pwm", "dir_pin", "max_speed"],
-    "algorithm.pid": ["id", "type", "module", "input_type", "output_type", "output_desc", "kp", "ki", "kd", "out_min", "out_max", "integral_min", "integral_max", "anti_windup"],
-    "algorithm.custom": ["id", "type", "module", "algo_type", "input_contract", "output_contract", "input_type", "output_type", "input_size", "output_size", "output_desc", "run", "ctx_name", "io_contract"],
-    "processor.custom": ["id", "type", "module", "input_contract", "output_contract", "input_type", "output_type", "input_size", "output_size", "input_align", "output_align", "output_desc", "process", "ctx_name", "description"],
-    "module.custom": ["id", "type", "module", "module_type", "input_type", "output_type", "output_desc", "ctx_name", "init", "start", "stop", "poll"],
-    "task.periodic": ["id", "type", "module", "period_ms", "call", "flow"],
-    "event.topic": ["id", "type", "module", "topic_id", "payload_type", "description"],
-    "event.publisher": ["id", "type", "module", "topic", "source", "data_type", "data_expr", "size_expr"],
-    "event.subscriber": ["id", "type", "module", "topic", "target", "callback", "user"],
-    "state.machine": ["id", "type", "module", "initial", "description"],
-    "state.state": ["id", "type", "machine", "on_enter", "on_update", "on_exit"],
-    "state.transition": ["id", "type", "machine", "from", "to", "condition", "priority", "action", "timeout_ms", "event_trigger"],
-    "data.enum": ["id", "type", "name", "description", "module", "data_type", "values"],
-    "data.struct": ["id", "type", "name", "description", "module", "data_type", "fields"],
-}
-
-
-def display_label(template_key: str) -> str:
-    template = NODE_TEMPLATES.get(template_key, {})
-    node_type = template.get("type", template_key)
-    if template_key.startswith("scan."):
-        return f"框架扫描 · {template.get('id', template_key)}"
-    return TYPE_LABELS.get(node_type, TYPE_LABELS.get(template_key, template_key))
-
-
-def parse_form_value(text: str) -> Any:
-    value = text.strip()
-    if value == "":
-        return ""
-    if value in {"true", "True"}:
-        return True
-    if value in {"false", "False"}:
-        return False
-    try:
-        if value.startswith(("{", "[")):
-            return json.loads(value)
-        if "." in value:
-            return float(value)
-        return int(value)
-    except ValueError:
-        return text
-    except json.JSONDecodeError:
-        return text
-
-
-def form_value_text(value: Any) -> str:
-    if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False)
-    return "" if value is None else str(value)
-
-
-def card_display_name(node: dict[str, Any]) -> str:
-    return str(node.get("name") or node.get("display_name") or node.get("title") or node.get("id") or "未命名")
-
-
-def card_description(node: dict[str, Any]) -> str:
-    return str(node.get("description") or node.get("note") or NODE_CONTRACTS.get(str(node.get("type")), {}).get("boundary", ""))
-
-
-def card_port_lines(node: dict[str, Any]) -> list[str]:
-    rules = PORT_RULES.get(node.get("type"), {})
-    lines = []
-    for label, key in [("输入", "in"), ("输出", "out")]:
-        ports = rules.get(key, [])
-        if ports:
-            names = " / ".join(PORT_LABELS.get(port, port) for port in ports)
-            lines.append(f"{label}: {names}")
-    return lines
-
-
-def card_ports_by_direction(node: dict[str, Any]) -> list[tuple[str, list[str]]]:
-    rules = PORT_RULES.get(node.get("type"), {})
-    result = []
-    for label, key in [("输入", "in"), ("输出", "out")]:
-        ports = rules.get(key, [])
-        if ports:
-            result.append((label, [PORT_LABELS.get(port, port) for port in ports]))
-    return result
-
-
-def compact_text(text: str, max_chars: int) -> str:
-    text = " ".join(str(text).split())
-    return text if len(text) <= max_chars else text[: max_chars - 1] + "…"
-
-
-def add_wrapped_text(parent: QGraphicsItem, text: str, x: float, y: float, width: float, color: str, font_size: int = 9, bold: bool = False) -> QGraphicsTextItem:
-    item = QGraphicsTextItem(compact_text(text, 180), parent)
-    item.setDefaultTextColor(QColor(color))
-    weight = QFont.Weight.Bold if hasattr(QFont, "Weight") else QFont.Bold
-    item.setFont(QFont("Sans", font_size, weight if bold else -1))
-    item.setTextWidth(width)
-    item.setPos(x, y)
-    return item
-
-
-class PortItem(QGraphicsRectItem):
-    SIZE = 13
-
-    def __init__(self, node_item: "GraphNodeItem", direction: str, port_type: str, index: int):
-        super().__init__(0, 0, self.SIZE, self.SIZE, node_item)
-        self.node_item = node_item
-        self.direction = direction
-        self.port_type = port_type
-        base = QColor(PORT_COLORS.get(port_type, "#90a4ae"))
-        self.setBrush(QBrush(base.lighter(115) if direction == "out" else base.darker(115)))
-        self.setPen(QPen(QColor("#eef4ff"), 1.2))
-        y = node_item.port_start_y + index * 22
-        x = node_item.WIDTH - self.SIZE - 8 if direction == "out" else 8
-        self.setPos(x, y)
-        if port_type in {"topic", "event", "state_machine", "transition_from", "transition_to"}:
-            self.setRotation(45)
-        elif port_type in {"module_input", "module_output", "group", "code"}:
-            self.setScale(1.15)
-        self.setToolTip(node_item.editor.port_detail_tooltip(node_item.node, direction, port_type))
-        self.setZValue(2)
-
-    def mousePressEvent(self, event):
-        self.node_item.editor.begin_port_drag(self)
-        event.accept()
-
-    def mouseMoveEvent(self, event):
-        self.node_item.editor.update_port_drag(event.scenePos())
-        event.accept()
-
-    def mouseReleaseEvent(self, event):
-        self.node_item.editor.finish_port_drag(event.scenePos(), self)
-        event.accept()
-
-
-class GraphNodeItem(QGraphicsRectItem):
-    WIDTH = 170
-    HEIGHT = 70
-
-    def __init__(self, node: dict[str, Any], editor: "VisualEditorWindow"):
-        summary_text = node_summary(node)
-        title_text = card_display_name(node)
-        node_id = str(node.get("id", "node"))
-        label_text = TYPE_LABELS.get(node.get("type"), node.get("type", "unknown"))
-        desc_text = card_description(node)
-        port_groups = card_ports_by_direction(node)
-        self.WIDTH = max(250, min(390, 96 + max(len(str(title_text)), len(str(label_text)), len(summary_text)) * 6))
-        port_count = max(len(PORT_RULES.get(node.get("type"), {}).get("in", [])), len(PORT_RULES.get(node.get("type"), {}).get("out", [])))
-        desc_height = 34 if desc_text else 0
-        summary_height = 28 if summary_text else 0
-        port_text_height = 26 * sum(len(ports) for _, ports in port_groups)
-        self.port_start_y = 126 + summary_height + desc_height + port_text_height
-        self.HEIGHT = max(self.port_start_y + max(port_count, 1) * 22 + 16, 168)
-        super().__init__(0, 0, self.WIDTH, self.HEIGHT)
-        self.node = node
-        self.editor = editor
-        try:
-            flags = (
-                QGraphicsItem.GraphicsItemFlag.ItemIsMovable
-                | QGraphicsItem.GraphicsItemFlag.ItemIsSelectable
-                | QGraphicsItem.GraphicsItemFlag.ItemSendsGeometryChanges
-            )
-        except AttributeError:
-            flags = (
-                QGraphicsItem.ItemIsMovable
-                | QGraphicsItem.ItemIsSelectable
-                | QGraphicsItem.ItemSendsGeometryChanges
-            )
-        self.setFlags(flags)
-        theme = node_theme(node.get("type"))
-        self.setBrush(QBrush(QColor(theme["bg"])))
-        border_color = "#e53935" if node.get("type") == "state.transition" and not str(node.get("condition", "")).strip() else theme["border"]
-        self.setPen(QPen(QColor(border_color), 2 if border_color == "#e53935" else 1.4))
-        shadow = QGraphicsRectItem(5, 6, self.WIDTH, self.HEIGHT, self)
-        shadow.setBrush(QBrush(QColor(0, 0, 0, 55)))
-        shadow.setPen(QPen(QColor(0, 0, 0, 0), 0))
-        shadow.setZValue(-1)
-        accent = QGraphicsRectItem(0, 0, 6, self.HEIGHT, self)
-        accent.setBrush(QBrush(QColor(theme["accent"])))
-        accent.setPen(QPen(QColor(theme["accent"]), 0))
-        title = QGraphicsSimpleTextItem(str(title_text), self)
-        title.setBrush(QBrush(QColor("#f8fbff")))
-        bold_weight = QFont.Weight.Bold if hasattr(QFont, "Weight") else QFont.Bold
-        title.setFont(QFont("Sans", 11, bold_weight))
-        title_rect = title.boundingRect()
-        title.setPos(max(14, (self.WIDTH - title_rect.width()) / 2), 12)
-        subtitle = QGraphicsSimpleTextItem(label_text, self)
-        subtitle.setBrush(QBrush(QColor("#b9c6d8")))
-        subtitle_rect = subtitle.boundingRect()
-        subtitle.setPos(max(14, (self.WIDTH - subtitle_rect.width()) / 2), 36)
-        id_item = QGraphicsSimpleTextItem(f"ID  {node_id}", self)
-        id_item.setBrush(QBrush(QColor("#7f8da5")))
-        id_item.setFont(QFont("Sans", 8))
-        id_rect = id_item.boundingRect()
-        id_item.setPos(max(14, (self.WIDTH - id_rect.width()) / 2), 58)
-        y_cursor = 82
-        if summary_text:
-            add_wrapped_text(self, "摘要：" + summary_text, 18, y_cursor, self.WIDTH - 36, "#aab7cc", 8)
-            y_cursor += 28
-        if desc_text:
-            add_wrapped_text(self, "说明：" + desc_text, 18, y_cursor, self.WIDTH - 36, "#8f9db2", 8)
-            y_cursor += 34
-        if port_groups:
-            heading = QGraphicsSimpleTextItem("接口", self)
-            heading.setBrush(QBrush(QColor("#dce7ff")))
-            heading.setFont(QFont("Sans", 8, bold_weight))
-            heading.setPos(18, y_cursor + 2)
-            y_cursor += 22
-            for direction, ports in port_groups:
-                for port_name in ports:
-                    chip = QGraphicsRectItem(18, y_cursor, self.WIDTH - 36, 18, self)
-                    chip.setBrush(QBrush(QColor("#182033")))
-                    chip.setPen(QPen(QColor("#2f3a52"), 1))
-                    chip_text = QGraphicsSimpleTextItem(f"{direction}  {port_name}", self)
-                    chip_text.setBrush(QBrush(QColor("#c7d4e8")))
-                    chip_text.setFont(QFont("Sans", 8))
-                    chip_text.setPos(28, y_cursor + 1)
-                    y_cursor += 24
-        separator = QGraphicsRectItem(14, self.port_start_y - 10, self.WIDTH - 28, 1, self)
-        separator.setBrush(QBrush(QColor("#30394b")))
-        separator.setPen(QPen(QColor("#30394b"), 0))
-        self.ports: list[PortItem] = []
-        rules = PORT_RULES.get(node.get("type"), {})
-        for idx, port_type in enumerate(rules.get("in", [])):
-            self.ports.append(PortItem(self, "in", port_type, idx))
-        for idx, port_type in enumerate(rules.get("out", [])):
-            self.ports.append(PortItem(self, "out", port_type, idx))
-
-    def itemChange(self, change, value):
-        try:
-            position_changed = QGraphicsItem.GraphicsItemChange.ItemPositionHasChanged
-        except AttributeError:
-            position_changed = QGraphicsItem.ItemPositionHasChanged
-        if change == position_changed:
-            self.editor.update_node_position(self.node.get("id"), value)
-            self.editor.refresh_edges()
-        return super().itemChange(change, value)
-
-    def mousePressEvent(self, event):
-        self.editor.select_node(self.node.get("id"))
-        super().mousePressEvent(event)
-
-    def mouseDoubleClickEvent(self, event):
-        page = page_for_node(self.node)
-        if page:
-            self.editor.open_page(page)
-            event.accept()
-            return
-        super().mouseDoubleClickEvent(event)
-
-
-class TemplatePalette(QListWidget):
-    def __init__(self, editor: "VisualEditorWindow"):
-        super().__init__()
-        self.editor = editor
-        self.setDragEnabled(True)
-
-    def startDrag(self, supported_actions) -> None:
-        item = self.currentItem()
-        if not item:
-            return
-        role = Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole
-        template_key = item.data(role)
-        if template_key not in NODE_TEMPLATES:
-            return
-        mime = QMimeData()
-        mime.setText(f"efw-template:{template_key}")
-        drag = QDrag(self)
-        drag.setMimeData(mime)
-        drag.exec(supported_actions)
-
-
-class BlueprintView(QGraphicsView):
-    def __init__(self, scene: QGraphicsScene, editor: "VisualEditorWindow"):
-        super().__init__(scene)
-        self.editor = editor
-        self.setAcceptDrops(True)
-        self.zoom_level = 1.0
-
-    def wheelEvent(self, event):
-        modifiers = event.modifiers()
-        ctrl = Qt.KeyboardModifier.ControlModifier if hasattr(Qt, "KeyboardModifier") else Qt.ControlModifier
-        if modifiers & ctrl:
-            delta = event.angleDelta().y() if hasattr(event, "angleDelta") else event.delta()
-            self.editor.zoom_relation_view(1.12 if delta > 0 else 1 / 1.12)
-            event.accept()
-            return
-        super().wheelEvent(event)
-
-    def dragEnterEvent(self, event):
-        if event.mimeData().text().startswith("efw-template:"):
-            event.acceptProposedAction()
-            return
-        super().dragEnterEvent(event)
-
-    def dragMoveEvent(self, event):
-        if event.mimeData().text().startswith("efw-template:"):
-            event.acceptProposedAction()
-            return
-        super().dragMoveEvent(event)
-
-    def dropEvent(self, event):
-        text = event.mimeData().text()
-        if text.startswith("efw-template:"):
-            template_key = text.split(":", 1)[1]
-            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
-            self.editor.add_card_from_template(template_key, self.mapToScene(pos))
-            event.acceptProposedAction()
-            return
-        super().dropEvent(event)
-
-
-class VisualEditorWindow(QMainWindow):
+class VisualEditorWindow(CallbackMixin, WorkbenchMixin, UIBuilderMixin, QMainWindow):
     def __init__(self, embedded: bool = False):
         super().__init__()
         self.embedded = embedded
@@ -864,6 +320,8 @@ class VisualEditorWindow(QMainWindow):
         self.autosave_path = REPO_ROOT / ".efw_studio_autosave.json"
         self.open_pages = [root_page()]
         self.active_page_key = "root"
+        self._is_dirty = False
+        self._last_output_dir: Path | None = None
         self.graph = self.default_graph()
         self.setStyleSheet(WORKBENCH_STYLESHEET)
         self._build_ui()
@@ -897,48 +355,157 @@ class VisualEditorWindow(QMainWindow):
         self.current_node_id = None
         self.refresh_all()
 
+    def _autosave_for_current_graph(self) -> Path:
+        """Return a per-graph autosave path, falling back to the global autosave."""
+        if self.graph_path:
+            base = self.graph_path.stem
+            return self.graph_path.parent / f".efw_autosave_{base}.json"
+        return self.autosave_path
+
     def autosave_graph(self) -> None:
         try:
-            self.autosave_path.write_text(json.dumps(self.graph, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            self._autosave_for_current_graph().write_text(
+                json.dumps(self.graph, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
         except OSError:
             return
 
+    def check_autosave_recovery(self) -> bool:
+        """Check for an autosave file and offer to recover; return True if recovery was performed."""
+        autosave = self._autosave_for_current_graph()
+        if not autosave.exists():
+            return False
+        if self.graph_path and autosave.stat().st_mtime <= self.graph_path.stat().st_mtime:
+            return False  # autosave is older than the saved file
+        try:
+            saved_graph = json.loads(autosave.read_text(encoding="utf-8"))
+            if not isinstance(saved_graph, dict) or not saved_graph.get("nodes"):
+                return False
+            answer = QMessageBox.question(
+                self, "自动恢复",
+                f"检测到未保存的更改：\n{autosave.name}\n\n上次编辑时间可能晚于已保存文件。\n是否恢复未保存的更改？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            yes = QMessageBox.StandardButton.Yes
+            if answer == yes:
+                self.graph = saved_graph
+                self._is_dirty = True
+                self.refresh_all()
+                return True
+        except (OSError, json.JSONDecodeError):
+            autosave.unlink(missing_ok=True)
+        return False
+
     def refresh_after_change(self) -> None:
+        self._is_dirty = True
         self.autosave_graph()
         self.refresh_all()
 
-    def _install_shortcuts(self) -> None:
-        shortcuts = {
-            "Ctrl+N": self.new_graph,
-            "Ctrl+O": self.open_graph,
-            "Ctrl+S": self.save_graph,
-            "Ctrl+Shift+S": self.save_graph_as,
-            "Ctrl+Z": self.undo,
-            "Ctrl+Y": self.redo,
-            "Ctrl+G": self.generate_application,
-            "Ctrl+M": self.add_selected_card,
-            "Delete": self.delete_selected_node,
-            "Backspace": self.delete_selected_node,
-            "Ctrl++": lambda: self.zoom_relation_view(1.15),
-            "Ctrl+=": lambda: self.zoom_relation_view(1.15),
-            "Ctrl+-": lambda: self.zoom_relation_view(1 / 1.15),
-            "Ctrl+0": self.reset_relation_zoom,
-            "Ctrl+1": lambda: self.set_workspace("项目总览"),
-            "Ctrl+2": lambda: self.set_workspace("模块装配"),
-            "Ctrl+3": lambda: self.set_workspace("关系视图"),
-            "Ctrl+4": lambda: self.set_workspace("生成发布"),
-            "Alt+1": lambda: self.set_right_tab("项目结构"),
-            "Alt+2": lambda: self.set_right_tab("属性表单"),
-            "Alt+3": lambda: self.set_right_tab("代码"),
-            "Alt+4": lambda: self.set_right_tab("实时校验"),
-            "F5": self.validate_current_graph,
-            "Esc": self.exit_module,
+    def _confirm_discard_changes(self) -> bool:
+        """Return True if it is safe to discard current graph changes."""
+        if not self._is_dirty:
+            return True
+        answer = QMessageBox.question(
+            self, "未保存的更改",
+            "当前图有未保存的更改，是否保存后再继续？",
+            QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Save,
+        )
+        yes = QMessageBox.StandardButton.Yes
+        save_btn = QMessageBox.StandardButton.Save
+        discard_btn = QMessageBox.StandardButton.Discard
+        if answer == save_btn:
+            self.save_graph()
+            return True
+        if answer == discard_btn:
+            return True
+        return False
+
+    def closeEvent(self, event: Any) -> None:
+        if self._confirm_discard_changes():
+            event.accept()
+        else:
+            event.ignore()
+
+    def _shortcut_callbacks(self) -> dict[str, Any]:
+        """Return the mapping from shortcut key → callable, populated once."""
+        global SHORTCUT_CALLBACKS
+        if SHORTCUT_CALLBACKS:
+            return SHORTCUT_CALLBACKS
+        SHORTCUT_CALLBACKS = {
+            "new_graph": self.new_graph,
+            "open_graph": self.open_graph,
+            "save_graph": self.save_graph,
+            "save_graph_as": self.save_graph_as,
+            "undo": self.undo,
+            "redo": self.redo,
+            "generate_application": self.generate_application,
+            "add_selected_card": self.add_selected_card,
+            "delete_selected_node": self.delete_selected_node,
+            "delete_selected_node2": self.delete_selected_node,
+            "zoom_in": lambda: self.zoom_relation_view(1.15),
+            "zoom_out": lambda: self.zoom_relation_view(1 / 1.15),
+            "zoom_reset": self.reset_relation_zoom,
+            "workspace_dashboard": lambda: self.set_workspace("项目总览"),
+            "workspace_assembly": lambda: self.set_workspace("模块装配"),
+            "workspace_relations": lambda: self.set_workspace("关系视图"),
+            "workspace_release": lambda: self.set_workspace("生成发布"),
+            "inspector_structure": lambda: self.set_right_tab("项目结构"),
+            "inspector_properties": lambda: self.set_right_tab("属性表单"),
+            "inspector_code": lambda: self.set_right_tab("代码"),
+            "inspector_validation": lambda: self.set_right_tab("实时校验"),
+            "inspector_mapping": lambda: self.set_right_tab("生成映射"),
+            "inspector_file_tree": lambda: self.set_right_tab("文件树预览"),
+            "inspector_schedule": lambda: self.set_right_tab("任务调度"),
+            "inspector_pin_planner": lambda: self.set_right_tab("Board Profile / Pin Planner"),
+            "inspector_graph_json": lambda: self.set_right_tab("Graph JSON"),
+            "validate_current_graph": self.validate_current_graph,
+            "exit_module": self.exit_module,
         }
+        return SHORTCUT_CALLBACKS
+
+    def _install_shortcuts(self) -> None:
+        # Clear any previously installed shortcuts
+        for old in getattr(self, "shortcuts", []):
+            if hasattr(old, "setEnabled"):
+                old.setEnabled(False)
         self.shortcuts: list[Any] = []
-        for sequence, callback in shortcuts.items():
-            shortcut = QShortcut(QKeySequence(sequence), self)
-            shortcut.activated.connect(callback)
+        custom = load_custom_shortcuts()
+        callbacks = self._shortcut_callbacks()
+        for key, (label, default_seq) in SHORTCUT_DEFAULTS.items():
+            if key == SHORTCUT_SEPARATOR or not label:
+                continue
+            seq = custom.get(key, default_seq)
+            if not seq:
+                continue
+            cb = callbacks.get(key)
+            if cb is None:
+                continue
+            # Support combo/chord shortcuts: user enters "Ctrl+K Ctrl+S" (space-separated)
+            # QKeySequence expects "Ctrl+K, Ctrl+S" (comma-separated) for true chords.
+            # Single-key shortcuts (like "Delete", "F5", "Esc") pass through unchanged.
+            if " " in seq and "," not in seq:
+                # Convert space-separated chord to comma-separated for QKeySequence
+                qt_seq = seq.replace(" ", ", ")
+            else:
+                qt_seq = seq
+            shortcut = QShortcut(QKeySequence(qt_seq), self)
+            shortcut.activated.connect(cb)
             self.shortcuts.append(shortcut)
+
+    def open_shortcuts_editor(self) -> None:
+        custom = load_custom_shortcuts()
+        dialog = ShortcutsEditor(self, custom, self._on_shortcuts_changed)
+        dialog.show()
+
+    def _on_shortcuts_changed(self, custom: dict[str, str]) -> None:
+        # Uninstall old shortcuts and reinstall with new bindings
+        for shortcut in self.shortcuts:
+            shortcut.setEnabled(False)
+        self.shortcuts.clear()
+        self._install_shortcuts()
+        QMessageBox.information(self, "快捷键已更新", "快捷键已重新绑定，立即生效。")
 
     def default_graph(self) -> dict[str, Any]:
         return {
@@ -979,1237 +546,6 @@ class VisualEditorWindow(QMainWindow):
             },
         }
 
-    def _build_ui(self) -> None:
-        if not self.embedded:
-            toolbar = QToolBar("项目工具栏")
-            self.addToolBar(toolbar)
-            toolbar.addAction("新建", self.new_graph)
-            toolbar.addAction("项目向导", self.project_wizard)
-            toolbar.addAction("打开", self.open_graph)
-            toolbar.addAction("保存", self.save_graph)
-            toolbar.addAction("另存为", self.save_graph_as)
-            toolbar.addAction("撤销", self.undo)
-            toolbar.addAction("重做", self.redo)
-            toolbar.addAction("校验", self.validate_current_graph)
-            toolbar.addAction("生成", self.generate_application)
-            toolbar.addAction("快捷键", self.show_shortcuts)
-
-        root_splitter = QSplitter()
-        self.setCentralWidget(root_splitter)
-
-        left = QWidget()
-        left.setObjectName("NavRail")
-        left.setMinimumWidth(180)
-        left.setMaximumWidth(260)
-        left_layout = QVBoxLayout(left)
-        left_layout.setContentsMargins(10, 10, 10, 10)
-        title = QLabel("EFW")
-        title.setStyleSheet("font-size: 18pt; font-weight: 700; color: #ffffff;")
-        left_layout.addWidget(title)
-        left_layout.addWidget(QLabel("Project Builder"))
-        self.workflow_list = QListWidget()
-        workflow_steps = [
-            ("项目总览", "dashboard"),
-            ("模块装配", "assembly"),
-            ("资源规划", "resources"),
-            ("关系视图", "relations"),
-            ("代码补齐", "code"),
-            ("生成发布", "release"),
-        ]
-        role = Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole
-        for label, key in workflow_steps:
-            item = QListWidgetItem(label, self.workflow_list)
-            item.setData(role, key)
-        self.workflow_list.itemClicked.connect(self.switch_workflow_item)
-        left_layout.addWidget(self.workflow_list)
-        self.workflow_hint = QLabel("当前项目：从总览进入，按模块装配组件，最后校验生成。")
-        self.workflow_hint.setWordWrap(True)
-        self.workflow_hint.setStyleSheet("background: #151a24; border: 1px solid #242936; border-radius: 12px; padding: 10px; color: #b8c3d8;")
-        left_layout.addWidget(self.workflow_hint)
-        current_container_btn = QPushButton("进入选中对象")
-        current_container_btn.clicked.connect(self.open_selected_container)
-        left_layout.addWidget(current_container_btn)
-
-        self.palette_label = QLabel("快速添加")
-        left_layout.addWidget(self.palette_label)
-        self.palette = TemplatePalette(self)
-        self.palette.itemDoubleClicked.connect(lambda _item: self.add_selected_card())
-        for category, node_types in NODE_CATEGORIES:
-            header = QListWidgetItem(f"▾ {category}", self.palette)
-            header.setData(Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole, "__category__")
-            header.setBackground(QBrush(QColor("#233544")))
-            header.setForeground(QBrush(QColor("#ffecb3")))
-            for node_type in node_types:
-                template_type = NODE_TEMPLATES.get(node_type, {}).get("type", node_type)
-                item = QListWidgetItem(f"  {display_label(node_type)}  ({template_type})", self.palette)
-                item.setData(Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole, node_type)
-                theme = node_theme(template_type)
-                item.setBackground(QBrush(QColor(theme["bg"])))
-                item.setForeground(QBrush(QColor("#f4fbff")))
-        left_layout.addWidget(self.palette)
-        add_btn = QPushButton("添加到当前页面")
-        add_btn.clicked.connect(self.add_selected_card)
-        left_layout.addWidget(add_btn)
-        root_splitter.addWidget(left)
-
-        self.workspace_tabs = QTabWidget()
-        self.workspace_tabs.setMinimumWidth(360)
-        self.workspace_tabs.addTab(self._build_dashboard_tab(), "项目总览")
-        self.workspace_tabs.addTab(self._build_assembly_tab(), "模块装配")
-
-        canvas = QWidget()
-        canvas_layout = QVBoxLayout(canvas)
-        self.page_tabs = QTabBar()
-        self.page_tabs.setExpanding(False)
-        self.page_tabs.setTabsClosable(True)
-        self.page_tabs.currentChanged.connect(self.switch_page_tab)
-        self.page_tabs.tabCloseRequested.connect(self.close_page_tab)
-        canvas_layout.addWidget(self.page_tabs)
-        page_controls = QHBoxLayout()
-        page_controls.addWidget(QLabel("关系视图：用页面标签进入模块/状态机/Topic；连线从输出端口拖到输入端口。"))
-        zoom_out_btn = QPushButton("−")
-        zoom_out_btn.clicked.connect(lambda: self.zoom_relation_view(1 / 1.15))
-        zoom_in_btn = QPushButton("+")
-        zoom_in_btn.clicked.connect(lambda: self.zoom_relation_view(1.15))
-        zoom_reset_btn = QPushButton("100%")
-        zoom_reset_btn.clicked.connect(self.reset_relation_zoom)
-        root_btn = QPushButton("返回根项目")
-        root_btn.clicked.connect(self.exit_module)
-        page_controls.addWidget(zoom_out_btn)
-        page_controls.addWidget(zoom_in_btn)
-        page_controls.addWidget(zoom_reset_btn)
-        page_controls.addWidget(root_btn)
-        canvas_layout.addLayout(page_controls)
-        self.module_scope_label = QLabel("当前视图：根项目")
-        canvas_layout.addWidget(self.module_scope_label)
-        self.scene = QGraphicsScene()
-        self.view = BlueprintView(self.scene, self)
-        canvas_layout.addWidget(self.view)
-        self.workspace_tabs.addTab(canvas, "关系视图")
-        self.workspace_tabs.addTab(self._build_release_tab(), "生成发布")
-        root_splitter.addWidget(self.workspace_tabs)
-
-        inspector = QWidget()
-        inspector.setMinimumWidth(260)
-        inspector.setMaximumWidth(720)
-        inspector_layout = QVBoxLayout(inspector)
-        inspector_layout.setContentsMargins(8, 8, 8, 8)
-        inspector_title = QLabel("Inspector")
-        inspector_title.setStyleSheet("font-size: 14pt; font-weight: 700; color: #ffffff;")
-        inspector_layout.addWidget(inspector_title)
-        self.inspector_nav = QListWidget()
-        inspector_layout.addWidget(self.inspector_nav)
-        self.right_tabs = QTabWidget()
-        self.right_tabs.addTab(self._build_structure_tab(), "项目结构")
-        self.right_tabs.addTab(self._build_properties_tab(), "属性表单")
-        self.right_tabs.addTab(self._build_code_tab(), "代码")
-        self.right_tabs.addTab(self._build_validation_tab(), "实时校验")
-        self.right_tabs.addTab(self._build_mapping_tab(), "生成映射")
-        self.right_tabs.addTab(self._build_file_tree_tab(), "文件树预览")
-        self.right_tabs.addTab(self._build_schedule_tab(), "任务调度")
-        self.right_tabs.addTab(self._build_pin_planner_tab(), "Board Profile / Pin Planner")
-        self.right_tabs.addTab(self._build_json_tab(), "Graph JSON")
-        for index in range(self.right_tabs.count()):
-            item = QListWidgetItem(self.right_tabs.tabText(index), self.inspector_nav)
-            item.setData(role, index)
-        self.inspector_nav.currentRowChanged.connect(self.switch_inspector_panel)
-        self.inspector_nav.setCurrentRow(0)
-        self.right_tabs.tabBar().hide()
-        inspector_layout.addWidget(self.right_tabs, 1)
-        root_splitter.addWidget(inspector)
-        root_splitter.setChildrenCollapsible(True)
-        root_splitter.setSizes([210, 620, 320])
-
-    def switch_inspector_panel(self, row: int) -> None:
-        if hasattr(self, "right_tabs") and 0 <= row < self.right_tabs.count():
-            self.right_tabs.setCurrentIndex(row)
-
-    def _build_dashboard_tab(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.addWidget(QLabel("项目总览：先看项目状态，再进入模块装配或生成发布。"))
-        self.dashboard_output = QPlainTextEdit()
-        self.dashboard_output.setReadOnly(True)
-        layout.addWidget(self.dashboard_output)
-        buttons = QHBoxLayout()
-        for text, callback in [
-            ("进入模块装配", lambda: self.set_workspace("模块装配")),
-            ("校验项目", self.validate_current_graph),
-            ("生成发布", lambda: self.set_workspace("生成发布")),
-        ]:
-            button = QPushButton(text)
-            button.clicked.connect(callback)
-            buttons.addWidget(button)
-        layout.addLayout(buttons)
-        return widget
-
-    def _build_assembly_tab(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.addWidget(QLabel("模块装配：以模块为单位组织 HAL / Sensor / Actuator / Algorithm / Task / Event / State。"))
-        self.module_list = QListWidget()
-        self.module_list.itemClicked.connect(self.open_module_item)
-        layout.addWidget(self.module_list)
-        buttons = QHBoxLayout()
-        add_module_btn = QPushButton("新增模块")
-        add_module_btn.clicked.connect(self.add_project_module)
-        open_module_btn = QPushButton("进入模块")
-        open_module_btn.clicked.connect(self.open_selected_module_from_list)
-        relation_btn = QPushButton("查看关系")
-        relation_btn.clicked.connect(lambda: self.set_workspace("关系视图"))
-        buttons.addWidget(add_module_btn)
-        buttons.addWidget(open_module_btn)
-        buttons.addWidget(relation_btn)
-        layout.addLayout(buttons)
-        return widget
-
-    def _build_release_tab(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.addWidget(QLabel("生成发布：把校验、缺失回调、资源冲突和生成预览汇总成清单。"))
-        self.release_output = QPlainTextEdit()
-        self.release_output.setReadOnly(True)
-        layout.addWidget(self.release_output)
-        buttons = QHBoxLayout()
-        validate_btn = QPushButton("刷新检查")
-        validate_btn.clicked.connect(lambda: self.refresh_validation_panel(show_dialog=False))
-        generate_btn = QPushButton("生成 application")
-        generate_btn.clicked.connect(self.generate_application)
-        buttons.addWidget(validate_btn)
-        buttons.addWidget(generate_btn)
-        layout.addLayout(buttons)
-        return widget
-
-    def _build_properties_tab(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        self.selected_label = QLabel("未选择卡片")
-        layout.addWidget(self.selected_label)
-        self.ports_label = QLabel("端口：未选择")
-        self.ports_label.setWordWrap(True)
-        layout.addWidget(self.ports_label)
-        self.property_table = QTableWidget(0, 4)
-        self.property_table.setHorizontalHeaderLabels(["属性", "值", "控件类型", "契约"])
-        self.property_table.setMinimumHeight(120)
-        layout.addWidget(self.property_table)
-        apply_form_btn = QPushButton("应用表单")
-        apply_form_btn.clicked.connect(self.apply_property_form)
-        layout.addWidget(apply_form_btn)
-        layout.addWidget(QLabel("当前卡片回调实现："))
-        callback_row = QHBoxLayout()
-        self.callback_select = QComboBox()
-        self.callback_select.currentTextChanged.connect(self.load_selected_callback_implementation)
-        save_callback_btn = QPushButton("保存到 app_custom.c")
-        save_callback_btn.clicked.connect(self.save_selected_callback_implementation)
-        open_code_btn = QPushButton("打开代码页")
-        open_code_btn.clicked.connect(lambda: self.set_right_tab("代码"))
-        callback_row.addWidget(self.callback_select)
-        callback_row.addWidget(save_callback_btn)
-        callback_row.addWidget(open_code_btn)
-        layout.addLayout(callback_row)
-        self.callback_preview_output = QPlainTextEdit()
-        self.callback_preview_output.setMaximumHeight(180)
-        self.callback_preview_output.setFont(QFont("Consolas", 9))
-        layout.addWidget(self.callback_preview_output)
-        layout.addWidget(QLabel("高级 JSON（复杂数组/对象可在这里编辑）"))
-        self.node_json_editor = QPlainTextEdit()
-        self.node_json_editor.setMaximumHeight(150)
-        layout.addWidget(self.node_json_editor)
-        apply_btn = QPushButton("应用 JSON")
-        apply_btn.clicked.connect(self.apply_node_json)
-        delete_btn = QPushButton("删除卡片")
-        delete_btn.clicked.connect(self.delete_selected_node)
-        layout.addWidget(apply_btn)
-        layout.addWidget(delete_btn)
-        return widget
-
-    def _build_pin_planner_tab(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.addWidget(QLabel("Board Profile 与 Pin Planner：只做资源规划和冲突检查，会写回 Graph/app_board_config.h；不会自动生成 STM32 HAL、ESP-IDF 或 DriverLib 调用。真实硬件代码请放入 board_adapters。"))
-        self.board_profile_edit = QComboBox()
-        self.board_profile_edit.addItems(list(BOARD_PROFILES))
-        layout.addWidget(self.board_profile_edit)
-        profile_btn = QPushButton("套用 Board Profile 默认资源")
-        profile_btn.clicked.connect(self.apply_board_profile_defaults)
-        layout.addWidget(profile_btn)
-        self.pin_table = QTableWidget(0, 5)
-        self.pin_table.setHorizontalHeaderLabels(["节点", "用途", "端口/定时器", "引脚/通道", "备注"])
-        layout.addWidget(self.pin_table)
-        apply_btn = QPushButton("应用 Pin Planner")
-        apply_btn.clicked.connect(self.apply_pin_planner)
-        layout.addWidget(apply_btn)
-        return widget
-
-    def _build_validation_tab(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.addWidget(QLabel("校验错误列表（点击可定位到相关卡片）："))
-        self.validation_list = QListWidget()
-        self.validation_list.itemClicked.connect(self.open_validation_item)
-        layout.addWidget(self.validation_list)
-        self.validation_output = QPlainTextEdit()
-        self.validation_output.setReadOnly(True)
-        layout.addWidget(self.validation_output)
-        run_btn = QPushButton("立即校验")
-        run_btn.clicked.connect(self.validate_current_graph)
-        layout.addWidget(run_btn)
-        return widget
-
-    def _build_mapping_tab(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        self.mapping_output = QPlainTextEdit()
-        self.mapping_output.setReadOnly(True)
-        layout.addWidget(self.mapping_output)
-        return widget
-
-    def _build_structure_tab(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        self.structure_output = QPlainTextEdit()
-        self.structure_output.setReadOnly(True)
-        layout.addWidget(self.structure_output)
-        return widget
-
-    def _build_file_tree_tab(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        self.file_tree_output = QPlainTextEdit()
-        self.file_tree_output.setReadOnly(True)
-        layout.addWidget(self.file_tree_output)
-        return widget
-
-    def _build_schedule_tab(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        self.schedule_output = QPlainTextEdit()
-        self.schedule_output.setReadOnly(True)
-        layout.addWidget(self.schedule_output)
-        return widget
-
-    def shortcuts_text(self) -> str:
-        return """快捷键
-Ctrl+N    新建 Graph
-Ctrl+O    打开 Graph
-Ctrl+S    保存 Graph
-Ctrl+Shift+S  另存为 Graph
-Ctrl+Z    撤销
-Ctrl+Y    重做
-Ctrl+G    生成 application
-Ctrl+M    添加当前选中的模板卡片
-Delete / Backspace 删除当前卡片
-Ctrl++ / Ctrl+- 关系视图缩放
-Ctrl+0    关系视图恢复 100%
-Ctrl+1..4 快速切换：总览 / 模块装配 / 关系视图 / 生成发布
-Alt+1..4  快速切换 Inspector：项目结构 / 属性 / 代码 / 校验
-F5        实时校验
-Esc       返回根项目页面
-
-当前阶段先固定快捷键，避免设置项和项目文件格式过早复杂化；如果后续用户频繁冲突，再加入可配置快捷键。"""
-
-    def show_shortcuts(self) -> None:
-        QMessageBox.information(self, "快捷键", self.shortcuts_text())
-
-    def _build_code_tab(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(6, 6, 6, 6)
-        header = QHBoxLayout()
-        title = QLabel("Code Workspace")
-        title.setStyleSheet("font-size: 13pt; font-weight: 700; color: #ffffff;")
-        self.code_status_label = QLabel("未选择文件")
-        self.code_status_label.setStyleSheet("color: #8f9db2;")
-        header.addWidget(title)
-        header.addWidget(self.code_status_label)
-        layout.addLayout(header)
-        row = QHBoxLayout()
-        self.code_files = QListWidget()
-        self.code_files.setMaximumWidth(120)
-        self.code_files.currentRowChanged.connect(self.select_code_file)
-        row.addWidget(self.code_files, 1)
-        self.code_editor = QPlainTextEdit()
-        self.code_editor.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap if hasattr(QPlainTextEdit, "LineWrapMode") else QPlainTextEdit.NoWrap)
-        code_font = QFont("Consolas", 10)
-        self.code_editor.setFont(code_font)
-        self.code_editor.setTabStopDistance(QFontMetrics(code_font).horizontalAdvance("  "))
-        self.code_editor.setStyleSheet("background: #0b1020; color: #dce7ff; border: 1px solid #242936; border-radius: 12px; padding: 10px;")
-        row.addWidget(self.code_editor, 3)
-        layout.addLayout(row)
-        controls = QHBoxLayout()
-        add_btn = QPushButton("新建文件")
-        add_btn.clicked.connect(self.add_code_file)
-        apply_btn = QPushButton("保存代码")
-        apply_btn.clicked.connect(self.apply_code_file)
-        delete_btn = QPushButton("删除文件")
-        delete_btn.clicked.connect(self.delete_code_file)
-        format_btn = QPushButton("简单格式化")
-        format_btn.clicked.connect(self.format_code_file)
-        stub_btn = QPushButton("一键生成缺失回调")
-        stub_btn.clicked.connect(self.generate_missing_callbacks)
-        cond_btn = QPushButton("一键创建条件函数")
-        cond_btn.clicked.connect(self.generate_condition_callbacks)
-        controls.addWidget(add_btn)
-        controls.addWidget(apply_btn)
-        controls.addWidget(delete_btn)
-        controls.addWidget(format_btn)
-        controls.addWidget(stub_btn)
-        controls.addWidget(cond_btn)
-        layout.addLayout(controls)
-        layout.addWidget(QLabel("回调补齐清单（来自 codegen 契约）："))
-        self.callback_gap_output = QPlainTextEdit()
-        self.callback_gap_output.setReadOnly(True)
-        layout.addWidget(self.callback_gap_output)
-        layout.addWidget(QLabel("Custom code is saved in graph.custom_files and emitted beside generated application files."))
-        return widget
-
-    def _build_json_tab(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        self.graph_json_editor = QPlainTextEdit()
-        apply_btn = QPushButton("Apply Full Graph JSON")
-        apply_btn.clicked.connect(self.apply_full_json)
-        layout.addWidget(self.graph_json_editor)
-        layout.addWidget(apply_btn)
-        return widget
-
-    def refresh_all(self) -> None:
-        self.refresh_open_page_metadata()
-        self.refresh_page_tabs()
-        self.refresh_scene()
-        self.refresh_json_editor()
-        self.refresh_code_list()
-        self.refresh_pin_planner()
-        self.refresh_mapping_view()
-        self.refresh_structure_view()
-        self.refresh_file_tree_view()
-        self.refresh_schedule_view()
-        self.refresh_callback_gap_view()
-        self.refresh_validation_panel(show_dialog=False)
-        self.refresh_dashboard_view()
-        self.refresh_module_assembly_view()
-        self.refresh_release_view()
-        self.refresh_workflow_panel()
-        visible_ids = {node.get("id") for node in self.visible_nodes()}
-        if self.current_node_id not in visible_ids:
-            self.current_node_id = None
-        self.select_node(self.current_node_id)
-
-    def set_right_tab(self, title: str) -> None:
-        if not hasattr(self, "right_tabs"):
-            return
-        for index in range(self.right_tabs.count()):
-            if self.right_tabs.tabText(index) == title:
-                self.right_tabs.setCurrentIndex(index)
-                if hasattr(self, "inspector_nav"):
-                    self.inspector_nav.setCurrentRow(index)
-                return
-
-    def set_workspace(self, title: str) -> None:
-        if not hasattr(self, "workspace_tabs"):
-            return
-        for index in range(self.workspace_tabs.count()):
-            if self.workspace_tabs.tabText(index) == title:
-                self.workspace_tabs.setCurrentIndex(index)
-                return
-
-    def zoom_relation_view(self, factor: float) -> None:
-        if not hasattr(self, "view"):
-            return
-        current = getattr(self.view, "zoom_level", 1.0)
-        next_zoom = max(0.35, min(2.5, current * factor))
-        factor = next_zoom / current
-        self.view.scale(factor, factor)
-        self.view.zoom_level = next_zoom
-
-    def reset_relation_zoom(self) -> None:
-        if not hasattr(self, "view"):
-            return
-        self.view.resetTransform()
-        self.view.zoom_level = 1.0
-
-    def switch_workflow_item(self, item: QListWidgetItem) -> None:
-        role = Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole
-        step = item.data(role)
-        workspace_by_step = {
-            "dashboard": "项目总览",
-            "assembly": "模块装配",
-            "resources": "模块装配",
-            "relations": "关系视图",
-            "code": "关系视图",
-            "release": "生成发布",
-        }
-        right_by_step = {
-            "dashboard": "项目结构",
-            "assembly": "属性表单",
-            "resources": "Board Profile / Pin Planner",
-            "relations": "生成映射",
-            "code": "代码",
-            "release": "实时校验",
-        }
-        if step == "release":
-            self.refresh_validation_panel(show_dialog=False)
-        self.set_workspace(workspace_by_step.get(str(step), "项目总览"))
-        self.set_right_tab(right_by_step.get(str(step), "属性表单"))
-        self.refresh_workflow_panel()
-
-    def refresh_workflow_panel(self) -> None:
-        if not hasattr(self, "workflow_hint"):
-            return
-        page = self.active_page()
-        visible_count = len(self.visible_nodes())
-        selected = self.current_node_id or "未选择"
-        if page.get("kind") == "root":
-            next_step = "双击模块、状态机或 Topic 进入专用页面；根页面只表达顶层结构。"
-        elif page.get("kind") == "module":
-            next_step = "在这里添加 HAL/Sensor/Algorithm/Actuator/Task，再用端口表达关系。"
-        elif page.get("kind") == "state":
-            next_step = "添加 State / Transition，填写 condition 后校验。"
-        elif page.get("kind") == "comm":
-            next_step = "添加 Publisher / Subscriber，业务 publish 写在 Code 页。"
-        else:
-            next_step = "选择节点后编辑属性，校验通过再生成。"
-        self.workflow_hint.setText(f"当前页面：{page_title(page)}\n可见节点：{visible_count}\n当前选择：{selected}\n建议：{next_step}")
-        if hasattr(self, "palette_label"):
-            self.palette_label.setText(f"当前页面可添加组件：{page_title(page)}")
-
-    def open_selected_container(self) -> None:
-        node = self._find_node(self.current_node_id) if self.current_node_id else None
-        page = page_for_node(node) if node else None
-        if page:
-            self.open_page(page)
-            return
-        QMessageBox.information(self, "打开容器", "请先选择 project.module、state.machine 或 event.topic。普通组件会在当前页面编辑属性。")
-
-    def refresh_dashboard_view(self) -> None:
-        if not hasattr(self, "dashboard_output"):
-            return
-        nodes = self.graph.get("nodes", [])
-        modules = [node for node in nodes if node.get("type") == "project.module"]
-        topics = [node for node in nodes if node.get("type") == "event.topic"]
-        machines = [node for node in nodes if node.get("type") == "state.machine"]
-        missing = self.missing_callback_requirements()
-        conflicts = self.collect_pin_conflicts()
-        errors = [msg for msg in self.validation_messages if msg.startswith("❌")]
-        warnings = [msg for msg in self.validation_messages if msg.startswith("⚠️")]
-        project = self.graph.get("project", {})
-        board = self.graph.get("board", {})
-        lines = [
-            f"项目：{project.get('name', 'unnamed')}",
-            f"tick：{project.get('tick_ms', 1)} ms",
-            f"Board Profile：{board.get('profile', project.get('board_profile', 'generic-mock'))}",
-            "",
-            "装配状态",
-            f"- 模块：{len(modules)}",
-            f"- 组件：{len([node for node in nodes if node.get('type') != 'project.module'])}",
-            f"- Topic：{len(topics)}",
-            f"- 状态机：{len(machines)}",
-            f"- Flow：{len(self.graph.get('flows', []))}",
-            f"- Task：{len(self.graph.get('tasks', [])) + len([node for node in nodes if node.get('type') == 'task.periodic'])}",
-            "",
-            "发布就绪度",
-            f"- 校验错误：{len(errors)}",
-            f"- 警告：{len(warnings)}",
-            f"- 缺失回调：{len(missing)}",
-            f"- Pin 冲突：{len(conflicts)}",
-            "",
-            "建议路径",
-            "1. 到“模块装配”创建模块并添加组件。",
-            "2. 到“关系视图”确认模块、Topic、状态机关系。",
-            "3. 到“代码补齐”生成缺失回调并补业务逻辑。",
-            "4. 到“生成发布”检查清单并生成 application。",
-        ]
-        self.dashboard_output.setPlainText("\n".join(lines))
-
-    def refresh_module_assembly_view(self) -> None:
-        if not hasattr(self, "module_list"):
-            return
-        role = Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole
-        current = self.module_list.currentItem().data(role) if self.module_list.currentItem() else None
-        self.module_list.blockSignals(True)
-        self.module_list.clear()
-        modules = [node for node in self.graph.get("nodes", []) if node.get("type") == "project.module"]
-        for module in modules:
-            mid = str(module.get("id"))
-            children = [node for node in self.graph.get("nodes", []) if node.get("module") == mid or node.get("parent") == mid]
-            label = f"{module.get('display_name') or mid} ({mid}) · {len(children)} 个内部节点"
-            item = QListWidgetItem(label, self.module_list)
-            item.setData(role, mid)
-            if mid == current:
-                self.module_list.setCurrentItem(item)
-        if not modules:
-            QListWidgetItem("尚未创建模块。点击“新增模块”开始。", self.module_list)
-        self.module_list.blockSignals(False)
-
-    def refresh_release_view(self) -> None:
-        if not hasattr(self, "release_output"):
-            return
-        missing = self.missing_callback_requirements()
-        conflicts = self.collect_pin_conflicts()
-        errors = [msg for msg in self.validation_messages if msg.startswith("❌")]
-        warnings = [msg for msg in self.validation_messages if msg.startswith("⚠️")]
-        lines = ["生成发布检查清单", ""]
-        checks = [
-            (not errors, f"Graph 校验错误：{len(errors)}"),
-            (not warnings, f"警告：{len(warnings)}"),
-            (not missing, f"缺失回调：{len(missing)}"),
-            (not conflicts, f"Pin 冲突：{len(conflicts)}"),
-            (bool(self.graph.get("nodes")), "Graph 至少包含一个节点"),
-        ]
-        for ok, text in checks:
-            lines.append(("[OK] " if ok else "[TODO] ") + text)
-        if missing:
-            lines.append("")
-            lines.append("缺失回调：")
-            for item in missing[:12]:
-                lines.append(f"- {item['owner']}.{item['field']} -> {item['name']}")
-        if errors or warnings:
-            lines.append("")
-            lines.append("校验消息：")
-            for message in (errors + warnings)[:12]:
-                lines.append(f"- {message}")
-        self.release_output.setPlainText("\n".join(lines))
-
-    def open_module_item(self, item: QListWidgetItem) -> None:
-        role = Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole
-        module_id = item.data(role)
-        if module_id:
-            self.open_node_location(str(module_id))
-
-    def open_selected_module_from_list(self) -> None:
-        if not hasattr(self, "module_list"):
-            return
-        item = self.module_list.currentItem()
-        if item:
-            self.open_module_item(item)
-
-    def add_project_module(self) -> None:
-        base_id = "module"
-        existing = {node.get("id") for node in self.graph.get("nodes", [])}
-        index = 1
-        new_id = f"{base_id}_{index}"
-        while new_id in existing:
-            index += 1
-            new_id = f"{base_id}_{index}"
-        module = copy.deepcopy(NODE_TEMPLATES["project.module"])
-        module["id"] = new_id
-        module["display_name"] = f"模块 {index}"
-        self.push_undo()
-        self.graph.setdefault("nodes", []).append(module)
-        self.current_node_id = new_id
-        self.refresh_all()
-        self.open_node_location(new_id)
-
-    def active_page(self) -> dict[str, str]:
-        return next((page for page in self.open_pages if page.get("key") == self.active_page_key), self.open_pages[0])
-
-    def visible_nodes(self) -> list[dict[str, Any]]:
-        return visible_nodes_for_page(self.graph, self.active_page())
-
-    def page_source_node(self, page: dict[str, str] | None = None) -> dict[str, Any] | None:
-        page = page or self.active_page()
-        if page.get("kind") == "root":
-            return None
-        return self._find_node(page.get("id"))
-
-    def refresh_open_page_metadata(self) -> None:
-        refreshed = [root_page()]
-        for page in self.open_pages[1:]:
-            source = self._find_node(page.get("id"))
-            next_page = page_for_node(source) if source else None
-            if next_page:
-                refreshed.append(next_page)
-        self.open_pages = refreshed
-        if not any(page.get("key") == self.active_page_key for page in self.open_pages):
-            self.active_page_key = "root"
-
-    def open_page(self, page: dict[str, str]) -> None:
-        source = self._find_node(page.get("id"))
-        refreshed = page_for_node(source) if source else page
-        if not any(item.get("key") == refreshed.get("key") for item in self.open_pages):
-            self.open_pages.append(refreshed)
-        self.active_page_key = refreshed.get("key", "root")
-        self.refresh_all()
-
-    def enter_module(self, module_id: str | None) -> None:
-        if not module_id:
-            return
-        node = self._find_node(module_id)
-        page = page_for_node(node or {"id": module_id, "type": "project.module"})
-        if page:
-            self.open_page(page)
-
-    def exit_module(self) -> None:
-        self.active_page_key = "root"
-        self.refresh_all()
-
-    def switch_page_tab(self, index: int) -> None:
-        if 0 <= index < len(self.open_pages):
-            self.active_page_key = self.open_pages[index].get("key", "root")
-            self.refresh_scene()
-            self.refresh_workflow_panel()
-            self.select_node(self.current_node_id if self.current_node_id in {node.get("id") for node in self.visible_nodes()} else None)
-
-    def close_page_tab(self, index: int) -> None:
-        if index <= 0 or index >= len(self.open_pages):
-            return
-        closing = self.open_pages[index].get("key")
-        del self.open_pages[index]
-        if self.active_page_key == closing:
-            self.active_page_key = self.open_pages[max(0, index - 1)].get("key", "root")
-        self.refresh_all()
-
-    def refresh_page_tabs(self) -> None:
-        if not hasattr(self, "page_tabs"):
-            return
-        self.page_tabs.blockSignals(True)
-        try:
-            while self.page_tabs.count():
-                self.page_tabs.removeTab(0)
-            for page in self.open_pages:
-                index = self.page_tabs.addTab(page_title(page))
-                self.page_tabs.setTabData(index, page.get("key"))
-                self.page_tabs.setTabToolTip(index, page_hint(page))
-            active_index = next((i for i, page in enumerate(self.open_pages) if page.get("key") == self.active_page_key), 0)
-            self.page_tabs.setCurrentIndex(active_index)
-            self.page_tabs.setTabEnabled(0, True)
-        finally:
-            self.page_tabs.blockSignals(False)
-
-    def page_positions(self) -> dict[str, list[float]]:
-        ui = self.graph.setdefault("ui", {})
-        by_page = ui.setdefault("positions_by_page", {})
-        page_key_value = self.active_page().get("key", "root")
-        page_positions = by_page.setdefault(page_key_value, {})
-        legacy = ui.get("positions", {})
-        for node_id, position in legacy.items():
-            page_positions.setdefault(node_id, position)
-        return page_positions
-
-    def refresh_scene(self) -> None:
-        if hasattr(self, "module_scope_label"):
-            summary = self.cross_page_edge_summary(self.active_page())
-        self.module_scope_label.setText(page_hint(self.active_page()) + ("\n" + summary if summary else ""))
-        if self.active_page().get("kind") == "comm":
-            topic = self.page_source_node()
-            if topic:
-                self.select_node(str(topic.get("id")))
-        self.scene.clear()
-        self.node_items.clear()
-        self.edge_items.clear()
-        positions = self.page_positions()
-        visible_nodes = self.visible_nodes()
-        placed: list[tuple[float, float, float, float]] = []
-        for index, node in enumerate(visible_nodes):
-            item = GraphNodeItem(node, self)
-            pos = positions.get(node.get("id"), [40 + index * 40, 60 + index * 150])
-            x = float(pos[0])
-            y = float(pos[1])
-            while any(not (x + item.WIDTH + 28 < px or x > px + pw + 28 or y + item.HEIGHT + 28 < py or y > py + ph + 28) for px, py, pw, ph in placed):
-                y += 34
-            placed.append((x, y, item.WIDTH, item.HEIGHT))
-            item.setPos(QPointF(x, y))
-            self.scene.addItem(item)
-            self.node_items[node.get("id")] = item
-        self.refresh_edges()
-
-    def cross_page_edge_summary(self, page: dict[str, str]) -> str:
-        if page.get("kind") == "root":
-            return ""
-        visible_ids = {str(node.get("id")) for node in visible_nodes_for_page(self.graph, page)}
-        related = []
-        for edge in self.graph.get("edges", []):
-            if not isinstance(edge, dict):
-                continue
-            src = str(edge.get("from", ""))
-            dst = str(edge.get("to", ""))
-            if (src in visible_ids) ^ (dst in visible_ids):
-                related.append(f"{src} -> {dst} ({edge.get('kind', 'generic')})")
-        if not related:
-            return "跨页面关系：无"
-        preview = "；".join(related[:4])
-        suffix = f"；另有 {len(related) - 4} 条" if len(related) > 4 else ""
-        return f"跨页面关系：{preview}{suffix}"
-
-    def port_detail_tooltip(self, node: dict[str, Any], direction: str, port_type: str) -> str:
-        node_id = str(node.get("id", ""))
-        label = PORT_LABELS.get(port_type, port_type)
-        desc = PORT_DESCRIPTIONS.get(port_type, label)
-        lines = [f"{label} ({port_type})", f"方向: {direction}", desc, ""]
-        matches = []
-        for edge in self.graph.get("edges", []):
-            if not isinstance(edge, dict):
-                continue
-            if direction == "out" and edge.get("from") == node_id and edge.get("from_port") == port_type:
-                target = self._find_node(str(edge.get("to")))
-                effect = edge_effect_description(node, target, edge.get("from_port"), edge.get("to_port")) if target else ""
-                matches.append(f"连接到 {edge.get('to')} · {TYPE_LABELS.get(target.get('type'), target.get('type')) if target else 'unknown'} · {edge.get('kind', 'generic')} · {effect}")
-            if direction == "in" and edge.get("to") == node_id and edge.get("to_port") == port_type:
-                source = self._find_node(str(edge.get("from")))
-                effect = edge_effect_description(source, node, edge.get("from_port"), edge.get("to_port")) if source else ""
-                matches.append(f"来自 {edge.get('from')} · {TYPE_LABELS.get(source.get('type'), source.get('type')) if source else 'unknown'} · {edge.get('kind', 'generic')} · {effect}")
-        if matches:
-            lines.append("当前连接：")
-            lines.extend(f"- {item}" for item in matches)
-        else:
-            lines.append("当前未连接。拖到兼容端口即可建立关系。")
-        return "\n".join(lines)
-
-    def port_scene_center(self, node_id: str | None, port_type: str | None, direction: str) -> QPointF | None:
-        if not node_id or node_id not in self.node_items:
-            return None
-        item = self.node_items[node_id]
-        preferred = [port for port in item.ports if port.direction == direction and (not port_type or port.port_type == port_type)]
-        if not preferred:
-            preferred = [port for port in item.ports if port.direction == direction]
-        if preferred:
-            return preferred[0].sceneBoundingRect().center()
-        rect = item.sceneBoundingRect()
-        if direction == "out":
-            return QPointF(rect.right(), rect.center().y())
-        return QPointF(rect.left(), rect.center().y())
-
-    def edge_color(self, edge: dict[str, Any]) -> QColor:
-        kind = edge.get("kind", "generic")
-        by_kind = {
-            "contains": "#7e57c2",
-            "data_flow": "#42a5f5",
-            "hardware_dependency": "#26c6da",
-            "schedule": "#5c6bc0",
-            "control_flow": "#ec407a",
-            "event": "#ff7043",
-            "state_transition": "#26a69a",
-            "state_transition_from": "#26a69a",
-            "state_transition_to": "#80cbc4",
-            "code": "#90a4ae",
-            "generic": "#78909c",
-        }
-        return QColor(by_kind.get(str(kind), "#78909c"))
-
-    def edge_pen(self, edge: dict[str, Any]) -> QPen:
-        kind = str(edge.get("kind", "generic"))
-        width = 3 if kind == "control_flow" else 2
-        pen = QPen(self.edge_color(edge), width)
-        style_name = {
-            "contains": "DashLine",
-            "event": "DashDotLine",
-            "hardware_dependency": "DotLine",
-            "schedule": "DashLine",
-            "code": "DotLine",
-        }.get(kind)
-        if style_name:
-            try:
-                style = getattr(Qt.PenStyle, style_name)
-            except AttributeError:
-                style = getattr(Qt, style_name, None)
-            if style is not None:
-                pen.setStyle(style)
-        return pen
-
-    def refresh_edges(self) -> None:
-        for edge in self.edge_items:
-            self.scene.removeItem(edge)
-        self.edge_items = []
-        edges: list[dict[str, Any]] = [edge for edge in self.graph.get("edges", []) if isinstance(edge, dict)]
-        for flow in self.graph.get("flows", []):
-            if flow.get("type") == "control.line_follower":
-                sensor = flow.get("sensor")
-                sensor_node = self._find_node(sensor)
-                edges.extend([
-                    {"from": sensor_node.get("input") if sensor_node else self._line_input_id(), "from_port": "hal", "to": sensor, "to_port": "hal", "kind": "hardware_dependency"},
-                    {"from": sensor, "from_port": "sensor", "to": flow.get("pid"), "to_port": "sensor", "kind": "data_flow"},
-                    {"from": sensor, "from_port": "sensor", "to": flow.get("left_motor"), "to_port": "control", "kind": "control_flow"},
-                    {"from": sensor, "from_port": "sensor", "to": flow.get("right_motor"), "to_port": "control", "kind": "control_flow"},
-                    {"from": flow.get("pid"), "from_port": "algorithm", "to": flow.get("left_motor"), "to_port": "control", "kind": "control_flow"},
-                    {"from": flow.get("pid"), "from_port": "algorithm", "to": flow.get("right_motor"), "to_port": "control", "kind": "control_flow"},
-                ])
-        for edge in edges:
-            src = edge.get("from")
-            dst = edge.get("to")
-            if src in self.node_items and dst in self.node_items:
-                a = self.port_scene_center(src, edge.get("from_port"), "out")
-                b = self.port_scene_center(dst, edge.get("to_port"), "in")
-                if not a or not b:
-                    continue
-                line = QGraphicsLineItem()
-                line.setLine(a.x(), a.y(), b.x(), b.y())
-                line.setPen(self.edge_pen(edge))
-                kind_label = EDGE_KIND_LABELS.get(str(edge.get('kind', 'generic')), str(edge.get('kind', 'generic')))
-                effect = ""
-                src_node = self._find_node(src)
-                dst_node = self._find_node(dst)
-                if src_node and dst_node:
-                    effect = "\n生成/语义：" + edge_effect_description(src_node, dst_node, edge.get('from_port'), edge.get('to_port'))
-                tooltip = f"{kind_label}: {src}.{edge.get('from_port', 'out')} → {dst}.{edge.get('to_port', 'in')}{effect}"
-                line.setToolTip(tooltip)
-                line.setZValue(-1)
-                self.scene.addItem(line)
-                self.edge_items.append(line)
-
-    def refresh_json_editor(self) -> None:
-        self.graph_json_editor.setPlainText(json.dumps(self.graph, ensure_ascii=False, indent=2))
-        self.autosave_graph()
-
-    def refresh_code_list(self) -> None:
-        self.code_files.blockSignals(True)
-        self.code_files.clear()
-        for item in self.graph.setdefault("custom_files", []):
-            self.code_files.addItem(item.get("path", "unnamed.c"))
-        self.code_files.blockSignals(False)
-        if self.graph["custom_files"]:
-            self.code_files.setCurrentRow(0 if self.current_code_index is None else min(self.current_code_index, len(self.graph["custom_files"]) - 1))
-        else:
-            self.code_editor.clear()
-
-    def _line_input_id(self) -> str | None:
-        for node in self.graph.get("nodes", []):
-            if node.get("type") == "hal.gpio_line_input":
-                return node.get("id")
-        return None
-
-    def node_port_summary(self, node: dict[str, Any]) -> str:
-        rules = PORT_RULES.get(node.get("type"), {})
-        parts = []
-        for direction_label, direction_key in [("输入", "in"), ("输出", "out")]:
-            ports = rules.get(direction_key, [])
-            if ports:
-                labels = [f"{PORT_LABELS.get(port, port)}({port})" for port in ports]
-                parts.append(f"{direction_label}: " + ", ".join(labels))
-        return "端口：" + ("；".join(parts) if parts else "无")
-
-    def node_contract_summary(self, node: dict[str, Any]) -> str:
-        contract = NODE_CONTRACTS.get(str(node.get("type")), {})
-        if not contract:
-            return "Codegen 契约：未声明"
-        generated = ", ".join(contract.get("generated", [])) or "不生成 C 运行代码"
-        callbacks = contract.get("callbacks", {})
-        callback_parts = []
-        for field, signature_key in callbacks.items():
-            value = node.get(field)
-            if value:
-                callback_parts.append(f"{field}={value}: {callback_signature(signature_key)}")
-        callback_text = "；回调：" + "；".join(callback_parts) if callback_parts else "；回调：无"
-        return f"Codegen：{node_generation_label(str(node.get('type')))}；生成：{generated}{callback_text}；边界：{contract.get('boundary', '')}"
-
-    def node_action_hint(self, node: dict[str, Any]) -> str:
-        node_type = str(node.get("type"))
-        contract = NODE_CONTRACTS.get(node_type, {})
-        if node_type == "processor.custom":
-            return "行动：实现 process(ctx, in, out)。当它位于 Sensor → Processor → Algorithm/Actuator 数据流上时，codegen 会生成周期执行链；连接到 project.module 只声明模块接口。"
-        if node_type == "event.publisher":
-            return "行动：在 custom_files 的 task/module 回调中手写 efw_topic_publish()；该卡片只表达发布关系。"
-        if node_type == "project.module":
-            return "行动：把节点归属到该模块以整理页面；inputs/outputs 会进入 contract registry 校验，但当前仍不会生成独立 app_xxx_module.c/.h。"
-        if node_type == "actuator.motor":
-            return "行动：host mock 可编译验证；真实板卡需在板级适配中把 speed/dir 接到 PWM/GPIO。"
-        if node_type == "hal.gpio_line_input":
-            return "行动：host mock 可设置输入值；真实板卡需把 GPIO/ADC 读取接入板级适配。"
-        callbacks = contract.get("callbacks", {})
-        active = [field for field in callbacks if node.get(field)]
-        if active:
-            return "行动：点击 Code 页的一键生成缺失回调，随后在 custom_files/board_adapters 中补真实逻辑。"
-        if not contract.get("generated"):
-            return "行动：该节点不生成 C 运行代码，仅用于组织或说明。"
-        return "行动：检查 Graph 引用和周期，校验通过后即可生成 application。"
-
-    def select_node(self, node_id: str | None) -> None:
-        self.current_node_id = node_id
-        node = self._find_node(node_id) if node_id else None
-        if not node and node_id is None:
-            node = self.page_source_node()
-            if node:
-                self.current_node_id = node.get("id")
-        if not node:
-            self.selected_label.setText("未选择卡片")
-            if hasattr(self, "ports_label"):
-                self.ports_label.setText("端口：未选择")
-            self.node_json_editor.clear()
-            self.property_table.setRowCount(0)
-            if hasattr(self, "callback_preview_output"):
-                self.callback_preview_output.clear()
-            if hasattr(self, "callback_select"):
-                self.callback_select.clear()
-            return
-        prefix = "页面属性" if node.get("id") == self.active_page().get("id") else "已选择"
-        self.selected_label.setText(f"{prefix}: {node.get('id')} ({TYPE_LABELS.get(node.get('type'), node.get('type'))})")
-        if hasattr(self, "ports_label"):
-            self.ports_label.setText(self.node_port_summary(node) + "\n" + self.node_contract_summary(node))
-        self.node_json_editor.setPlainText(json.dumps(node, ensure_ascii=False, indent=2))
-        self.populate_property_form(node)
-        self.refresh_callback_selector(node)
-
-    def page_for_node_location(self, node: dict[str, Any] | None) -> dict[str, str] | None:
-        if not node:
-            return None
-        direct_page = page_for_node(node)
-        if direct_page:
-            return direct_page
-        owner_keys = ("topic", "machine", "module") if node.get("type") in {"event.publisher", "event.subscriber"} else ("module", "machine", "topic")
-        for owner_key in owner_keys:
-            owner_id = node.get(owner_key)
-            if not owner_id:
-                continue
-            owner = self._find_node(str(owner_id))
-            owner_page = page_for_node(owner) if owner else None
-            if owner_page:
-                return owner_page
-        return root_page()
-
-    def open_node_location(self, node_id: str | None) -> None:
-        node = self._find_node(str(node_id)) if node_id else None
-        page = self.page_for_node_location(node)
-        if page:
-            self.open_page(page)
-        self.select_node(str(node_id) if node_id else None)
-
-    def _find_node(self, node_id: str | None) -> dict[str, Any] | None:
-        for node in self.graph.get("nodes", []):
-            if node.get("id") == node_id:
-                return node
-        return None
-
-    def source_files_for_preview(self) -> list[dict[str, str]]:
-        return [item for item in self.graph.get("custom_files", []) + self.graph.get("board_adapters", []) if str(item.get("path", "")).endswith((".c", ".h"))]
-
-    def callback_names_for_node(self, node: dict[str, Any]) -> list[str]:
-        names = []
-        contract = NODE_CONTRACTS.get(str(node.get("type")), {})
-        for field in contract.get("callbacks", {}):
-            value = str(node.get(field, "")).strip()
-            if value:
-                names.append(value)
-        if node.get("type") == "task.periodic" and node.get("call"):
-            names.append(str(node.get("call")))
-        return names
-
-    def find_function_snippet(self, content: str, name: str) -> str | None:
-        span = self.find_function_span(content, name)
-        if not span:
-            return None
-        return content[span[0]:span[1]].strip()
-
-    def find_function_span(self, content: str, name: str) -> tuple[int, int] | None:
-        marker = content.find(name + "(")
-        if marker < 0:
-            marker = content.find(name + " (")
-        if marker < 0:
-            return None
-        start = content.rfind("\n", 0, marker) + 1
-        brace = content.find("{", marker)
-        if brace < 0:
-            end = content.find(";", marker)
-            return (start, end + 1) if end >= 0 else None
-        depth = 0
-        for index in range(brace, len(content)):
-            if content[index] == "{":
-                depth += 1
-            elif content[index] == "}":
-                depth -= 1
-                if depth == 0:
-                    return (start, index + 1)
-        return (start, len(content))
-
-    def refresh_callback_selector(self, node: dict[str, Any]) -> None:
-        if not hasattr(self, "callback_select"):
-            return
-        self.callback_select.blockSignals(True)
-        self.callback_select.clear()
-        names = self.callback_names_for_node(node)
-        self.callback_select.addItems(names or ["无回调"])
-        self.callback_select.blockSignals(False)
-        self.load_selected_callback_implementation(self.callback_select.currentText())
-
-    def refresh_callback_preview(self, node: dict[str, Any]) -> None:
-        if not hasattr(self, "callback_preview_output"):
-            return
-        names = self.callback_names_for_node(node)
-        if not names:
-            self.callback_preview_output.setPlainText("当前卡片没有声明回调函数。")
-            return
-        chunks = []
-        files = self.source_files_for_preview()
-        for name in names:
-            found = False
-            for item in files:
-                snippet = self.find_function_snippet(str(item.get("content", "")), name)
-                if snippet:
-                    chunks.append(f"// {item.get('path')} :: {name}\n{snippet}")
-                    found = True
-                    break
-            if not found:
-                chunks.append(f"// 未找到实现：{name}\n// 可到 Code 页点击“一键生成缺失回调”。")
-        self.callback_preview_output.setPlainText("\n\n".join(chunks))
-
-    def callback_stub_by_name(self, name: str) -> str:
-        for requirement in self.callback_requirements():
-            if requirement["name"] == name:
-                return self.callback_stub(requirement).strip()
-        return f"efw_status_t {name}(void) {{\n  return EFW_OK;\n}}"
-
-    def load_selected_callback_implementation(self, name: str) -> None:
-        if not hasattr(self, "callback_preview_output"):
-            return
-        if not name or name == "无回调":
-            self.callback_preview_output.setPlainText("当前卡片没有声明回调函数。")
-            return
-        for item in self.source_files_for_preview():
-            snippet = self.find_function_snippet(str(item.get("content", "")), name)
-            if snippet:
-                self.callback_preview_output.setPlainText(snippet)
-                return
-        self.callback_preview_output.setPlainText(self.callback_stub_by_name(name))
-
-    def save_selected_callback_implementation(self) -> None:
-        if not hasattr(self, "callback_select") or not hasattr(self, "callback_preview_output"):
-            return
-        name = self.callback_select.currentText().strip()
-        if not name or name == "无回调":
-            return
-        implementation = self.callback_preview_output.toPlainText().strip() + "\n"
-        files = self.graph.setdefault("custom_files", [])
-        target = next((item for item in files if item.get("path") == "app_custom.c"), None)
-        if target is None:
-            target = {"path": "app_custom.c", "content": "#include \"efw/efw.h\"\n\n"}
-            files.insert(0, target)
-        content = str(target.get("content", ""))
-        span = self.find_function_span(content, name)
-        self.push_undo()
-        if span:
-            content = content[:span[0]] + implementation + content[span[1]:]
-        else:
-            content = content.rstrip() + "\n\n" + implementation
-        target["content"] = content
-        self.current_code_index = files.index(target)
-        self.refresh_code_list()
-        self.select_code_file(self.current_code_index)
-        self.refresh_json_editor()
-
-    def update_node_position(self, node_id: str | None, pos: QPointF) -> None:
-        if not node_id:
-            return
-        self.page_positions()[node_id] = [round(pos.x(), 1), round(pos.y(), 1)]
-        self.refresh_json_editor()
-
-    def apply_page_ownership(self, template: dict[str, Any]) -> bool:
-        page = self.active_page()
-        kind = page.get("kind")
-        owner_id = page.get("id")
-        node_type = template.get("type")
-        if kind == "root":
-            allowed = {"project.module", "event.topic", "event.publisher", "event.subscriber", "custom.card"}
-            if node_type not in allowed:
-                QMessageBox.warning(self, "不能添加到系统模块视图", "系统模块视图只显示 project.module、模块输入/输出契约和事件发布订阅；请进入模块内部视图后再添加 HAL/Sensor/Processor/Algorithm/Actuator/Task/StateMachine。")
-                return False
-            if node_type == "custom.card":
-                template.setdefault("scope", "root")
-            return True
-        if kind == "module":
-            if node_type == "project.module":
-                template["parent"] = owner_id
-            elif node_type != "custom.card":
-                template["module"] = owner_id
-            else:
-                template["scope"] = f"module:{owner_id}"
-                template["module"] = owner_id
-            return True
-        if kind == "state":
-            allowed = {"state.state", "state.transition"}
-            if node_type not in allowed:
-                QMessageBox.warning(self, "页面类型不匹配", "状态机页面只允许添加 State / Transition；说明卡片请放在模块或根页面。")
-                return False
-            template["machine"] = owner_id
-            return True
-        if kind == "comm":
-            allowed = {"event.publisher", "event.subscriber", "custom.card"}
-            if node_type not in allowed:
-                QMessageBox.warning(self, "页面类型不匹配", "通信页面只建议添加 Publisher / Subscriber / 说明卡片。")
-                return False
-            if node_type != "custom.card":
-                template["topic"] = owner_id
-            else:
-                template["scope"] = f"comm:{owner_id}"
-            return True
-        return True
-
-    def add_selected_card(self) -> None:
-        item = self.palette.currentItem()
-        if not item:
-            return
-        role = Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole
-        node_type = item.data(role)
-        self.add_card_from_template(str(node_type))
-
-    def add_card_from_template(self, node_type: str, scene_pos: QPointF | None = None) -> None:
-        if node_type not in NODE_TEMPLATES:
-            return
-        template = copy.deepcopy(NODE_TEMPLATES[node_type])
-        if not self.apply_page_ownership(template):
-            return
-        base_id = template["id"]
-        existing = {node.get("id") for node in self.graph.get("nodes", [])}
-        suffix = 1
-        new_id = base_id
-        while new_id in existing:
-            suffix += 1
-            new_id = f"{base_id}_{suffix}"
-        template["id"] = new_id
-        self.push_undo()
-        self.graph.setdefault("nodes", []).append(template)
-        if scene_pos is None:
-            scene_pos = QPointF(80, 80)
-        self.page_positions()[new_id] = [round(scene_pos.x(), 1), round(scene_pos.y(), 1)]
-        self.current_node_id = new_id
-        self.refresh_all()
-
-
-
-    def update_open_pages_after_rename(self, old_id: str, new_id: str) -> None:
-        old_keys = {page_key(kind, old_id) for kind in ["module", "state", "comm"]}
-        key_map = {page_key(kind, old_id): page_key(kind, new_id) for kind in ["module", "state", "comm"]}
-        positions_by_page = self.graph.setdefault("ui", {}).setdefault("positions_by_page", {})
-        for old_key, new_key in key_map.items():
-            if old_key in positions_by_page and new_key not in positions_by_page:
-                positions_by_page[new_key] = positions_by_page.pop(old_key)
-        for page in self.open_pages:
-            if page.get("id") == old_id:
-                kind = page.get("kind", "root")
-                page["id"] = new_id
-                page["key"] = page_key(kind, new_id)
-        if self.active_page_key in old_keys:
-            active = next((page for page in self.open_pages if page.get("id") == new_id), None)
-            self.active_page_key = active.get("key", "root") if active else "root"
-
-    def rename_node_references(self, old_id: str, new_id: str) -> None:
-        if not old_id or not new_id or old_id == new_id:
-            return
-        reference_keys = {
-            "module", "parent", "machine", "from", "to", "topic", "source", "target",
-            "input", "hal_name", "comm_name", "sensor", "pid", "left_motor", "right_motor", "flow",
-        }
-        for node in self.graph.get("nodes", []):
-            for key in reference_keys:
-                if node.get(key) == old_id:
-                    node[key] = new_id
-        for edge in self.graph.get("edges", []):
-            if edge.get("from") == old_id:
-                edge["from"] = new_id
-            if edge.get("to") == old_id:
-                edge["to"] = new_id
-        for flow in self.graph.get("flows", []):
-            for key in reference_keys:
-                if flow.get(key) == old_id:
-                    flow[key] = new_id
-        for task in self.graph.get("tasks", []):
-            if task.get("flow") == old_id:
-                task["flow"] = new_id
-        ui = self.graph.setdefault("ui", {})
-        positions = ui.setdefault("positions", {})
-        if old_id in positions:
-            positions[new_id] = positions.pop(old_id)
-        for page_positions in ui.setdefault("positions_by_page", {}).values():
-            if old_id in page_positions:
-                page_positions[new_id] = page_positions.pop(old_id)
-        self.update_open_pages_after_rename(old_id, new_id)
 
     def property_choices(self, node: dict[str, Any], key: str) -> list[str]:
         return core_property_choices(self.graph, node, key, NODE_TEMPLATES)
@@ -2368,7 +704,6 @@ Esc       返回根项目页面
         node = self._find_node(self.current_node_id)
         if not node:
             return
-        self.push_undo()
         old_id = str(node.get("id", self.current_node_id))
         updated: dict[str, Any] = {}
         for row in range(self.property_table.rowCount()):
@@ -2392,6 +727,7 @@ Esc       返回根项目页面
                 value = parse_form_value(raw_value)
             updated[key] = value
         new_id = str(updated.get("id", old_id))
+        # Validate BEFORE push_undo to avoid useless undo entries on failure
         if new_id != c_ident(new_id):
             QMessageBox.warning(self, "ID 无效", "id 必须是合法 C 标识符：只能包含字母、数字、下划线，且不能以数字开头。")
             return
@@ -2406,11 +742,13 @@ Esc       返回根项目页面
         if any(item is not node and item.get("id") == new_id for item in self.graph.get("nodes", [])):
             QMessageBox.warning(self, "ID 重复", f"已经存在 id={new_id} 的卡片，请换一个唯一 id。")
             return
+        # All validation passed — now safe to push undo and apply
+        self.push_undo()
         if new_id != old_id:
             self.rename_node_references(old_id, new_id)
         nodes = self.graph.get("nodes", [])
         for idx, item in enumerate(nodes):
-            if item.get("id") == old_id or item.get("id") == new_id:
+            if item.get("id") == old_id:
                 nodes[idx] = updated
                 self.current_node_id = new_id
                 break
@@ -2459,6 +797,57 @@ Esc       返回根项目页面
         else:
             QMessageBox.information(self, "Board Profile", "已套用默认资源：\n" + "\n".join(notes[:12]))
         self.refresh_all()
+
+    def edit_board_profile(self) -> None:
+        """Open a dialog to add, edit, or remove Board Profiles in-Studio."""
+        from studio.model import BOARD_PROFILES as _bp, REPO_ROOT as _root
+        profile_path = _root / "examples" / "board_profiles" / "board_profiles.json"
+
+        dialog = QWidget(None, Qt.WindowType.Window if hasattr(Qt, "WindowType") else Qt.Window)
+        dialog.setWindowTitle("编辑 Board Profile")
+        dialog.resize(500, 420)
+        dlg_layout = QVBoxLayout(dialog)
+
+        dlg_layout.addWidget(QLabel("Board Profile 数据库（JSON 格式）：\n保存到 examples/board_profiles/board_profiles.json"))
+        editor = QPlainTextEdit()
+        editor.setPlainText(json.dumps(dict(_bp), ensure_ascii=False, indent=2))
+        dlg_layout.addWidget(editor)
+
+        hint = QLabel("格式：{\"profile-key\": {\"label\": \"显示名\", \"ports\": [\"A\",\"B\"], \"pins_per_port\": 16, \"timers\": [1,2], \"pwm_channels\": [1,2,3,4], \"notes\": \"备注\"}}")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #8f9db2; font-size: 9pt;")
+        dlg_layout.addWidget(hint)
+
+        buttons = QHBoxLayout()
+        save_btn = QPushButton("保存并刷新")
+        save_btn.clicked.connect(lambda: self._save_board_profiles(editor.toPlainText(), profile_path, dialog))
+        cancel_btn = QPushButton("取消")
+        cancel_btn.clicked.connect(dialog.close)
+        buttons.addWidget(save_btn)
+        buttons.addWidget(cancel_btn)
+        dlg_layout.addLayout(buttons)
+        dialog.show()
+
+    def _save_board_profiles(self, text: str, path: Path, dialog: QWidget) -> None:
+        try:
+            data = json.loads(text)
+            if not isinstance(data, dict):
+                raise ValueError("必须是 JSON 对象")
+            for key, profile in data.items():
+                if not isinstance(profile, dict):
+                    raise ValueError(f"\"{key}\" 的值必须是对象")
+                if "ports" not in profile:
+                    raise ValueError(f"\"{key}\" 缺少 ports 字段")
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            import studio.model as _model
+            _model.BOARD_PROFILES = data
+            self.board_profile_edit.clear()
+            self.board_profile_edit.addItems(list(data))
+            QMessageBox.information(self, "Board Profile", f"已保存 {len(data)} 个 Board Profile 到：\n{path}")
+            dialog.close()
+        except Exception as exc:
+            QMessageBox.warning(self, "格式错误", f"Board Profile JSON 无效：{exc}")
 
     def _add_combo_cell(self, row: int, col: int, choices: list[Any], value: Any) -> None:
         combo = QComboBox()
@@ -2762,6 +1151,7 @@ Esc       返回根项目页面
         return conflicts
 
     def add_graph_edge(self, src: dict[str, Any], dst: dict[str, Any], out_port: str = "out", in_port: str = "in", kind: str = "generic") -> None:
+        """Add an edge to the graph. Caller is responsible for `push_undo()` before calling."""
         edges = self.graph.setdefault("edges", [])
         src_id = src.get("id")
         dst_id = dst.get("id")
@@ -2774,177 +1164,7 @@ Esc       返回根项目页面
         for edge in edges:
             if edge.get("from") == src_id and edge.get("to") == dst_id and edge.get("from_port") == out_port and edge.get("to_port") == in_port:
                 return
-        self.push_undo()
         edges.append({"id": f"edge_{src_id}_{dst_id}_{len(edges) + 1}", "from": src_id, "to": dst_id, "from_port": out_port, "to_port": in_port, "kind": kind})
-
-    def existing_custom_code(self) -> str:
-        return "\n".join(item.get("content", "") for item in self.graph.get("custom_files", []))
-
-    def callback_requirements(self) -> list[dict[str, str]]:
-        requirements: list[dict[str, str]] = []
-        for node in self.graph.get("nodes", []):
-            contract = NODE_CONTRACTS.get(str(node.get("type")), {})
-            for field, signature_key in contract.get("callbacks", {}).items():
-                name = str(node.get(field, "")).strip()
-                if name:
-                    requirements.append({"owner": str(node.get("id")), "type": str(node.get("type")), "field": field, "name": name, "signature_key": signature_key})
-        for task in self.graph.get("tasks", []):
-            name = str(task.get("call", "")).strip()
-            if name:
-                requirements.append({"owner": str(task.get("id")), "type": "task.periodic", "field": "call", "name": name, "signature_key": "task.call"})
-        return requirements
-
-    def missing_callback_requirements(self) -> list[dict[str, str]]:
-        existing_content = self.existing_custom_code()
-        return [item for item in self.callback_requirements() if item["name"] not in existing_content]
-
-    def callback_stub(self, requirement: dict[str, str]) -> str:
-        name = requirement["name"]
-        signature_key = requirement["signature_key"]
-        params = CALLBACK_SIGNATURES.get(signature_key, "void")
-        if signature_key == "topic.callback":
-            return f"void {name}({params}) {{\n  EFW_UNUSED(topic_id);\n  EFW_UNUSED(data);\n  EFW_UNUSED(size);\n  EFW_UNUSED(user);\n}}\n"
-        if signature_key == "condition":
-            return f"int {name}(void) {{\n  /* TODO: return non-zero when this condition should pass. */\n  return 0;\n}}\n"
-        body_lines = []
-        if "ctx" in params:
-            body_lines.append("  EFW_UNUSED(ctx);")
-        if "buf" in params:
-            body_lines.append("  EFW_UNUSED(buf);")
-        if "len" in params:
-            body_lines.append("  EFW_UNUSED(len);")
-        if "actual" in params:
-            if signature_key == "hal.write":
-                body_lines.append("  if (actual) *actual = len;")
-            else:
-                body_lines.append("  if (actual) *actual = 0;")
-        if "out" in params:
-            body_lines.append("  EFW_UNUSED(out);")
-        if "cmd" in params:
-            body_lines.append("  EFW_UNUSED(cmd);")
-        if "const void *in" in params or "void *in" in params:
-            body_lines.append("  EFW_UNUSED(in);")
-        if "uint32_t cmd" in params:
-            body_lines.append("  EFW_UNUSED(cmd);")
-        if "arg" in params:
-            body_lines.append("  EFW_UNUSED(arg);")
-        body_lines.append("  return EFW_OK;")
-        return f"efw_status_t {name}({params}) {{\n" + "\n".join(body_lines) + "\n}\n"
-
-    def callback_stubs(self) -> list[str]:
-        seen: set[str] = set()
-        stubs: list[str] = []
-        for requirement in self.missing_callback_requirements():
-            name = requirement["name"]
-            if name in seen:
-                continue
-            seen.add(name)
-            stubs.append(self.callback_stub(requirement))
-        return stubs
-
-    def refresh_callback_gap_view(self) -> None:
-        if not hasattr(self, "callback_gap_output"):
-            return
-        missing = self.missing_callback_requirements()
-        lines = ["缺失回调 / 用户代码行动项", ""]
-        if missing:
-            for item in missing:
-                signature = callback_signature(item["signature_key"])
-                lines.append(f"- {item['owner']}.{item['field']} -> {item['name']}: {signature}，建议生成到 app_custom.c 或放入 board_adapters。")
-        else:
-            lines.append("- 当前没有缺失回调。")
-        doc_nodes = [node for node in self.graph.get("nodes", []) if not NODE_CONTRACTS.get(str(node.get("type")), {}).get("generated")]
-        if doc_nodes:
-            lines.append("")
-            lines.append("仅说明/组织节点：")
-            for node in doc_nodes:
-                lines.append(f"- {node.get('id')} [{node.get('type')}]：{self.node_action_hint(node)}")
-        self.callback_gap_output.setPlainText("\n".join(lines))
-
-    def callback_stubs_legacy(self) -> list[str]:
-        stubs: list[str] = []
-        existing_content = "\n".join(item.get("content", "") for item in self.graph.get("custom_files", []))
-        def has_symbol(name: str) -> bool:
-            return bool(name) and name in existing_content
-        for node in self.graph.get("nodes", []):
-            ntype = node.get("type")
-            for field, signature, body in [
-                ("init", "efw_status_t {name}(void *ctx)", "    EFW_UNUSED(ctx);\n    return EFW_OK;"),
-                ("read", "efw_status_t {name}(void *ctx, void *out)", "    EFW_UNUSED(ctx);\n    EFW_UNUSED(out);\n    return EFW_OK;"),
-                ("write", "efw_status_t {name}(void *ctx, const void *cmd)", "    EFW_UNUSED(ctx);\n    EFW_UNUSED(cmd);\n    return EFW_OK;"),
-                ("poll", "efw_status_t {name}(void *ctx)", "    EFW_UNUSED(ctx);\n    return EFW_OK;"),
-                ("run", "efw_status_t {name}(void *ctx, const void *in, void *out)", "    EFW_UNUSED(ctx);\n    EFW_UNUSED(in);\n    EFW_UNUSED(out);\n    return EFW_OK;"),
-                ("process", "efw_status_t {name}(void *ctx, const void *in, void *out)", "    EFW_UNUSED(ctx);\n    EFW_UNUSED(in);\n    EFW_UNUSED(out);\n    return EFW_OK;"),
-            ]:
-                name = node.get(field)
-                if name and not has_symbol(str(name)):
-                    if ntype == "hal.custom" and field == "read":
-                        stubs.append(f"efw_status_t {name}(void *ctx, void *buf, uint16_t len, uint16_t *actual) {{\n    EFW_UNUSED(ctx);\n    EFW_UNUSED(buf);\n    EFW_UNUSED(len);\n    if (actual) *actual = 0;\n    return EFW_OK;\n}}\n")
-                    elif ntype == "hal.custom" and field == "write":
-                        stubs.append(f"efw_status_t {name}(void *ctx, const void *buf, uint16_t len, uint16_t *actual) {{\n    EFW_UNUSED(ctx);\n    EFW_UNUSED(buf);\n    if (actual) *actual = len;\n    return EFW_OK;\n}}\n")
-                    else:
-                        stubs.append(signature.format(name=name) + " {\n" + body + "\n}\n")
-            if ntype == "event.subscriber" and node.get("callback") and not has_symbol(str(node.get("callback"))):
-                name = node.get("callback")
-                stubs.append(f"void {name}(uint16_t topic_id, const void *data, uint16_t size, void *user) {{\n    EFW_UNUSED(topic_id);\n    EFW_UNUSED(data);\n    EFW_UNUSED(size);\n    EFW_UNUSED(user);\n}}\n")
-            if ntype == "state.state":
-                for field in ["on_enter", "on_update", "on_exit"]:
-                    name = node.get(field)
-                    if name and not has_symbol(str(name)):
-                        stubs.append(f"efw_status_t {name}(void *ctx) {{\n    EFW_UNUSED(ctx);\n    return EFW_OK;\n}}\n")
-            if ntype == "state.transition" and node.get("condition") and not has_symbol(str(node.get("condition"))):
-                name = node.get("condition")
-                stubs.append(f"int {name}(void) {{\n    return 0;\n}}\n")
-            if ntype == "state.transition" and node.get("action") and not has_symbol(str(node.get("action"))):
-                name = node.get("action")
-                stubs.append(f"efw_status_t {name}(void) {{\n    return EFW_OK;\n}}\n")
-        for task in self.graph.get("tasks", []) + [n for n in self.graph.get("nodes", []) if n.get("type") == "task.periodic"]:
-            name = task.get("call")
-            if name and not has_symbol(str(name)):
-                stubs.append(f"efw_status_t {name}(void) {{\n    return EFW_OK;\n}}\n")
-        return stubs
-
-
-    def condition_stubs(self) -> list[str]:
-        self.apply_code_file(record_history=False)
-        existing_content = "\n".join(file.get("content", "") for file in self.graph.get("custom_files", []))
-        stubs: list[str] = []
-        for node in self.graph.get("nodes", []):
-            if node.get("type") == "state.transition":
-                name = str(node.get("condition", "")).strip()
-                if name and name not in existing_content:
-                    stubs.append(f"int {name}(void) {{\n  /* TODO: return non-zero when this condition should pass. */\n  return 0;\n}}\n")
-        return stubs
-
-    def generate_condition_callbacks(self) -> None:
-        stubs = self.condition_stubs()
-        if not stubs:
-            QMessageBox.information(self, "条件函数", "没有发现需要生成的条件函数。")
-            return
-        files = self.graph.setdefault("custom_files", [])
-        if not files:
-            files.append({"path": "app_custom.c", "content": "#include \"efw/efw.h\"\n\n"})
-        files[0]["content"] = files[0].get("content", "") + "\n/* Auto-generated condition stubs */\n" + "\n".join(stubs)
-        self.current_code_index = 0
-        self.refresh_code_list()
-        self.select_code_file(0)
-        self.refresh_json_editor()
-        QMessageBox.information(self, "条件函数", f"已生成 {len(stubs)} 个条件函数 stub。")
-
-    def generate_missing_callbacks(self) -> None:
-        self.apply_code_file(record_history=False)
-        stubs = self.callback_stubs()
-        if not stubs:
-            QMessageBox.information(self, "缺失回调", "没有发现需要生成的缺失回调。")
-            return
-        files = self.graph.setdefault("custom_files", [])
-        if not files:
-            files.append({"path": "app_custom.c", "content": "#include \"efw/efw.h\"\n\n"})
-        files[0]["content"] = files[0].get("content", "") + "\n/* Auto-generated missing callback stubs */\n" + "\n".join(stubs)
-        self.current_code_index = 0
-        self.refresh_code_list()
-        self.refresh_json_editor()
-        QMessageBox.information(self, "缺失回调", f"已生成 {len(stubs)} 个回调 stub 到 {files[0].get('path')}。")
 
     def _validation_target_from_message(self, message: str) -> str | None:
         ids = {str(node.get("id")) for node in self.graph.get("nodes", [])}
@@ -3033,6 +1253,10 @@ Esc       返回根项目页面
         return ok
 
     def begin_port_drag(self, port: PortItem) -> None:
+        # Clean up any previous drag line (e.g. from rapid double-click)
+        if self.drag_line:
+            self.scene.removeItem(self.drag_line)
+            self.drag_line = None
         self.drag_port = port
         center = port.sceneBoundingRect().center()
         self.drag_line = QGraphicsLineItem(center.x(), center.y(), center.x(), center.y())
@@ -3064,6 +1288,7 @@ Esc       返回根项目页面
         if not self.connect_ports(out_port, in_port):
             self.flash_invalid_connection(in_port)
             QMessageBox.warning(self, "连接无效", self.connection_failure_reason(out_port, in_port))
+            return
         self.refresh_all()
 
     def port_at(self, pos: QPointF) -> PortItem | None:
@@ -3073,13 +1298,18 @@ Esc       返回根项目页面
         return None
 
     def flash_invalid_connection(self, port: PortItem) -> None:
+        original = port.brush()
         port.setBrush(QBrush(QColor("#e53935")))
+        # Reset after 1.5s so the red flash doesn't persist forever
+        QTimer.singleShot(1500, lambda p=port, b=original: p.setBrush(b) if not p.scene() is None else None)
 
     def connect_ports(self, out_port: PortItem, in_port: PortItem) -> bool:
         src = out_port.node_item.node
         dst = in_port.node_item.node
         if not can_connect_ports(src, dst, out_port.port_type, in_port.port_type):
             return False
+        # Single undo point for the entire connect operation
+        self.push_undo()
         if not self._connect_pair(src, dst):
             return False
         self.add_graph_edge(src, dst, out_port.port_type, in_port.port_type, "port")
@@ -3104,7 +1334,6 @@ Esc       返回根项目页面
         QMessageBox.information(self, "端口连线", "请从卡片右侧输出端口圆点拖拽到另一张卡片左侧输入端口圆点；Studio 不再支持中心点选中连线。")
 
     def _connect_pair(self, src: dict[str, Any], dst: dict[str, Any]) -> bool:
-        self.push_undo()
         connected = apply_pair_semantics(src, dst, self.graph, c_ident_func=c_ident, overwrite=True)
         if connected and src.get("type") == "custom.code":
             QMessageBox.information(self, "Connect cards", "Use the Code tab to implement callbacks named by the selected custom card.")
@@ -3114,20 +1343,29 @@ Esc       返回根项目页面
         if not self.current_node_id:
             return
         try:
-            self.push_undo()
             updated = json.loads(self.node_json_editor.toPlainText())
             if not isinstance(updated, dict):
-                raise ValueError("card JSON must be an object")
+                raise ValueError("卡片 JSON 必须是对象类型，不能是数组或基本类型")
             old_id = str(self.current_node_id)
             new_id = str(updated.get("id", old_id))
+            # Validate new_id same as property form does
+            if new_id != c_ident(new_id):
+                raise ValueError(f"ID \"{new_id}\" 不是有效的 C 标识符（仅允许字母数字下划线，不能以数字开头）")
+            # Check for duplicate ID (exclude the current node itself)
+            nodes = self.graph.get("nodes", [])
+            if any(node.get("id") == new_id and node.get("id") != old_id for node in nodes):
+                raise ValueError(f"ID \"{new_id}\" 已被另一个卡片使用，请使用唯一标识")
             if new_id != old_id:
                 self.rename_node_references(old_id, new_id)
-            nodes = self.graph.get("nodes", [])
+            # Find by old_id only (not or-condition) to avoid matching wrong node
             for idx, node in enumerate(nodes):
-                if node.get("id") == old_id or node.get("id") == new_id:
+                if node.get("id") == old_id:
                     nodes[idx] = updated
                     self.current_node_id = new_id
                     break
+            else:
+                raise ValueError(f"找不到 ID 为 \"{old_id}\" 的节点，可能已被删除")
+            self.push_undo()
             self.refresh_all()
         except Exception as exc:  # noqa: BLE001 - UI needs a simple error dialog.
             QMessageBox.warning(self, "卡片 JSON 无效", str(exc))
@@ -3136,11 +1374,46 @@ Esc       返回根项目页面
         if not self.current_node_id:
             return
         self.push_undo()
-        self.graph["nodes"] = [node for node in self.graph.get("nodes", []) if node.get("id") != self.current_node_id]
+        node_id = self.current_node_id
+
+        # 1. Remove the node itself.
+        self.graph["nodes"] = [node for node in self.graph.get("nodes", []) if node.get("id") != node_id]
+
+        # 2. Remove edges that reference the deleted node.
+        self.graph["edges"] = [
+            edge for edge in self.graph.get("edges", [])
+            if edge.get("from") != node_id and edge.get("to") != node_id
+        ]
+
+        # 3. Remove flows that reference the deleted node via any reference key.
+        flow_refs = {"sensor", "pid", "left_motor", "right_motor", "flow", "source", "target", "input"}
+        self.graph["flows"] = [
+            flow for flow in self.graph.get("flows", [])
+            if not any(flow.get(key) == node_id for key in flow_refs)
+        ]
+
+        # 4. Remove tasks that reference the deleted node or its flow.
+        self.graph["tasks"] = [
+            task for task in self.graph.get("tasks", [])
+            if task.get("flow") != node_id and task.get("call") != node_id
+        ]
+
+        # 5. Clear dangling references in remaining nodes.
+        reference_keys = {
+            "module", "parent", "machine", "from", "to", "topic", "source", "target",
+            "input", "hal_name", "comm_name", "sensor", "pid", "left_motor", "right_motor", "flow",
+        }
+        for node in self.graph.get("nodes", []):
+            for key in reference_keys:
+                if node.get(key) == node_id:
+                    node[key] = ""
+
+        # 6. Clean up UI state.
         ui = self.graph.get("ui", {})
-        ui.get("positions", {}).pop(self.current_node_id, None)
+        ui.get("positions", {}).pop(node_id, None)
         for page_positions in ui.get("positions_by_page", {}).values():
-            page_positions.pop(self.current_node_id, None)
+            page_positions.pop(node_id, None)
+
         self.current_node_id = None
         self.refresh_all()
 
@@ -3186,15 +1459,21 @@ Esc       返回根项目页面
         self.code_editor.setPlainText(self.format_c_like_code(text))
 
     def format_c_like_code(self, text: str) -> str:
+        """Simple C code formatter: protect strings and comments, normalise whitespace and braces."""
         protected: list[str] = []
 
-        def protect_comment(match):
+        def protect(match: Any) -> str:
             protected.append(match.group(0))
-            return f"__COMMENT_{len(protected) - 1}__"
+            return f"__PROTECTED_{len(protected) - 1}__"
 
         import re
         text = text.replace("\r\n", "\n").replace("\t", "  ")
-        text = re.sub(r"/\*.*?\*/", protect_comment, text, flags=re.S)
+        # Protect in order: comments first, then string literals (so comments inside strings don't break)
+        text = re.sub(r"/\*.*?\*/", protect, text, flags=re.S)
+        text = re.sub(r"//[^\n]*", protect, text)
+        text = re.sub(r'"(?:[^"\\]|\\.)*"', protect, text)
+        text = re.sub(r"'(?:[^'\\]|\\.)'", protect, text)
+        # Normalise braces and semicolons
         text = re.sub(r"\s*([{};])\s*", r"\1\n", text)
         text = re.sub(r"\n\s*\n+", "\n", text)
         raw_lines = []
@@ -3211,11 +1490,11 @@ Esc       返回根项目页面
                 continue
             raw_lines.append(stripped)
 
-        result = []
+        result: list[str] = []
         indent = 0
         previous_blank = False
         for line in raw_lines:
-            if not line:
+            if not line.startswith("__PROTECTED_") and not line:
                 if not previous_blank:
                     result.append("")
                 previous_blank = True
@@ -3228,7 +1507,7 @@ Esc       返回根项目页面
                     result[-1] = result[-1].rstrip() + ";"
                 continue
             if line == "{":
-                if result and not result[-1].strip().startswith("#"):
+                if result and not result[-1].strip().startswith("#") and not result[-1].strip().startswith("__PROTECTED_"):
                     result[-1] = result[-1].rstrip() + " {"
                 else:
                     result.append("  " * indent + "{")
@@ -3239,7 +1518,7 @@ Esc       返回根项目页面
                 indent += 1
         formatted = "\n".join(result).strip()
         for index, comment in enumerate(protected):
-            formatted = formatted.replace(f"__COMMENT_{index}__", comment)
+            formatted = formatted.replace(f"__PROTECTED_{index}__", comment)
         return formatted + "\n"
 
     def delete_code_file(self) -> None:
@@ -3254,10 +1533,19 @@ Esc       返回根项目页面
         self.refresh_json_editor()
 
     def apply_full_json(self) -> None:
+        answer = QMessageBox.question(
+            self, "确认覆盖",
+            "确定要用 JSON 编辑器内容替换整个 Graph 吗？\n\n此操作会直接覆盖所有节点、连线和设置（可通过撤销恢复）。\n建议先用 Ctrl+S 保存当前 Graph 再操作。",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel,
+        )
+        yes = QMessageBox.StandardButton.Yes
+        if answer != yes:
+            return
         try:
             graph = json.loads(self.graph_json_editor.toPlainText())
             if not isinstance(graph, dict):
-                raise ValueError("graph JSON must be an object")
+                raise ValueError("Graph JSON 必须是对象类型，不能是数组或基本类型")
             self.push_undo()
             self.graph = graph
             self.current_node_id = None
@@ -3271,26 +1559,35 @@ Esc       返回根项目页面
     def project_wizard(self) -> None:
         templates = {
             "通用嵌入式应用": self.default_graph,
+            "空白画布（从零开始）": lambda: {"project": {"name": "blank_project", "tick_ms": 1}, "board": {"profile": "generic-mock", "pin_plan": []}, "nodes": [], "edges": [], "flows": [], "tasks": [], "custom_files": [{"path": "app_custom.c", "content": "#include \"efw/efw.h\"\n"}], "ui": {"positions": {}}},
             "空白多模块项目": lambda: {"project": {"name": "new_modular_app", "tick_ms": 1}, "board": {"profile": "generic-mock", "pin_plan": []}, "nodes": [copy.deepcopy(NODE_TEMPLATES["project.module"])], "edges": [], "flows": [], "tasks": [], "custom_files": [{"path": "app_custom.c", "content": "#include \"efw/efw.h\"\n"}], "ui": {"positions": {"control_module": [40, 40]}}},
             "状态机项目": lambda: {"project": {"name": "state_machine_app", "tick_ms": 1}, "board": {"profile": "generic-mock", "pin_plan": []}, "nodes": [copy.deepcopy(NODE_TEMPLATES["project.module"]), copy.deepcopy(NODE_TEMPLATES["state.machine"]), copy.deepcopy(NODE_TEMPLATES["state.state"]), copy.deepcopy(NODE_TEMPLATES["state.transition"])], "edges": [], "flows": [], "tasks": [], "custom_files": [{"path": "app_custom.c", "content": "#include \"efw/efw.h\"\n"}], "ui": {"positions": {}}},
         }
         choice, ok = QInputDialog.getItem(self, "项目向导", "选择模板", list(templates), 0, False)
         if not ok or not choice:
             return
+        if not self._confirm_discard_changes():
+            return
         self.graph_path = None
         self.push_undo()
         self.graph = templates[choice]()
         self.current_node_id = None
+        self._is_dirty = False
         self.refresh_all()
 
     def new_graph(self) -> None:
+        if not self._confirm_discard_changes():
+            return
         self.push_undo()
         self.graph_path = None
         self.graph = self.default_graph()
         self.current_node_id = None
+        self._is_dirty = False
         self.refresh_all()
 
     def open_graph(self) -> None:
+        if not self._confirm_discard_changes():
+            return
         path, _ = QFileDialog.getOpenFileName(self, "打开 Graph", str(REPO_ROOT / "examples" / "graphs"), "JSON (*.json)")
         if not path:
             return
@@ -3298,7 +1595,11 @@ Esc       返回根项目页面
         self.push_undo()
         self.graph = json.loads(self.graph_path.read_text(encoding="utf-8"))
         self.current_node_id = None
-        self.refresh_all()
+        self._is_dirty = False
+        # Check autosave BEFORE refresh_all — refresh_all creates a fresh autosave
+        recovered = self.check_autosave_recovery()
+        if not recovered:
+            self.refresh_all()
 
     def save_graph(self) -> None:
         if not self.graph_path:
@@ -3306,7 +1607,19 @@ Esc       返回根项目页面
             return
         self.apply_code_file(record_history=False)
         self.graph_path.write_text(json.dumps(self.graph, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        self._is_dirty = False
         self.refresh_json_editor()
+        # Content is safely on disk — delete the autosave so it won't trigger a false recovery prompt
+        self._autosave_for_current_graph().unlink(missing_ok=True)
+        # Show save confirmation on the visible status bar
+        msg = f"已保存 Graph：{self.graph_path.name}"
+        if self.embedded:
+            # Embedded in manager — status bar is on the top-level window
+            top = self.window()
+            if hasattr(top, "statusBar"):
+                top.statusBar().showMessage(msg, 4000)
+        else:
+            self.statusBar().showMessage(msg, 4000)
 
     def save_graph_as(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "保存 Graph", str(REPO_ROOT / "examples" / "graphs" / "line_tracking_car.json"), "JSON (*.json)")
@@ -3317,10 +1630,12 @@ Esc       返回根项目页面
 
     def generate_application(self) -> None:
         self.apply_code_file(record_history=False)
-        out_dir = QFileDialog.getExistingDirectory(self, "选择输出 application 目录")
+        default_dir = str(self._last_output_dir) if self._last_output_dir else str(REPO_ROOT / "application")
+        out_dir = QFileDialog.getExistingDirectory(self, "选择输出 application 目录", default_dir)
         if not out_dir:
             return
         out_path = Path(out_dir)
+        self._last_output_dir = out_path
         try:
             with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
                 json.dump(self.graph, tmp, ensure_ascii=False, indent=2)
