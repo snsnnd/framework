@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import copy
 import re
 import sys
 import tempfile
@@ -217,10 +218,15 @@ class ProjectManagerWindow(QMainWindow):
         self.loading_recent_path: Path | None = None
         self.graph_editor_windows: list[VisualEditorWindow] = []
         self.embedded_editor: VisualEditorWindow | None = None
+        self._project_dirty = False
+        self._form_sync_in_progress = False
         self.setStyleSheet(WORKBENCH_STYLESHEET)
         self._build_ui()
+        self._state_label = QLabel("已保存")
+        self.statusBar().addPermanentWidget(self._state_label)
         self.refresh_recent_list()
         self.load_project_to_form()
+        self.update_workspace_state()
 
     def _build_ui(self) -> None:
         toolbar = QToolBar("项目工具栏")
@@ -228,7 +234,7 @@ class ProjectManagerWindow(QMainWindow):
         toolbar.addAction("新建", self.new_project)
         toolbar.addAction("项目创建向导", self.project_wizard)
         toolbar.addAction("打开", self.open_project)
-        toolbar.addAction("保存项目", self.save_project)
+        toolbar.addAction("保存全部", self.save_project)
         toolbar.addAction("项目另存为", self.save_project_as)
         toolbar.addAction("实时校验", self.validate_current_graph)
         toolbar.addAction("生成", self.generate_application)
@@ -274,6 +280,10 @@ class ProjectManagerWindow(QMainWindow):
         root.addWidget(QLabel("说明 / 交接清单"))
         self.notes_edit = QPlainTextEdit()
         root.addWidget(self.notes_edit)
+        self.save_state_label = QLabel("保存状态：已保存")
+        self.save_state_label.setWordWrap(True)
+        self.save_state_label.setStyleSheet("background: #151a24; border: 1px solid #242936; border-radius: 12px; padding: 8px; color: #b8c3d8;")
+        root.addWidget(self.save_state_label)
 
         buttons = QHBoxLayout()
         for text, callback in [
@@ -288,6 +298,9 @@ class ProjectManagerWindow(QMainWindow):
         splitter.addWidget(editor)
         splitter.setChildrenCollapsible(True)
         splitter.setSizes([220, 680])
+        self.output_edit.textChanged.connect(self._on_project_form_changed)
+        self.board_edit.currentTextChanged.connect(self._on_project_form_changed)
+        self.notes_edit.textChanged.connect(self._on_project_form_changed)
 
     def _path_row(self, edit: QLineEdit, callback) -> QWidget:
         widget = QWidget()
@@ -300,6 +313,7 @@ class ProjectManagerWindow(QMainWindow):
         return widget
 
     def load_project_to_form(self) -> None:
+        self._form_sync_in_progress = True
         self.project_file_label.setText(display_path(self.project_path) if self.project_path else "未保存")
         self.project_summary.setText(
             f"项目：{self.project.get('name', '')}\n"
@@ -312,6 +326,9 @@ class ProjectManagerWindow(QMainWindow):
             self.board_edit.addItem(profile)
         self.board_edit.setCurrentText(profile)
         self.notes_edit.setPlainText(str(self.project.get("notes", "")))
+        self._form_sync_in_progress = False
+        self._project_dirty = False
+        self.update_workspace_state()
 
     def apply_form_to_project(self) -> None:
         updated = dict(default_project())
@@ -324,6 +341,32 @@ class ProjectManagerWindow(QMainWindow):
             "notes": self.notes_edit.toPlainText(),
         })
         self.project = updated
+        self.update_workspace_state()
+
+    def _on_project_form_changed(self, *_args) -> None:
+        if self._form_sync_in_progress:
+            return
+        self._project_dirty = True
+        self.update_workspace_state()
+
+    def current_dirty_kinds(self) -> list[str]:
+        kinds: list[str] = []
+        if self._project_dirty:
+            kinds.append("项目")
+        if self.embedded_editor is not None:
+            if self.embedded_editor._is_dirty:
+                kinds.append("Graph")
+            if self.embedded_editor.code_buffer_is_dirty():
+                kinds.append("Code")
+        return kinds
+
+    def update_workspace_state(self) -> None:
+        kinds = self.current_dirty_kinds()
+        state_text = "已保存" if not kinds else "未保存：" + " / ".join(kinds)
+        self._state_label.setText(state_text)
+        self.save_state_label.setText(f"保存状态：{state_text}\n提示：在工作台里点击“保存全部”会同时保存项目描述、当前 Graph 和已应用到 Graph 的代码文件。")
+        suffix = " *" if kinds else ""
+        self.setWindowTitle(f"EFW 可视化项目工作台 ({QT_LIB}){suffix}")
 
     def refresh_recent_list(self) -> None:
         self.recent_list.blockSignals(True)
@@ -343,7 +386,27 @@ class ProjectManagerWindow(QMainWindow):
         save_recent_projects([text] + [item for item in current if item != text])
         self.refresh_recent_list()
 
+    def _confirm_workspace_discard_changes(self) -> bool:
+        if self._project_dirty:
+            answer = QMessageBox.question(
+                self,
+                "未保存的项目配置",
+                "当前项目页有未保存更改，是否先保存后再继续？",
+                QMessageBox.StandardButton.Save | QMessageBox.StandardButton.Discard | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Save,
+            )
+            if answer == QMessageBox.StandardButton.Cancel:
+                return False
+            if answer == QMessageBox.StandardButton.Save:
+                self.save_project()
+                return not self._project_dirty
+        if self.embedded_editor is not None and not self.embedded_editor._confirm_discard_changes():
+            return False
+        return True
+
     def new_project(self) -> None:
+        if not self._confirm_workspace_discard_changes():
+            return
         name, ok = QInputDialog.getText(self, "新建 EFW 项目", "项目名", text="new_efw_project")
         if not ok or not name.strip():
             return
@@ -352,6 +415,8 @@ class ProjectManagerWindow(QMainWindow):
         self.create_project_files(name.strip(), blank_graph(name.strip(), board), output_dir, board)
 
     def project_wizard(self) -> None:
+        if not self._confirm_workspace_discard_changes():
+            return
         templates = {
             "空白项目": ("new_efw_project", None, "application/generated_new_efw_project", "generic-mock"),
             "通用嵌入式应用": ("generic_embedded_app", "examples/graphs/generic_embedded_app.json", "application/generated_generic_embedded_app", "generic-mock"),
@@ -403,11 +468,15 @@ class ProjectManagerWindow(QMainWindow):
         self.load_project_to_form()
 
     def open_project(self) -> None:
+        if not self._confirm_workspace_discard_changes():
+            return
         path, _ = QFileDialog.getOpenFileName(self, "打开 EFW 项目", str(REPO_ROOT), f"EFW Project (*{PROJECT_SUFFIX});;JSON (*.json)")
         if path:
-            self.load_project_file(Path(path), remember=True)
+            self.load_project_file(Path(path), remember=True, confirm_discard=False)
 
     def open_recent_project(self, item: QListWidgetItem) -> None:
+        if not self._confirm_workspace_discard_changes():
+            return
         path_text = item.text()
         path = rel_or_abs(path_text)
         if self.loading_recent_path == path:
@@ -427,7 +496,7 @@ class ProjectManagerWindow(QMainWindow):
                 if answer == yes:
                     save_recent_projects([display_path(fallback) if p == path_text else p for p in load_recent_projects()])
                     self.refresh_recent_list()
-                    self.load_project_file(fallback, remember=True)
+                    self.load_project_file(fallback, remember=True, confirm_discard=False)
                     self.loading_recent_path = None
                     return
             remove_recent_project(path_text)
@@ -435,11 +504,11 @@ class ProjectManagerWindow(QMainWindow):
             QMessageBox.warning(self, "最近项目不存在", f"找不到项目文件，已从最近项目移除：\n{display_path(path)}\n\n提示：如果项目已移动到其他位置，请使用「打开项目」重新加载。")
             self.loading_recent_path = None
             return
-        self.load_project_file(path, remember=False)
+        self.load_project_file(path, remember=False, confirm_discard=False)
         self.loading_recent_path = None
 
-    def load_project_file(self, path: Path, remember: bool = True) -> None:
-        if self.embedded_editor is not None and not self.embedded_editor._confirm_discard_changes():
+    def load_project_file(self, path: Path, remember: bool = True, confirm_discard: bool = True) -> None:
+        if confirm_discard and not self._confirm_workspace_discard_changes():
             return
         if not path.exists():
             QMessageBox.warning(self, "项目不存在", f"找不到项目文件：\n{display_path(path)}")
@@ -468,11 +537,18 @@ class ProjectManagerWindow(QMainWindow):
             return
         graph_path = self.graph_path()
         if not graph_path.exists():
+            self.statusBar().showMessage(f"项目 Graph 不存在：{display_path(graph_path)}", 7000)
+            QMessageBox.warning(
+                self,
+                "Graph 不存在",
+                f"当前项目引用的 Graph 文件不存在：\n{display_path(graph_path)}\n\n请检查项目文件中的 graph_path，或先通过项目向导重新创建 Graph。",
+            )
             return
         self.embedded_editor.graph_path = graph_path
         self.embedded_editor.graph = json.loads(graph_path.read_text(encoding="utf-8"))
         self.embedded_editor.current_node_id = None
         self.embedded_editor._is_dirty = False
+        self.embedded_editor.state_changed_callback = self.update_workspace_state
         project_out = self.output_dir()
         if project_out != REPO_ROOT / "application" / "generated_generic_embedded_app":
             self.embedded_editor._last_output_dir = project_out
@@ -480,15 +556,18 @@ class ProjectManagerWindow(QMainWindow):
         recovered = self.embedded_editor.check_autosave_recovery()
         if not recovered:
             self.embedded_editor.refresh_all()
+        self.update_workspace_state()
 
     def save_project(self) -> None:
         if self.project_path is None:
             self.save_project_as()
             return
-        self.save_embedded_graph()
         self.apply_form_to_project()
+        self.save_embedded_graph()
         self.project_path.write_text(json.dumps(self.project, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         self.add_recent_project(self.project_path)
+        self._project_dirty = False
+        self.update_workspace_state()
         self.statusBar().showMessage(f"已保存项目：{display_path(self.project_path)}", 5000)
 
     def save_embedded_graph(self) -> None:
@@ -498,7 +577,7 @@ class ProjectManagerWindow(QMainWindow):
         if not graph_path:
             return
         self.embedded_editor.graph_path = graph_path
-        self.embedded_editor.save_graph()
+        self.embedded_editor._write_graph_to_disk(show_feedback=False)
 
     def save_project_as(self) -> None:
         default_name = f"{project_slug(str(self.project.get('name', 'efw_project')))}{PROJECT_SUFFIX}"
@@ -521,7 +600,11 @@ class ProjectManagerWindow(QMainWindow):
 
     def project_graph(self) -> dict[str, Any]:
         graph_path = self.graph_path()
-        graph = json.loads(graph_path.read_text(encoding="utf-8"))
+        if self.embedded_editor is not None and self.embedded_editor.graph_path == graph_path:
+            self.embedded_editor.apply_code_file(record_history=False)
+            graph = copy.deepcopy(self.embedded_editor.graph)
+        else:
+            graph = json.loads(graph_path.read_text(encoding="utf-8"))
         if not isinstance(graph, dict):
             raise ValueError("Graph JSON root must be an object")
         board = graph.setdefault("board", {})
@@ -539,7 +622,7 @@ class ProjectManagerWindow(QMainWindow):
         except Exception as exc:  # noqa: BLE001 - UI validation dialog should show exact validator message.
             QMessageBox.warning(self, "Graph 无效", str(exc))
             return False
-        QMessageBox.information(self, "Graph 有效", f"Graph 校验通过：\n{display_path(graph_path)}")
+        QMessageBox.information(self, "Graph 有效", f"Graph 校验通过：\n{display_path(graph_path)}\n\n下一步建议：\n1. 打开“项目装配”修正黄色/红色提示\n2. 再执行生成 application")
         return True
 
     def generate_application(self) -> None:
@@ -567,19 +650,20 @@ class ProjectManagerWindow(QMainWindow):
         finally:
             if tmp_path is not None:
                 tmp_path.unlink(missing_ok=True)
-        QMessageBox.information(self, "已生成", f"已生成 application:\n{display_path(out_dir)}")
+        QMessageBox.information(self, "已生成", f"已生成 application：\n{display_path(out_dir)}\n\n下一步建议：\n1. 查看生成映射和文件树\n2. 在真实板卡工程中补 board_adapters\n3. 用 CMake/IDE 做一次编译验证")
 
     def open_graph_editor(self) -> None:
         self.apply_form_to_project()
         graph_path = self.graph_path()
         if self.embedded_editor is None:
             self.embedded_editor = VisualEditorWindow(embedded=True)
+            self.embedded_editor.state_changed_callback = self.update_workspace_state
             self.workspace_tabs.addTab(self.embedded_editor, "项目装配")
         self.sync_embedded_editor_to_project()
         self.workspace_tabs.setCurrentWidget(self.embedded_editor)
 
     def closeEvent(self, event: Any) -> None:
-        if self.embedded_editor is None or self.embedded_editor._confirm_discard_changes():
+        if self._confirm_workspace_discard_changes():
             event.accept()
         else:
             event.ignore()

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -30,6 +31,16 @@ else:
     QT_LIB = "missing"
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+
+
+def shortcuts_config_path() -> Path:
+    appdata = os.environ.get("APPDATA")
+    if appdata:
+        return Path(appdata) / "efw" / "studio_shortcuts.json"
+    xdg = os.environ.get("XDG_CONFIG_HOME")
+    if xdg:
+        return Path(xdg) / "efw" / "studio_shortcuts.json"
+    return Path.home() / ".config" / "efw" / "studio_shortcuts.json"
 
 SHORTCUT_DEFAULTS: dict[str, tuple[str, str]] = {
     # (display_name, default_key_sequence)
@@ -67,23 +78,26 @@ SHORTCUT_SEPARATOR = "undo_skip"
 
 SHORTCUT_CALLBACKS: dict[str, Any] = {}  # populated at install time
 
-SHORTCUTS_CONFIG_PATH = REPO_ROOT / ".efw_shortcuts.json"
+SHORTCUTS_CONFIG_PATH = shortcuts_config_path()
+LEGACY_SHORTCUTS_CONFIG_PATH = REPO_ROOT / ".efw_shortcuts.json"
 
 
 def load_custom_shortcuts() -> dict[str, str]:
-    if not SHORTCUTS_CONFIG_PATH.exists():
-        return {}
-    try:
-        data = json.loads(SHORTCUTS_CONFIG_PATH.read_text(encoding="utf-8"))
-        if isinstance(data, dict):
-            return {k: v for k, v in data.items() if isinstance(v, str) and v}
-    except (OSError, json.JSONDecodeError):
-        pass
+    for path in (SHORTCUTS_CONFIG_PATH, LEGACY_SHORTCUTS_CONFIG_PATH):
+        if not path.exists():
+            continue
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return {k: v for k, v in data.items() if isinstance(v, str) and v}
+        except (OSError, json.JSONDecodeError):
+            pass
     return {}
 
 
 def save_custom_shortcuts(mapping: dict[str, str]) -> None:
     try:
+        SHORTCUTS_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         SHORTCUTS_CONFIG_PATH.write_text(json.dumps(mapping, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     except OSError:
         pass

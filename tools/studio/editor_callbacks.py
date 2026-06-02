@@ -282,6 +282,7 @@ class CallbackMixin:
         files = self.graph.setdefault("custom_files", [])
         if not files:
             files.append({"path": "app_custom.c", "content": "#include \"efw/efw.h\"\n\n"})
+        self.push_undo()
         files[0]["content"] = files[0].get("content", "") + "\n/* Auto-generated condition stubs */\n" + "\n".join(stubs)
         self.current_code_index = 0
         self.refresh_code_list()
@@ -298,6 +299,7 @@ class CallbackMixin:
         files = self.graph.setdefault("custom_files", [])
         if not files:
             files.append({"path": "app_custom.c", "content": "#include \"efw/efw.h\"\n\n"})
+        self.push_undo()
         files[0]["content"] = files[0].get("content", "") + "\n/* Auto-generated missing callback stubs */\n" + "\n".join(stubs)
         self.current_code_index = 0
         self.refresh_code_list()

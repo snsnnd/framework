@@ -511,7 +511,7 @@ class WorkbenchMixin:
 
     def refresh_json_editor(self) -> None:
         self.graph_json_editor.setPlainText(json.dumps(self.graph, ensure_ascii=False, indent=2))
-        self.autosave_graph()
+        self.schedule_autosave()
 
     def refresh_code_list(self) -> None:
         self.code_files.blockSignals(True)
