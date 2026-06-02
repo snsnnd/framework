@@ -61,11 +61,28 @@ class WorkbenchMixin:
     def set_right_tab(self, title: str) -> None:
         if not hasattr(self, "right_tabs"):
             return
+        aliases = {
+            "代码": "代码补齐",
+            "生成映射": "高级 · 生成映射",
+            "文件树预览": "高级 · 文件树预览",
+            "任务调度": "高级 · 任务调度",
+            "Board Profile / Pin Planner": "高级 · Board Profile / Pin Planner",
+            "Graph JSON": "高级 · Graph JSON",
+        }
+        expected = aliases.get(title, title)
+        if expected.startswith("高级 ·") and hasattr(self, "_advanced_inspector_enabled") and not self._advanced_inspector_enabled:
+            self.toggle_advanced_panels()
         for index in range(self.right_tabs.count()):
-            if self.right_tabs.tabText(index) == title:
+            current_title = self.right_tabs.tabText(index)
+            if current_title == expected or current_title.replace("高级 · ", "") == title:
                 self.right_tabs.setCurrentIndex(index)
                 if hasattr(self, "inspector_nav"):
-                    self.inspector_nav.setCurrentRow(index)
+                    role = Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole
+                    for row in range(self.inspector_nav.count()):
+                        item = self.inspector_nav.item(row)
+                        if item and item.data(role) == index:
+                            self.inspector_nav.setCurrentRow(row)
+                            break
                 return
 
     def set_workspace(self, title: str) -> None:
@@ -97,7 +114,6 @@ class WorkbenchMixin:
         workspace_by_step = {
             "dashboard": "项目总览",
             "assembly": "模块装配",
-            "resources": "模块装配",
             "relations": "关系视图",
             "code": "关系视图",
             "release": "生成发布",
@@ -105,9 +121,8 @@ class WorkbenchMixin:
         right_by_step = {
             "dashboard": "项目结构",
             "assembly": "属性表单",
-            "resources": "Board Profile / Pin Planner",
-            "relations": "生成映射",
-            "code": "代码",
+            "relations": "属性表单",
+            "code": "代码补齐",
             "release": "实时校验",
         }
         if step == "release":
@@ -123,18 +138,18 @@ class WorkbenchMixin:
         visible_count = len(self.visible_nodes())
         selected = self.current_node_id or "未选择"
         if page.get("kind") == "root":
-            next_step = "双击模块、状态机或 Topic 进入专用页面；根页面只表达顶层结构。"
+            next_step = "先在“模块装配”里创建模块，再双击模块进入内部装配。"
         elif page.get("kind") == "module":
-            next_step = "在这里添加 HAL/Sensor/Algorithm/Actuator/Task，再用端口表达关系。"
+            next_step = "先添加输入设备和输出设备，再补处理逻辑，最后回到关系视图连线。"
         elif page.get("kind") == "state":
-            next_step = "添加 State / Transition，填写 condition 后校验。"
+            next_step = "添加状态和转换，并在属性表单里补上 condition。"
         elif page.get("kind") == "comm":
-            next_step = "添加 Publisher / Subscriber，业务 publish 写在 Code 页。"
+            next_step = "添加发布者和订阅者，再到代码补齐页实现回调或 publish 逻辑。"
         else:
-            next_step = "选择节点后编辑属性，校验通过再生成。"
+            next_step = "选择一个节点后先改属性，再到代码补齐和生成发布完成收尾。"
         self.workflow_hint.setText(f"当前页面：{page_title(page)}\n可见节点：{visible_count}\n当前选择：{selected}\n建议：{next_step}")
         if hasattr(self, "palette_label"):
-            self.palette_label.setText(f"当前页面可添加组件：{page_title(page)}")
+            self.palette_label.setText(f"当前页面可添加：{page_title(page)}")
 
     def open_selected_container(self) -> None:
         node = self._find_node(self.current_node_id) if self.current_node_id else None
@@ -157,12 +172,25 @@ class WorkbenchMixin:
         warnings = [msg for msg in self.validation_messages if msg.startswith("⚠️")]
         project = self.graph.get("project", {})
         board = self.graph.get("board", {})
+        next_steps = []
+        if not modules:
+            next_steps.append("1. 先到“模块装配”点击“新增模块”。")
+        elif len([node for node in nodes if node.get("type") != "project.module"]) == 0:
+            next_steps.append("1. 进入模块后，从左侧模板库添加输入设备、输出设备或处理逻辑。")
+        else:
+            next_steps.append("1. 到“关系视图”确认输入、处理、输出之间的连接关系。")
+        if missing:
+            next_steps.append("2. 到“代码补齐”页点击“一键生成缺失回调”，再补业务逻辑。")
+        if errors or warnings:
+            next_steps.append("3. 到“实时校验”先处理红色错误，再看黄色警告。")
+        else:
+            next_steps.append("3. 当前已经基本就绪，可以到“生成发布”生成 application。")
         lines = [
             f"项目：{project.get('name', 'unnamed')}",
             f"tick：{project.get('tick_ms', 1)} ms",
             f"Board Profile：{board.get('profile', project.get('board_profile', 'generic-mock'))}",
             "",
-            "装配状态",
+            "你现在在哪一步",
             f"- 模块：{len(modules)}",
             f"- 组件：{len([node for node in nodes if node.get('type') != 'project.module'])}",
             f"- Topic：{len(topics)}",
@@ -176,12 +204,9 @@ class WorkbenchMixin:
             f"- 缺失回调：{len(missing)}",
             f"- Pin 冲突：{len(conflicts)}",
             "",
-            "建议路径",
-            "1. 到“模块装配”创建模块并添加组件。",
-            "2. 到“关系视图”确认模块、Topic、状态机关系。",
-            "3. 到“代码补齐”生成缺失回调并补业务逻辑。",
-            "4. 到“生成发布”检查清单并生成 application。",
+            "下一步建议",
         ]
+        lines.extend(next_steps)
         self.dashboard_output.setPlainText("\n".join(lines))
 
     def refresh_module_assembly_view(self) -> None:
@@ -211,7 +236,7 @@ class WorkbenchMixin:
         conflicts = self.collect_pin_conflicts()
         errors = [msg for msg in self.validation_messages if msg.startswith("❌")]
         warnings = [msg for msg in self.validation_messages if msg.startswith("⚠️")]
-        lines = ["生成发布检查清单", ""]
+        lines = ["生成发布检查清单", "", "先让下面五项尽量都变成 [OK]，再点击生成 application。", ""]
         checks = [
             (not errors, f"Graph 校验错误：{len(errors)}"),
             (not warnings, f"警告：{len(warnings)}"),

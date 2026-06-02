@@ -79,7 +79,6 @@ class UIBuilderMixin:
         workflow_steps = [
             ("项目总览", "dashboard"),
             ("模块装配", "assembly"),
-            ("资源规划", "resources"),
             ("关系视图", "relations"),
             ("代码补齐", "code"),
             ("生成发布", "release"),
@@ -172,35 +171,78 @@ class UIBuilderMixin:
         inspector.setMaximumWidth(720)
         inspector_layout = QVBoxLayout(inspector)
         inspector_layout.setContentsMargins(8, 8, 8, 8)
-        inspector_title = QLabel("Inspector")
+        title_row = QHBoxLayout()
+        inspector_title = QLabel("常用面板")
         inspector_title.setStyleSheet("font-size: 14pt; font-weight: 700; color: #ffffff;")
-        inspector_layout.addWidget(inspector_title)
+        title_row.addWidget(inspector_title)
+        self.advanced_toggle_btn = QPushButton("显示高级")
+        self.advanced_toggle_btn.clicked.connect(self.toggle_advanced_panels)
+        title_row.addWidget(self.advanced_toggle_btn)
+        inspector_layout.addLayout(title_row)
         self.inspector_nav = QListWidget()
         inspector_layout.addWidget(self.inspector_nav)
         self.right_tabs = QTabWidget()
         self.right_tabs.addTab(self._build_structure_tab(), "项目结构")
         self.right_tabs.addTab(self._build_properties_tab(), "属性表单")
-        self.right_tabs.addTab(self._build_code_tab(), "代码")
+        self.right_tabs.addTab(self._build_code_tab(), "代码补齐")
         self.right_tabs.addTab(self._build_validation_tab(), "实时校验")
-        self.right_tabs.addTab(self._build_mapping_tab(), "生成映射")
-        self.right_tabs.addTab(self._build_file_tree_tab(), "文件树预览")
-        self.right_tabs.addTab(self._build_schedule_tab(), "任务调度")
-        self.right_tabs.addTab(self._build_pin_planner_tab(), "Board Profile / Pin Planner")
-        self.right_tabs.addTab(self._build_json_tab(), "Graph JSON")
-        for index in range(self.right_tabs.count()):
-            item = QListWidgetItem(self.right_tabs.tabText(index), self.inspector_nav)
-            item.setData(role, index)
-        self.inspector_nav.currentRowChanged.connect(self.switch_inspector_panel)
-        self.inspector_nav.setCurrentRow(0)
+        self.right_tabs.addTab(self._build_mapping_tab(), "高级 · 生成映射")
+        self.right_tabs.addTab(self._build_file_tree_tab(), "高级 · 文件树预览")
+        self.right_tabs.addTab(self._build_schedule_tab(), "高级 · 任务调度")
+        self.right_tabs.addTab(self._build_pin_planner_tab(), "高级 · Board Profile / Pin Planner")
+        self.right_tabs.addTab(self._build_json_tab(), "高级 · Graph JSON")
+        self._advanced_inspector_enabled = False
+        self._advanced_tab_titles = {
+            "高级 · 生成映射",
+            "高级 · 文件树预览",
+            "高级 · 任务调度",
+            "高级 · Board Profile / Pin Planner",
+            "高级 · Graph JSON",
+        }
+        self.inspector_nav.currentItemChanged.connect(self.switch_inspector_panel)
+        self.rebuild_inspector_nav()
         self.right_tabs.tabBar().hide()
         inspector_layout.addWidget(self.right_tabs, 1)
         root_splitter.addWidget(inspector)
         root_splitter.setChildrenCollapsible(True)
         root_splitter.setSizes([210, 620, 320])
 
-    def switch_inspector_panel(self, row: int) -> None:
-        if hasattr(self, "right_tabs") and 0 <= row < self.right_tabs.count():
-            self.right_tabs.setCurrentIndex(row)
+    def rebuild_inspector_nav(self) -> None:
+        if not hasattr(self, "inspector_nav") or not hasattr(self, "right_tabs"):
+            return
+        role = Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole
+        current_index = self.right_tabs.currentIndex() if hasattr(self.right_tabs, "currentIndex") else 0
+        self.inspector_nav.blockSignals(True)
+        self.inspector_nav.clear()
+        current_row = 0
+        row = 0
+        for index in range(self.right_tabs.count()):
+            title = self.right_tabs.tabText(index)
+            if not self._advanced_inspector_enabled and title in self._advanced_tab_titles:
+                continue
+            item = QListWidgetItem(title.replace("高级 · ", ""), self.inspector_nav)
+            item.setData(role, index)
+            if index == current_index:
+                current_row = row
+            row += 1
+        if self.inspector_nav.count():
+            self.inspector_nav.setCurrentRow(current_row)
+        self.inspector_nav.blockSignals(False)
+
+    def toggle_advanced_panels(self) -> None:
+        self._advanced_inspector_enabled = not self._advanced_inspector_enabled
+        self.advanced_toggle_btn.setText("隐藏高级" if self._advanced_inspector_enabled else "显示高级")
+        if not self._advanced_inspector_enabled and self.right_tabs.tabText(self.right_tabs.currentIndex()) in self._advanced_tab_titles:
+            self.right_tabs.setCurrentIndex(1)
+        self.rebuild_inspector_nav()
+
+    def switch_inspector_panel(self, current: QListWidgetItem, _previous: QListWidgetItem | None = None) -> None:
+        if not current or not hasattr(self, "right_tabs"):
+            return
+        role = Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole
+        index = current.data(role)
+        if isinstance(index, int) and 0 <= index < self.right_tabs.count():
+            self.right_tabs.setCurrentIndex(index)
 
     def _build_dashboard_tab(self) -> QWidget:
         widget = QWidget()
@@ -280,7 +322,7 @@ class UIBuilderMixin:
         save_callback_btn = QPushButton("保存到 app_custom.c")
         save_callback_btn.clicked.connect(self.save_selected_callback_implementation)
         open_code_btn = QPushButton("打开代码页")
-        open_code_btn.clicked.connect(lambda: self.set_right_tab("代码"))
+        open_code_btn.clicked.connect(lambda: self.set_right_tab("代码补齐"))
         callback_row.addWidget(self.callback_select)
         callback_row.addWidget(save_callback_btn)
         callback_row.addWidget(open_code_btn)
@@ -348,6 +390,7 @@ class UIBuilderMixin:
     def _build_structure_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        layout.addWidget(QLabel("项目结构：帮助你理解模块里已有的输入、处理、输出节点。"))
         self.structure_output = QPlainTextEdit()
         self.structure_output.setReadOnly(True)
         layout.addWidget(self.structure_output)
@@ -356,6 +399,7 @@ class UIBuilderMixin:
     def _build_file_tree_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        layout.addWidget(QLabel("高级视图：预览生成后的文件结构，确认自定义代码会落到哪里。"))
         self.file_tree_output = QPlainTextEdit()
         self.file_tree_output.setReadOnly(True)
         layout.addWidget(self.file_tree_output)
@@ -364,6 +408,7 @@ class UIBuilderMixin:
     def _build_schedule_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        layout.addWidget(QLabel("高级视图：查看运行调度预估，适合排查 task / flow / 状态机顺序。"))
         self.schedule_output = QPlainTextEdit()
         self.schedule_output.setReadOnly(True)
         layout.addWidget(self.schedule_output)

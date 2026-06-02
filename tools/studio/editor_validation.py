@@ -26,6 +26,19 @@ from studio.model import GENERATED_APPLICATION_TREE, NODE_GENERATION_STATUS
 
 
 class ValidationMixin:
+    def action_for_validation_message(self, message: str, target: str | None) -> str:
+        if "Pin Planner 冲突" in message:
+            return "打开高级面板里的 Board Profile / Pin Planner，修改重复资源后再重新校验。"
+        if ".condition 为空" in message:
+            return f"定位到节点 {target or 'state.transition'}，在属性表单里填写 condition 函数名，然后到代码补齐页创建该函数。"
+        if message.startswith("❌") and target:
+            return f"点击左侧问题列表定位到节点 {target}，先修正属性表单中的红色项，再重新校验。"
+        if message.startswith("⚠️") and target:
+            return f"点击左侧问题列表定位到节点 {target}，确认该警告是否需要处理；一般建议在生成前处理。"
+        if message.startswith("❌ Graph 校验失败"):
+            return "先根据失败信息修正引用、周期或必填字段；修完后再次点击“立即校验”。"
+        return "如果不确定，从“项目总览”按步骤继续：模块装配 -> 关系视图 -> 代码补齐 -> 生成发布。"
+
     def refresh_mapping_view(self) -> None:
         if not hasattr(self, "mapping_output"):
             return
@@ -291,6 +304,7 @@ class ValidationMixin:
         errors = [item for item in messages if item.startswith("❌")]
         warnings = [item for item in messages if item.startswith("⚠️")]
         next_step = "可以直接生成 application。" if ok else "先处理红色错误，再重新校验；黄色警告建议在生成前处理。"
+        actions = [self.action_for_validation_message(message, target) for message, target in zip(messages, [self._validation_target_from_message(message) for message in messages]) if message.startswith(("❌", "⚠️"))]
         summary_lines = [
             "校验摘要",
             f"- 错误：{len(errors)}",
@@ -299,6 +313,11 @@ class ValidationMixin:
             f"- 下一步：{next_step}",
             "",
         ]
+        if actions:
+            summary_lines.append("建议动作")
+            for index, action in enumerate(actions[:5], start=1):
+                summary_lines.append(f"{index}. {action}")
+            summary_lines.append("")
         text = "\n".join(summary_lines + messages)
         self.validation_messages = messages
         self.validation_targets = [self._validation_target_from_message(message) for message in messages]
@@ -317,14 +336,15 @@ class ValidationMixin:
             for target, target_messages in grouped.items():
                 header = QListWidgetItem(f"节点 {target}：{len(target_messages)} 个问题")
                 header.setData(role, target)
-                header.setToolTip(f"点击定位到卡片：{target}")
+                grouped_action = self.action_for_validation_message(target_messages[0], target)
+                header.setToolTip(f"点击定位到卡片：{target}\n\n建议动作：{grouped_action}")
                 header.setBackground(QBrush(QColor("#263746")))
                 header.setForeground(QBrush(QColor("#ffffff")))
                 self.validation_list.addItem(header)
                 for message in target_messages:
                     child = QListWidgetItem("  " + message)
                     child.setData(role, target)
-                    child.setToolTip(f"点击定位到卡片：{target}")
+                    child.setToolTip(f"点击定位到卡片：{target}\n\n建议动作：{self.action_for_validation_message(message, target)}")
                     if message.startswith("❌"):
                         child.setBackground(QBrush(QColor("#5b1f24")))
                         child.setForeground(QBrush(QColor("#ffb3b3")))

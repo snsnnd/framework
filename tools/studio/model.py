@@ -15,15 +15,13 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 VISUAL_NODE_CATEGORIES = [
     ("框架库扫描", []),
-    ("System View · 系统层", ["project.module", "event.topic", "event.publisher", "event.subscriber", "custom.card"]),
-    ("Module Internal · HAL / 通信", ["hal.gpio_line_input", "hal.custom"]),
-    ("Module Internal · Sensor", ["sensor.line_tracking", "sensor.custom"]),
-    ("Module Internal · Processor", ["processor.custom"]),
-    ("Module Internal · Algorithm", ["algorithm.pid", "algorithm.custom"]),
-    ("Module Internal · Actuator", ["actuator.motor", "actuator.custom"]),
-    ("Module Internal · Task / Module", ["module.custom", "task.periodic"]),
-    ("Module Internal · StateMachine", ["state.machine", "state.state", "state.transition"]),
-    ("Module Internal · 数据契约 / 自定义代码", ["data.enum", "data.struct", "custom.code"]),
+    ("系统结构", ["project.module", "custom.card"]),
+    ("输入设备", ["hal.gpio_line_input", "hal.custom", "sensor.line_tracking", "sensor.custom"]),
+    ("处理逻辑", ["processor.custom", "algorithm.pid", "algorithm.custom", "module.custom", "task.periodic"]),
+    ("输出设备", ["actuator.motor", "actuator.custom"]),
+    ("通信", ["event.topic", "event.publisher", "event.subscriber"]),
+    ("状态机", ["state.machine", "state.state", "state.transition"]),
+    ("数据类型与代码", ["data.enum", "data.struct", "custom.code"]),
 ]
 
 GENERATED_APPLICATION_TREE = [

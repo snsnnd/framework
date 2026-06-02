@@ -534,7 +534,7 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
             "workspace_release": lambda: self.set_workspace("生成发布"),
             "inspector_structure": lambda: self.set_right_tab("项目结构"),
             "inspector_properties": lambda: self.set_right_tab("属性表单"),
-            "inspector_code": lambda: self.set_right_tab("代码"),
+            "inspector_code": lambda: self.set_right_tab("代码补齐"),
             "inspector_validation": lambda: self.set_right_tab("实时校验"),
             "inspector_mapping": lambda: self.set_right_tab("生成映射"),
             "inspector_file_tree": lambda: self.set_right_tab("文件树预览"),
