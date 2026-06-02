@@ -414,15 +414,33 @@ class ProjectManagerWindow(QMainWindow):
             return
         self.loading_recent_path = path
         if not path.exists():
+            # Try to locate the project in the repo root as a fallback
+            fallback = REPO_ROOT / Path(path_text).name
+            if fallback.exists():
+                answer = QMessageBox.question(
+                    self, "项目路径已移动",
+                    f"项目文件原路径不存在：\n{display_path(path)}\n\n但在仓库根目录发现同名文件：\n{display_path(fallback)}\n\n是否使用新路径打开？",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.Yes,
+                )
+                yes = QMessageBox.StandardButton.Yes
+                if answer == yes:
+                    save_recent_projects([display_path(fallback) if p == path_text else p for p in load_recent_projects()])
+                    self.refresh_recent_list()
+                    self.load_project_file(fallback, remember=True)
+                    self.loading_recent_path = None
+                    return
             remove_recent_project(path_text)
             self.refresh_recent_list()
-            QMessageBox.warning(self, "最近项目不存在", f"找不到项目文件，已从最近项目移除：\n{path_text}")
+            QMessageBox.warning(self, "最近项目不存在", f"找不到项目文件，已从最近项目移除：\n{display_path(path)}\n\n提示：如果项目已移动到其他位置，请使用「打开项目」重新加载。")
             self.loading_recent_path = None
             return
         self.load_project_file(path, remember=False)
         self.loading_recent_path = None
 
     def load_project_file(self, path: Path, remember: bool = True) -> None:
+        if self.embedded_editor is not None and not self.embedded_editor._confirm_discard_changes():
+            return
         if not path.exists():
             QMessageBox.warning(self, "项目不存在", f"找不到项目文件：\n{display_path(path)}")
             return
@@ -454,7 +472,14 @@ class ProjectManagerWindow(QMainWindow):
         self.embedded_editor.graph_path = graph_path
         self.embedded_editor.graph = json.loads(graph_path.read_text(encoding="utf-8"))
         self.embedded_editor.current_node_id = None
-        self.embedded_editor.refresh_all()
+        self.embedded_editor._is_dirty = False
+        project_out = self.output_dir()
+        if project_out != REPO_ROOT / "application" / "generated_generic_embedded_app":
+            self.embedded_editor._last_output_dir = project_out
+        # Check autosave BEFORE refresh_all — refresh_all creates a fresh autosave via refresh_json_editor
+        recovered = self.embedded_editor.check_autosave_recovery()
+        if not recovered:
+            self.embedded_editor.refresh_all()
 
     def save_project(self) -> None:
         if self.project_path is None:
@@ -553,6 +578,11 @@ class ProjectManagerWindow(QMainWindow):
         self.sync_embedded_editor_to_project()
         self.workspace_tabs.setCurrentWidget(self.embedded_editor)
 
+    def closeEvent(self, event: Any) -> None:
+        if self.embedded_editor is None or self.embedded_editor._confirm_discard_changes():
+            event.accept()
+        else:
+            event.ignore()
 
 
 def main() -> int:
