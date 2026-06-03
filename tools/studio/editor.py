@@ -762,41 +762,6 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
         backdrops.append(backdrop)
         self.refresh_all()
 
-    def try_insert_node_on_edge(self, node_id: str | None) -> bool:
-        if not node_id or node_id not in self.node_items:
-            return False
-        node = self._find_node(node_id)
-        if not node:
-            return False
-        rules = PORT_RULES.get(node.get("type"), {})
-        in_ports = rules.get("in", [])
-        out_ports = rules.get("out", [])
-        if len(in_ports) != 1 or len(out_ports) != 1:
-            return False
-        edge_item = self.line_insert_candidate(self.node_items[node_id].sceneBoundingRect().center())
-        if not edge_item:
-            return False
-        edge = edge_item.edge
-        src = self._find_node(str(edge.get("from")))
-        dst = self._find_node(str(edge.get("to")))
-        new_node = node
-        if not src or not dst or not new_node:
-            return False
-        in_port = in_ports[0]
-        out_port = out_ports[0]
-        src_port = edge.get("from_port")
-        dst_port = edge.get("to_port")
-        if src_port and not can_connect_ports(src, new_node, src_port, in_port):
-            return False
-        if dst_port and not can_connect_ports(new_node, dst, out_port, dst_port):
-            return False
-        self.push_undo()
-        self.graph["edges"] = [item for item in self.graph.get("edges", []) if str(item.get("id")) != str(edge.get("id"))]
-        self.add_graph_edge(src, new_node, src_port or out_port, in_port, edge.get("kind", "generic"))
-        self.add_graph_edge(new_node, dst, out_port, dst_port or in_port, edge.get("kind", "generic"))
-        self.refresh_all()
-        return True
-
     def apply_node_json(self) -> None:
         if not self.current_node_id:
             return

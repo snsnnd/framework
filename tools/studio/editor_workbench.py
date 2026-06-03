@@ -560,19 +560,6 @@ class WorkbenchMixin:
         for node_id, item in self.node_items.items():
             item.setOpacity(1.0 if node_id in compatible or node_id == start_port.node_item.node.get("id") else 0.18)
 
-    def line_insert_candidate(self, scene_pos: QPointF):
-        candidate = None
-        best_distance = 18.0
-        for edge_item in self.edge_items:
-            point = edge_item.path().pointAtPercent(0.5)
-            dx = point.x() - scene_pos.x()
-            dy = point.y() - scene_pos.y()
-            distance = (dx * dx + dy * dy) ** 0.5
-            if distance < best_distance:
-                candidate = edge_item
-                best_distance = distance
-        return candidate
-
     def port_scene_center(self, node_id: str | None, port_type: str | None, direction: str) -> QPointF | None:
         if not node_id or node_id not in self.node_items:
             return None

@@ -459,8 +459,6 @@ class GraphNodeItem(QGraphicsObject):
                 self.editor.refresh_edges()
         if change == selected_changed:
             self.update()
-        if change == position_change:
-            self.editor._last_dragged_node_id = str(self.node.get("id"))
         return super().itemChange(change, value)
 
     def hoverEnterEvent(self, event):
