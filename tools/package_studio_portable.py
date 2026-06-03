@@ -17,6 +17,10 @@ DIST_ROOT = REPO_ROOT / "dist"
 PACKAGE_ROOT = DIST_ROOT / "efw-studio-portable"
 PACKAGING_ROOT = REPO_ROOT / "packaging"
 WINDOWS_VENV = REPO_ROOT / ".venv"
+LEGACY_ARTIFACTS = [
+    DIST_ROOT / "efw-studio-tool",
+    DIST_ROOT / "efw-studio-tool.zip",
+]
 
 
 INCLUDE_PATHS = [
@@ -29,8 +33,7 @@ INCLUDE_PATHS = [
     "src",
     "docs/codegen.md",
     "docs/environment.md",
-    "docs/studio_intro.md",
-    "docs/studio_user_guide.md",
+    "用户文档",
     "README.md",
     "CMakeLists.txt",
 ]
@@ -40,6 +43,11 @@ def clean_output() -> None:
     if PACKAGE_ROOT.exists():
         shutil.rmtree(PACKAGE_ROOT)
     PACKAGE_ROOT.mkdir(parents=True, exist_ok=True)
+    for path in LEGACY_ARTIFACTS:
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+        elif path.exists():
+            path.unlink()
 
 
 def copy_path(rel_path: str) -> None:

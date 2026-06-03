@@ -106,12 +106,23 @@ python3 tools/efw.py studio
 
 ## 分发与打包
 
-当前仓库支持两类分发：
+当前仓库推荐两类对外分发：
 
 - `EFW Runtime SDK`：面向把 `include/` 和 `src/` 集成到 Keil / CubeIDE / ESP-IDF / CMake 工程中的开发者。
-- `EFW Studio Tool`：面向直接使用可视化工作台建模、校验和生成 application 的用户。
+- `EFW Studio Portable`：面向直接使用可视化工作台建模、校验和生成 application 的最终用户。
 
-### 生成源码分发包
+### 一次生成最终对外分发包
+
+```bash
+python3 tools/package_release.py
+```
+
+输出：
+
+- `dist/efw-runtime-sdk.zip`
+- `dist/efw-studio-portable.zip`
+
+### 单独生成 Runtime SDK
 
 ```bash
 python3 tools/package_efw.py
@@ -120,9 +131,8 @@ python3 tools/package_efw.py
 输出：
 
 - `dist/efw-runtime-sdk.zip`
-- `dist/efw-studio-tool.zip`
 
-### 生成 Windows 便携版 Studio
+### 单独生成 Windows 便携版 Studio
 
 如果仓库内已经存在 Windows `.venv/`（包含 `Scripts/python.exe` 和 PyQt 依赖），可以直接生成便携目录：
 
@@ -137,9 +147,24 @@ python3 tools/package_studio_portable.py
 
 便携版目标是“解压即用”，用户无需额外安装 Python 或 PyQt。说明见：
 
-- `docs/studio_intro.md`
-- `docs/studio_user_guide.md`
+- `用户文档/Runtime SDK使用说明.md`
+- `用户文档/Studio介绍.md`
+- `用户文档/Studio操作手册.md`
 - `packaging/studio-portable-README.md`
+
+## 对外到底发什么
+
+如果你要把项目分给别人使用，通常只需要发这两个包：
+
+1. `efw-runtime-sdk.zip`
+   - 给嵌入式开发者
+   - 他们把 `include/` 和 `src/` 拉进 Keil/CubeIDE/ESP-IDF 即可
+
+2. `efw-studio-portable.zip`
+   - 给可视化工具最终用户
+   - 解压后直接双击 `start_studio.bat`
+
+不再推荐单独对外发送一个“源码版 Studio Tool 包”，因为它和便携版的使用场景重复，而且对最终用户仍然要求自己准备 Python/PyQt 环境。
 
 可视化工作台已全面中文化，并新增项目创建向导、属性表单、端口拖线连线、实时校验面板、Board Profile / Pin Planner、模板库入口、代码生成映射视图、自动布局、分类配色主题、项目模块分组卡片、统一 `graph.edges`、Graph → Application 文件树预览、任务调度视图、一键生成缺失回调、状态机卡片、基础 if/loop 逻辑卡片和事件总线发布/订阅卡片；项目管理页和蓝图编辑页也整合在统一入口 `tools/efw.py studio` 工作台内。Codespaces devcontainer 会安装 Noto CJK 字体，避免 VNC 中中文显示为空格或方块。生成 application 时如果输出目录非空会先确认覆盖，项目管理器会把 Board Profile 注入 Graph 后再生成。
 

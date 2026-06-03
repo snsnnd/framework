@@ -70,7 +70,28 @@ python3 tools/efw.py studio
 
 这种模式下不需要你自己安装 Python 或 PyQt，运行环境已经随包携带。
 
+对外分发时，通常只需要：
+
+- `efw-runtime-sdk.zip`
+- `efw-studio-portable.zip`
+
+其中：
+
+- Runtime SDK 给嵌入式开发者直接集成到 IDE 工程
+- Portable Studio 给最终用户直接解压运行
+
 如果你是打包方，可在仓库根目录执行：
+
+```bash
+python3 tools/package_release.py
+```
+
+它会一次生成：
+
+- `dist/efw-runtime-sdk.zip`
+- `dist/efw-studio-portable.zip`
+
+如果你只想单独重打便携版，也可以执行：
 
 ```bash
 python3 tools/package_studio_portable.py

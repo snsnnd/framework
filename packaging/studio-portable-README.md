@@ -34,4 +34,4 @@
 3. `tools/efw.py` 是否存在。
 4. 是否把整个目录放到了有写权限的位置。
 
-更多说明见 `docs/studio_intro.md` 和 `docs/studio_user_guide.md`。
+更多说明见 `用户文档/Studio介绍.md` 和 `用户文档/Studio操作手册.md`。

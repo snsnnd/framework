@@ -25,4 +25,7 @@ cmake -S . -B build
 cmake --build build
 ```
 
-如果你使用的是 Keil、STM32CubeIDE、ESP-IDF 或其他嵌入式 IDE，优先参考仓库根目录 `README.md` 里的接入方式。
+如果你使用的是 Keil、STM32CubeIDE、ESP-IDF 或其他嵌入式 IDE，优先参考：
+
+- `用户文档/Runtime SDK使用说明.md`
+- 仓库根目录 `README.md`

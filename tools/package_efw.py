@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build distributable EFW package archives.
+"""Build distributable EFW Runtime SDK archive.
 
 Usage:
   python3 tools/package_efw.py
@@ -15,12 +15,17 @@ from zipfile import ZIP_DEFLATED, ZipFile
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DIST_ROOT = REPO_ROOT / "dist"
 PACKAGING_ROOT = REPO_ROOT / "packaging"
+LEGACY_ARTIFACTS = [
+    DIST_ROOT / "efw-studio-tool",
+    DIST_ROOT / "efw-studio-tool.zip",
+]
 
 
 PACKAGE_DEFS = {
     "efw-runtime-sdk": {
         "root_dir_name": "efw-runtime-sdk",
         "paths": [
+            "用户文档/Runtime SDK使用说明.md",
             "include",
             "src",
             "CMakeLists.txt",
@@ -32,24 +37,6 @@ PACKAGE_DEFS = {
             "PACKAGE_README.md": PACKAGING_ROOT / "runtime-sdk-README.md",
         },
     },
-    "efw-studio-tool": {
-        "root_dir_name": "efw-studio-tool",
-        "paths": [
-            "tools",
-            "examples/graphs",
-            "examples/projects",
-            "examples/board_profiles",
-            "include",
-            "src",
-            "CMakeLists.txt",
-            "README.md",
-            "docs/codegen.md",
-            "docs/environment.md",
-        ],
-        "extra_files": {
-            "PACKAGE_README.md": PACKAGING_ROOT / "studio-tool-README.md",
-        },
-    },
 }
 
 
@@ -57,6 +44,11 @@ def clean_dist() -> None:
     if DIST_ROOT.exists():
         shutil.rmtree(DIST_ROOT)
     DIST_ROOT.mkdir(parents=True, exist_ok=True)
+    for path in LEGACY_ARTIFACTS:
+        if path.is_dir():
+            shutil.rmtree(path, ignore_errors=True)
+        elif path.exists():
+            path.unlink()
 
 
 def copy_path(src_rel: str, dest_root: Path) -> None:
