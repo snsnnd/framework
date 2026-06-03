@@ -494,6 +494,26 @@ class WorkbenchMixin:
                 pen.setStyle(style)
         return pen
 
+    def edge_pen_for_item(self, edge: dict[str, Any], selected: bool = False) -> QPen:
+        pen = self.edge_pen(edge)
+        if selected:
+            pen.setColor(QColor("#ffd54f"))
+            pen.setWidth(max(4, pen.width() + 2))
+        return pen
+
+    def select_edge(self, edge: dict[str, Any] | None) -> None:
+        self.selected_edge_id = str(edge.get("id")) if edge else None
+        if edge:
+            self.current_node_id = None
+        for item in self.edge_items:
+            item.setPen(self.edge_pen_for_item(item.edge, selected=str(item.edge.get("id")) == self.selected_edge_id))
+
+    def selected_edge(self) -> dict[str, Any] | None:
+        edge_id = getattr(self, "selected_edge_id", None)
+        if not edge_id:
+            return None
+        return next((edge for edge in self.graph.get("edges", []) if str(edge.get("id")) == edge_id), None)
+
     def refresh_edges(self) -> None:
         for edge in self.edge_items:
             self.scene.removeItem(edge)
