@@ -311,11 +311,13 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
         self.setMinimumSize(900, 560)
         self.graph_path: Path | None = None
         self.current_node_id: str | None = None
+        self.focus_node_id: str | None = None
         self.current_code_index: int | None = None
         self.node_items: dict[str, GraphNodeItem] = {}
         self.edge_items: list[QGraphicsLineItem] = []
         self.drag_line: QGraphicsLineItem | None = None
         self.drag_port: PortItem | None = None
+        self.drag_target_port: PortItem | None = None
         self.validation_messages: list[str] = []
         self.validation_targets: list[str | None] = []
         self.undo_stack: list[dict[str, Any]] = []
@@ -329,7 +331,11 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
         self._autosave_timer = QTimer(self)
         self._autosave_timer.setSingleShot(True)
         self._autosave_timer.timeout.connect(lambda: self.autosave_graph(force=True))
+        self._edge_animation_timer = QTimer(self)
+        self._edge_animation_timer.timeout.connect(self.tick_edge_animations)
+        self._edge_animation_timer.start(50)
         self._last_output_dir: Path | None = None
+        self.alignment_guide_items: list[Any] = []
         self._loaded_code_content = ""
         self._code_buffer_dirty = False
         self._suppress_code_text_events = False
@@ -523,8 +529,9 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
             "redo": self.redo,
             "generate_application": self.generate_application,
             "add_selected_card": self.add_selected_card,
-            "delete_selected_node": self.delete_selected_node,
-            "delete_selected_node2": self.delete_selected_node,
+            "create_backdrop": self.create_backdrop_from_selection,
+            "delete_selected_node": self.delete_selected_object,
+            "delete_selected_node2": self.delete_selected_object,
             "zoom_in": lambda: self.zoom_relation_view(1.15),
             "zoom_out": lambda: self.zoom_relation_view(1 / 1.15),
             "zoom_reset": self.reset_relation_zoom,
@@ -641,11 +648,25 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
         self.drag_line.setPen(QPen(QColor("#29b6f6"), 2))
         self.drag_line.setZValue(10)
         self.scene.addItem(self.drag_line)
+        self.show_compatible_target_preview(port)
 
     def update_port_drag(self, pos: QPointF) -> None:
         if not self.drag_line or not self.drag_port:
             return
+        self.show_compatible_target_preview(self.drag_port)
         start = self.drag_port.sceneBoundingRect().center()
+        target = self.port_at(pos)
+        if target and target.direction != self.drag_port.direction:
+            if self.drag_target_port and self.drag_target_port is not target:
+                self.drag_target_port.setScale(1.0)
+            target_center = target.sceneBoundingRect().center()
+            self.drag_line.setLine(start.x(), start.y(), target_center.x(), target_center.y())
+            target.setScale(1.55)
+            self.drag_target_port = target
+            return
+        if self.drag_target_port:
+            self.drag_target_port.setScale(1.0)
+            self.drag_target_port = None
         self.drag_line.setLine(start.x(), start.y(), pos.x(), pos.y())
 
     def finish_port_drag(self, pos: QPointF, released_port: PortItem) -> None:
@@ -653,7 +674,11 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
         if self.drag_line:
             self.scene.removeItem(self.drag_line)
         self.drag_line = None
+        if self.drag_target_port:
+            self.drag_target_port.setScale(1.0)
+        self.drag_target_port = None
         self.drag_port = None
+        self.apply_focus_mode(self.focus_node_id)
         target = self.port_at(pos)
         if not start_port or not target or target is start_port:
             return
@@ -710,6 +735,67 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
 
     def connect_selected_cards(self) -> None:
         QMessageBox.information(self, "端口连线", "请从卡片右侧输出端口圆点拖拽到另一张卡片左侧输入端口圆点；Studio 不再支持中心点选中连线。")
+
+    def create_backdrop_from_selection(self) -> None:
+        selected_ids = [node_id for node_id, item in self.node_items.items() if item.isSelected()]
+        if not selected_ids:
+            if self.current_node_id:
+                selected_ids = [self.current_node_id]
+            else:
+                QMessageBox.information(self, "创建分组区域", "请先选择一个或多个节点，再创建分组区域。")
+                return
+        rects = [self.node_items[node_id].sceneBoundingRect() for node_id in selected_ids if node_id in self.node_items]
+        if not rects:
+            return
+        left = min(rect.left() for rect in rects) - 40
+        top = min(rect.top() for rect in rects) - 50
+        right = max(rect.right() for rect in rects) + 40
+        bottom = max(rect.bottom() for rect in rects) + 40
+        backdrops = self.graph.setdefault("ui", {}).setdefault("backdrops", [])
+        backdrop = {
+            "id": f"backdrop_{len(backdrops) + 1}",
+            "title": f"分组区域 {len(backdrops) + 1}",
+            "node_ids": selected_ids,
+            "rect": [round(left, 1), round(top, 1), round(right - left, 1), round(bottom - top, 1)],
+        }
+        self.push_undo()
+        backdrops.append(backdrop)
+        self.refresh_all()
+
+    def try_insert_node_on_edge(self, node_id: str | None) -> bool:
+        if not node_id or node_id not in self.node_items:
+            return False
+        node = self._find_node(node_id)
+        if not node:
+            return False
+        rules = PORT_RULES.get(node.get("type"), {})
+        in_ports = rules.get("in", [])
+        out_ports = rules.get("out", [])
+        if len(in_ports) != 1 or len(out_ports) != 1:
+            return False
+        edge_item = self.line_insert_candidate(self.node_items[node_id].sceneBoundingRect().center())
+        if not edge_item:
+            return False
+        edge = edge_item.edge
+        src = self._find_node(str(edge.get("from")))
+        dst = self._find_node(str(edge.get("to")))
+        new_node = node
+        if not src or not dst or not new_node:
+            return False
+        in_port = in_ports[0]
+        out_port = out_ports[0]
+        src_port = edge.get("from_port")
+        dst_port = edge.get("to_port")
+        if src_port and not can_connect_ports(src, new_node, src_port, in_port):
+            return False
+        if dst_port and not can_connect_ports(new_node, dst, out_port, dst_port):
+            return False
+        self.push_undo()
+        self.graph["edges"] = [item for item in self.graph.get("edges", []) if str(item.get("id")) != str(edge.get("id"))]
+        self.add_graph_edge(src, new_node, src_port or out_port, in_port, edge.get("kind", "generic"))
+        self.add_graph_edge(new_node, dst, out_port, dst_port or in_port, edge.get("kind", "generic"))
+        self.refresh_all()
+        return True
 
     def apply_node_json(self) -> None:
         if not self.current_node_id:

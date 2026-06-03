@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any
 
 if importlib.util.find_spec("PyQt6") is not None:
-    from PyQt6.QtGui import QFont
+    from PyQt6.QtGui import QFont, QKeySequence, QShortcut
     from PyQt6.QtWidgets import (
         QApplication,
         QFileDialog,
@@ -43,7 +43,7 @@ if importlib.util.find_spec("PyQt6") is not None:
     )
     QT_LIB = "PyQt6"
 elif importlib.util.find_spec("PyQt5") is not None:
-    from PyQt5.QtGui import QFont
+    from PyQt5.QtGui import QFont, QKeySequence
     from PyQt5.QtWidgets import (
         QApplication,
         QFileDialog,
@@ -59,6 +59,7 @@ elif importlib.util.find_spec("PyQt5") is not None:
         QMessageBox,
         QPushButton,
         QPlainTextEdit,
+        QShortcut,
         QSplitter,
         QTabWidget,
         QToolBar,
@@ -69,7 +70,7 @@ elif importlib.util.find_spec("PyQt5") is not None:
 else:
     QApplication = None
     QFileDialog = QInputDialog = QMessageBox = None
-    QFont = object
+    QFont = QKeySequence = QShortcut = object
     QComboBox = QFormLayout = QHBoxLayout = QLabel = QLineEdit = QListWidget = QListWidgetItem = object
     QMainWindow = QPushButton = QPlainTextEdit = QSplitter = QTabWidget = QToolBar = QVBoxLayout = QWidget = object
     QT_LIB = "missing"
@@ -234,11 +235,22 @@ class ProjectManagerWindow(QMainWindow):
         toolbar.addAction("新建", self.new_project)
         toolbar.addAction("项目创建向导", self.project_wizard)
         toolbar.addAction("打开", self.open_project)
+        toolbar.addAction("打开上次项目", self.open_last_project)
         toolbar.addAction("保存全部", self.save_project)
         toolbar.addAction("项目另存为", self.save_project_as)
         toolbar.addAction("实时校验", self.validate_current_graph)
         toolbar.addAction("生成", self.generate_application)
         toolbar.addAction("打开当前项目", self.open_graph_editor)
+        self.view_menu = self.menuBar().addMenu("视图")
+        self.view_menu.addAction("资源", self.toggle_resource_dock)
+        self.view_menu.addAction("属性", self.toggle_inspector_dock)
+        self.view_menu.addAction("输出", self.toggle_output_dock)
+        self.view_menu.addSeparator()
+        self.view_menu.addAction("重置布局", self.reset_editor_layout)
+        help_menu = self.menuBar().addMenu("帮助")
+        help_menu.addAction("快捷键", self.show_shortcuts_dialog)
+        self.toggle_output_shortcut = QShortcut(QKeySequence("Ctrl+`"), self)
+        self.toggle_output_shortcut.activated.connect(self.toggle_output_dock)
 
         self.workspace_tabs = QTabWidget()
         self.setCentralWidget(self.workspace_tabs)
@@ -474,6 +486,26 @@ class ProjectManagerWindow(QMainWindow):
         if path:
             self.load_project_file(Path(path), remember=True, confirm_discard=False)
 
+    def open_last_project(self) -> None:
+        recent = load_recent_projects()
+        if not recent:
+            QMessageBox.information(self, "打开上次项目", "当前没有最近项目记录。请先打开或创建一个项目。")
+            return
+        path_text = recent[0]
+        path = rel_or_abs(path_text)
+        if not path.exists():
+            fallback = REPO_ROOT / Path(path_text).name
+            if fallback.exists():
+                path = fallback
+            else:
+                remove_recent_project(path_text)
+                self.refresh_recent_list()
+                QMessageBox.warning(self, "打开上次项目", f"上次项目不存在，已从最近项目移除：\n{path_text}")
+                return
+        if not self._confirm_workspace_discard_changes():
+            return
+        self.load_project_file(path, remember=True, confirm_discard=False)
+
     def open_recent_project(self, item: QListWidgetItem) -> None:
         if not self._confirm_workspace_discard_changes():
             return
@@ -661,6 +693,59 @@ class ProjectManagerWindow(QMainWindow):
             self.workspace_tabs.addTab(self.embedded_editor, "项目装配")
         self.sync_embedded_editor_to_project()
         self.workspace_tabs.setCurrentWidget(self.embedded_editor)
+
+    def _ensure_embedded_editor(self) -> VisualEditorWindow | None:
+        if self.embedded_editor is None:
+            answer = QMessageBox.question(
+                self,
+                "打开项目装配",
+                "当前还没有打开项目装配页。是否现在打开，以便显示资源/属性/输出面板？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return None
+            self.open_graph_editor()
+        return self.embedded_editor
+
+    def toggle_resource_dock(self) -> None:
+        editor = self._ensure_embedded_editor()
+        if editor is not None:
+            editor.toggle_left_dock()
+
+    def toggle_inspector_dock(self) -> None:
+        editor = self._ensure_embedded_editor()
+        if editor is not None:
+            editor.toggle_right_dock()
+
+    def toggle_output_dock(self) -> None:
+        editor = self._ensure_embedded_editor()
+        if editor is not None:
+            editor.toggle_bottom_dock()
+
+    def reset_editor_layout(self) -> None:
+        editor = self._ensure_embedded_editor()
+        if editor is not None:
+            editor.reset_dock_layout()
+
+    def show_shortcuts_dialog(self) -> None:
+        if self.embedded_editor is not None:
+            self.embedded_editor.show_shortcuts()
+            return
+        QMessageBox.information(
+            self,
+            "快捷键",
+            "常用快捷键：\n"
+            "Ctrl+S 保存全部/当前图\n"
+            "Ctrl+Z 撤销\n"
+            "Ctrl+Y 重做\n"
+            "Ctrl+G 生成 application\n"
+            "Ctrl+M 添加卡片\n"
+            "Ctrl+Shift+B 创建分组区域\n"
+            "Delete / Backspace 删除当前对象\n"
+            "Tab 打开就地搜索插入框\n"
+            "Ctrl+` 打开输出 / 日志区",
+        )
 
     def closeEvent(self, event: Any) -> None:
         if self._confirm_workspace_discard_changes():

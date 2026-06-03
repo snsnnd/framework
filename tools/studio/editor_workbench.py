@@ -10,15 +10,15 @@ from typing import Any
 import importlib.util
 
 if importlib.util.find_spec("PyQt6") is not None:
-    from PyQt6.QtCore import QPointF, Qt
+    from PyQt6.QtCore import QPointF, QRectF, Qt
     from PyQt6.QtGui import QColor, QPen
     from PyQt6.QtWidgets import QGraphicsLineItem, QListWidgetItem, QMessageBox
 elif importlib.util.find_spec("PyQt5") is not None:
-    from PyQt5.QtCore import QPointF, Qt
+    from PyQt5.QtCore import QPointF, QRectF, Qt
     from PyQt5.QtGui import QColor, QPen
     from PyQt5.QtWidgets import QGraphicsLineItem, QListWidgetItem, QMessageBox
 else:
-    QPointF = Qt = QColor = QPen = QGraphicsLineItem = QListWidgetItem = QMessageBox = object
+    QPointF = QRectF = Qt = QColor = QPen = QGraphicsLineItem = QListWidgetItem = QMessageBox = object
 
 from codegen.graph import (
     EDGE_KIND_LABELS,
@@ -27,11 +27,12 @@ from codegen.graph import (
     PORT_LABELS,
     PORT_RULES,
     callback_signature,
+    can_connect_ports,
     edge_effect_description,
     node_generation_label,
 )
 from studio.core import page_for_node, page_hint, page_key, page_title, root_page, visible_nodes_for_page
-from studio.editor_canvas import EdgeItem, GraphNodeItem
+from studio.editor_canvas import BackdropItem, EdgeItem, GraphNodeItem
 from studio.editor_registry import NODE_TEMPLATES, TYPE_LABELS
 
 
@@ -57,8 +58,16 @@ class WorkbenchMixin:
         if self.current_node_id not in visible_ids:
             self.current_node_id = None
         self.select_node(self.current_node_id)
+        self.update_canvas_lod(getattr(self.view, "zoom_level", 1.0) if hasattr(self, "view") else 1.0)
 
     def set_right_tab(self, title: str) -> None:
+        if title in {"实时校验", "任务调度"} and hasattr(self, "bottom_tabs"):
+            for index in range(self.bottom_tabs.count()):
+                if self.bottom_tabs.tabText(index) == title:
+                    if hasattr(self, "bottom_dock"):
+                        self.bottom_dock.show()
+                    self.bottom_tabs.setCurrentIndex(index)
+                    return
         if not hasattr(self, "right_tabs"):
             return
         aliases = {
@@ -86,11 +95,20 @@ class WorkbenchMixin:
                 return
 
     def set_workspace(self, title: str) -> None:
-        if not hasattr(self, "workspace_tabs"):
+        tabs = getattr(self, "center_tabs", None) or getattr(self, "workspace_tabs", None)
+        if tabs is None:
             return
-        for index in range(self.workspace_tabs.count()):
-            if self.workspace_tabs.tabText(index) == title:
-                self.workspace_tabs.setCurrentIndex(index)
+        aliases = {
+            "项目总览": "🏠 项目总览",
+            "模块装配": "📦 模块装配",
+            "关系视图": "🔵 关系视图",
+            "生成发布": "🚀 生成发布",
+        }
+        expected = aliases.get(title, title)
+        for index in range(tabs.count()):
+            current_title = tabs.tabText(index)
+            if current_title == expected or current_title.replace("🏠 ", "").replace("📦 ", "").replace("🔵 ", "").replace("🚀 ", "") == title:
+                tabs.setCurrentIndex(index)
                 return
 
     def zoom_relation_view(self, factor: float) -> None:
@@ -378,15 +396,18 @@ class WorkbenchMixin:
         if hasattr(self, "module_scope_label"):
             summary = self.cross_page_edge_summary(self.active_page())
             self.module_scope_label.setText(page_hint(self.active_page()) + ("\n" + summary if summary else ""))
-        if self.active_page().get("kind") == "comm":
-            topic = self.page_source_node()
-            if topic:
-                self.select_node(str(topic.get("id")))
         self.scene.clear()
         self.node_items.clear()
         self.edge_items.clear()
+        self.clear_alignment_guides()
         positions = self.page_positions()
         visible_nodes = self.visible_nodes()
+        for group in self.graph.get("ui", {}).get("backdrops", []):
+            if not isinstance(group, dict):
+                continue
+            backdrop = BackdropItem(group, self)
+            backdrop.update_geometry()
+            self.scene.addItem(backdrop)
         placed: list[tuple[float, float, float, float]] = []
         for index, node in enumerate(visible_nodes):
             item = GraphNodeItem(node, self)
@@ -400,6 +421,78 @@ class WorkbenchMixin:
             self.scene.addItem(item)
             self.node_items[node.get("id")] = item
         self.refresh_edges()
+        self.apply_focus_mode(self.focus_node_id)
+
+    def update_canvas_lod(self, zoom_level: float) -> None:
+        lod = max(0.2, min(2.0, zoom_level))
+        for item in self.node_items.values():
+            item.update_lod(lod)
+
+    def related_focus_ids(self, node_id: str) -> set[str]:
+        related = {node_id}
+        changed = True
+        while changed:
+            changed = False
+            for edge in self.graph.get("edges", []):
+                src = str(edge.get("from", ""))
+                dst = str(edge.get("to", ""))
+                if src in related and dst and dst not in related:
+                    related.add(dst)
+                    changed = True
+                if dst in related and src and src not in related:
+                    related.add(src)
+                    changed = True
+        return related
+
+    def apply_focus_mode(self, node_id: str | None) -> None:
+        if not node_id:
+            active_backdrops = set()
+            for item in self.node_items.values():
+                item.setOpacity(1.0)
+            for edge_item in self.edge_items:
+                edge_item.setOpacity(1.0)
+            for item in self.scene.items():
+                if isinstance(item, BackdropItem):
+                    item.setOpacity(0.95)
+            return
+        focus_ids = self.related_focus_ids(node_id)
+        active_backdrops = {
+            str(group.get("id"))
+            for group in self.graph.get("ui", {}).get("backdrops", [])
+            if any(str(item_id) in focus_ids for item_id in group.get("node_ids", []))
+        }
+        for item_id, item in self.node_items.items():
+            item.setOpacity(1.0 if item_id in focus_ids else 0.22)
+        for edge_item in self.edge_items:
+            src = str(edge_item.edge.get("from", ""))
+            dst = str(edge_item.edge.get("to", ""))
+            edge_item.setOpacity(1.0 if src in focus_ids and dst in focus_ids else 0.18)
+        for item in self.scene.items():
+            if isinstance(item, BackdropItem):
+                item_id = str(item.group.get("id", ""))
+                item.setOpacity(0.96 if item_id in active_backdrops else 0.18)
+
+    def select_backdrop(self, group: dict[str, Any] | None) -> None:
+        if not group:
+            self.focus_node_id = None
+            self.apply_focus_mode(None)
+            return
+        node_ids = [str(node_id) for node_id in group.get("node_ids", [])]
+        self.focus_node_id = node_ids[0] if node_ids else None
+        if not node_ids:
+            self.apply_focus_mode(None)
+            return
+        focus_ids = set(node_ids)
+        for item_id, item in self.node_items.items():
+            item.setOpacity(1.0 if item_id in focus_ids else 0.22)
+        for edge_item in self.edge_items:
+            src = str(edge_item.edge.get("from", ""))
+            dst = str(edge_item.edge.get("to", ""))
+            edge_item.setOpacity(1.0 if src in focus_ids and dst in focus_ids else 0.18)
+        for item in self.scene.items():
+            if isinstance(item, BackdropItem):
+                item_id = str(item.group.get("id", ""))
+                item.setOpacity(0.96 if item_id == str(group.get("id", "")) else 0.18)
 
     def cross_page_edge_summary(self, page: dict[str, str]) -> str:
         if page.get("kind") == "root":
@@ -442,6 +535,43 @@ class WorkbenchMixin:
         else:
             lines.append("当前未连接。拖到兼容端口即可建立关系。")
         return "\n".join(lines)
+
+    def compatible_target_ids(self, start_port) -> set[str]:
+        if not start_port:
+            return set()
+        compatible: set[str] = set()
+        for node_id, item in self.node_items.items():
+            for port in item.ports:
+                if start_port.direction == port.direction:
+                    continue
+                out_port = start_port if start_port.direction == "out" else port
+                in_port = port if port.direction == "in" else start_port
+                if can_connect_ports(out_port.node_item.node, in_port.node_item.node, out_port.port_type, in_port.port_type):
+                    compatible.add(node_id)
+                    break
+        return compatible
+
+    def show_compatible_target_preview(self, start_port) -> None:
+        compatible = self.compatible_target_ids(start_port)
+        if not compatible:
+            for item in self.node_items.values():
+                item.setOpacity(0.25)
+            return
+        for node_id, item in self.node_items.items():
+            item.setOpacity(1.0 if node_id in compatible or node_id == start_port.node_item.node.get("id") else 0.18)
+
+    def line_insert_candidate(self, scene_pos: QPointF):
+        candidate = None
+        best_distance = 18.0
+        for edge_item in self.edge_items:
+            point = edge_item.path().pointAtPercent(0.5)
+            dx = point.x() - scene_pos.x()
+            dy = point.y() - scene_pos.y()
+            distance = (dx * dx + dy * dy) ** 0.5
+            if distance < best_distance:
+                candidate = edge_item
+                best_distance = distance
+        return candidate
 
     def port_scene_center(self, node_id: str | None, port_type: str | None, direction: str) -> QPointF | None:
         if not node_id or node_id not in self.node_items:
@@ -494,8 +624,10 @@ class WorkbenchMixin:
                 pen.setStyle(style)
         return pen
 
-    def edge_pen_for_item(self, edge: dict[str, Any], selected: bool = False) -> QPen:
+    def edge_pen_for_item(self, edge: dict[str, Any], selected: bool = False, dash_offset: float | None = None) -> QPen:
         pen = self.edge_pen(edge)
+        if dash_offset is not None and str(edge.get("kind", "generic")) in {"data_flow", "control_flow", "event"}:
+            pen.setDashOffset(dash_offset)
         if selected:
             pen.setColor(QColor("#ffd54f"))
             pen.setWidth(max(4, pen.width() + 2))
@@ -503,10 +635,21 @@ class WorkbenchMixin:
 
     def select_edge(self, edge: dict[str, Any] | None) -> None:
         self.selected_edge_id = str(edge.get("id")) if edge else None
+        if edge is None and hasattr(self, "scene") and self.scene is not None:
+            self.scene.clearSelection()
         if edge:
             self.current_node_id = None
+            self.focus_node_id = None
+            self.apply_focus_mode(None)
+        elif not self.focus_node_id:
+            self.apply_focus_mode(None)
         for item in self.edge_items:
-            item.setPen(self.edge_pen_for_item(item.edge, selected=str(item.edge.get("id")) == self.selected_edge_id))
+            is_selected = str(item.edge.get("id")) == self.selected_edge_id
+            try:
+                item.setSelected(is_selected)
+            except Exception:
+                pass
+            item.set_emphasis_pen(self.edge_pen_for_item(item.edge, selected=is_selected, dash_offset=getattr(item, "_dash_offset", None)))
 
     def selected_edge(self) -> dict[str, Any] | None:
         edge_id = getattr(self, "selected_edge_id", None)
@@ -519,18 +662,6 @@ class WorkbenchMixin:
             self.scene.removeItem(edge)
         self.edge_items = []
         edges: list[dict[str, Any]] = [edge for edge in self.graph.get("edges", []) if isinstance(edge, dict)]
-        for flow in self.graph.get("flows", []):
-            if flow.get("type") == "control.line_follower":
-                sensor = flow.get("sensor")
-                sensor_node = self._find_node(sensor)
-                edges.extend([
-                    {"from": sensor_node.get("input") if sensor_node else self._line_input_id(), "from_port": "hal", "to": sensor, "to_port": "hal", "kind": "hardware_dependency"},
-                    {"from": sensor, "from_port": "sensor", "to": flow.get("pid"), "to_port": "sensor", "kind": "data_flow"},
-                    {"from": sensor, "from_port": "sensor", "to": flow.get("left_motor"), "to_port": "control", "kind": "control_flow"},
-                    {"from": sensor, "from_port": "sensor", "to": flow.get("right_motor"), "to_port": "control", "kind": "control_flow"},
-                    {"from": flow.get("pid"), "from_port": "algorithm", "to": flow.get("left_motor"), "to_port": "control", "kind": "control_flow"},
-                    {"from": flow.get("pid"), "from_port": "algorithm", "to": flow.get("right_motor"), "to_port": "control", "kind": "control_flow"},
-                ])
         for edge in edges:
             src = edge.get("from")
             dst = edge.get("to")
@@ -540,8 +671,13 @@ class WorkbenchMixin:
                 if not a or not b:
                     continue
                 line = EdgeItem(edge, self)
-                line.setLine(a.x(), a.y(), b.x(), b.y())
-                line.setPen(self.edge_pen_for_item(edge, selected=str(edge.get("id")) == getattr(self, "selected_edge_id", None)))
+                line.update_path(a, b)
+                is_selected = str(edge.get("id")) == getattr(self, "selected_edge_id", None)
+                try:
+                    line.setSelected(is_selected)
+                except Exception:
+                    pass
+                line.set_emphasis_pen(self.edge_pen_for_item(edge, selected=is_selected, dash_offset=getattr(line, "_dash_offset", None)))
                 kind_label = EDGE_KIND_LABELS.get(str(edge.get("kind", "generic")), str(edge.get("kind", "generic")))
                 effect = ""
                 src_node = self._find_node(src)
@@ -553,6 +689,73 @@ class WorkbenchMixin:
                 line.setZValue(-1)
                 self.scene.addItem(line)
                 self.edge_items.append(line)
+
+    def tick_edge_animations(self) -> None:
+        for edge_item in getattr(self, "edge_items", []):
+            edge_item.advance_flow(0.8)
+            is_selected = str(edge_item.edge.get("id")) == getattr(self, "selected_edge_id", None)
+            edge_item.set_emphasis_pen(self.edge_pen_for_item(edge_item.edge, selected=is_selected, dash_offset=getattr(edge_item, "_dash_offset", None)))
+
+    def clear_alignment_guides(self) -> None:
+        for item in getattr(self, "alignment_guide_items", []):
+            if item.scene():
+                self.scene.removeItem(item)
+        self.alignment_guide_items = []
+
+    def update_alignment_guides(self, moving_id: str, pos: QPointF) -> QPointF:
+        self.clear_alignment_guides()
+        moving_item = self.node_items.get(moving_id)
+        if not moving_item:
+            return pos
+        snap_threshold = 6.0
+        snapped = QPointF(pos)
+        rect = QRectF(pos.x(), pos.y(), moving_item.WIDTH, moving_item.HEIGHT)
+        centers = {
+            "x": rect.center().x(),
+            "y": rect.center().y(),
+            "left": rect.left(),
+            "right": rect.right(),
+            "top": rect.top(),
+            "bottom": rect.bottom(),
+        }
+        vertical_snap = None
+        horizontal_snap = None
+        for node_id, item in self.node_items.items():
+            if node_id == moving_id:
+                continue
+            other = item.sceneBoundingRect()
+            other_points = {
+                "x": other.center().x(),
+                "y": other.center().y(),
+                "left": other.left(),
+                "right": other.right(),
+                "top": other.top(),
+                "bottom": other.bottom(),
+            }
+            for key in ["x", "left", "right"]:
+                if vertical_snap is None and abs(centers[key] - other_points[key]) <= snap_threshold:
+                    snapped.setX(snapped.x() + (other_points[key] - centers[key]))
+                    vertical_snap = other_points[key]
+            for key in ["y", "top", "bottom"]:
+                if horizontal_snap is None and abs(centers[key] - other_points[key]) <= snap_threshold:
+                    snapped.setY(snapped.y() + (other_points[key] - centers[key]))
+                    horizontal_snap = other_points[key]
+        pen = QPen(QColor("#26C6DA"), 1.0)
+        pen.setStyle(Qt.PenStyle.DashLine if hasattr(Qt, "PenStyle") else Qt.DashLine)
+        scene_rect = self.scene.sceneRect()
+        if vertical_snap is not None:
+            line = QGraphicsLineItem(vertical_snap, scene_rect.top() - 4000, vertical_snap, scene_rect.bottom() + 4000)
+            line.setPen(pen)
+            line.setZValue(50)
+            self.scene.addItem(line)
+            self.alignment_guide_items.append(line)
+        if horizontal_snap is not None:
+            line = QGraphicsLineItem(scene_rect.left() - 4000, horizontal_snap, scene_rect.right() + 4000, horizontal_snap)
+            line.setPen(pen)
+            line.setZValue(50)
+            self.scene.addItem(line)
+            self.alignment_guide_items.append(line)
+        return snapped
 
     def refresh_json_editor(self) -> None:
         self.graph_json_editor.setPlainText(json.dumps(self.graph, ensure_ascii=False, indent=2))
@@ -625,15 +828,21 @@ class WorkbenchMixin:
             self.selected_edge_id = None
             for item in self.edge_items:
                 item.setPen(self.edge_pen_for_item(item.edge, selected=False))
+            if hasattr(self, "right_dock") and self.right_dock.isHidden():
+                self.right_dock.show()
+            if hasattr(self, "right_tabs"):
+                self.right_tabs.setCurrentIndex(0)
+        self.focus_node_id = node_id
         self.current_node_id = node_id
+        self.apply_focus_mode(self.focus_node_id)
         node = self._find_node(node_id) if node_id else None
         if not node and node_id is None:
             node = self.page_source_node()
-            if node:
-                self.current_node_id = node.get("id")
         if not node:
             if node_id is not None:
                 self.current_node_id = None
+                self.focus_node_id = None
+                self.apply_focus_mode(None)
             self.selected_label.setText("未选择卡片")
             if hasattr(self, "ports_label"):
                 self.ports_label.setText("端口：未选择")

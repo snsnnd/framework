@@ -15,9 +15,9 @@ if importlib.util.find_spec("PyQt6") is not None:
     from PyQt6.QtCore import Qt
     from PyQt6.QtGui import QBrush, QColor, QFont, QFontMetrics, QKeySequence, QShortcut
     from PyQt6.QtWidgets import (
-        QCheckBox, QComboBox, QFormLayout, QGraphicsScene, QHBoxLayout,
-        QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
-        QPlainTextEdit, QPushButton, QSplitter, QTabBar, QTabWidget,
+        QCheckBox, QComboBox, QDockWidget, QFormLayout, QGraphicsScene, QHBoxLayout,
+        QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox,
+        QMainWindow, QPlainTextEdit, QPushButton, QSplitter, QTabBar, QTabWidget,
         QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout, QWidget,
     )
     QT_LIB = "PyQt6"
@@ -25,15 +25,15 @@ elif importlib.util.find_spec("PyQt5") is not None:
     from PyQt5.QtCore import Qt
     from PyQt5.QtGui import QBrush, QColor, QFont, QFontMetrics, QKeySequence
     from PyQt5.QtWidgets import (
-        QCheckBox, QComboBox, QFormLayout, QGraphicsScene, QHBoxLayout,
-        QLabel, QLineEdit, QListWidget, QListWidgetItem, QMessageBox,
-        QPlainTextEdit, QPushButton, QShortcut, QSplitter, QTabBar,
+        QCheckBox, QComboBox, QDockWidget, QFormLayout, QGraphicsScene, QHBoxLayout,
+        QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox,
+        QMainWindow, QPlainTextEdit, QPushButton, QShortcut, QSplitter, QTabBar,
         QTabWidget, QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout,
         QWidget,
     )
     QT_LIB = "PyQt5"
 else:
-    QWidget = QTabWidget = QTableWidget = object
+    QWidget = QTabWidget = QTableWidget = QDockWidget = QMainWindow = QMenu = object
     QT_LIB = "missing"
 
 from studio.editor_canvas import (
@@ -48,6 +48,89 @@ class UIBuilderMixin:
     """Mixin that provides all _build_* methods for VisualEditorWindow."""
 
     def _build_ui(self) -> None:
+        global_qss = """
+        QWidget {
+            background-color: #151B2B;
+            color: #DCE7FF;
+            font-family: "Segoe UI", "San Francisco", "Noto Sans", sans-serif;
+        }
+        QListWidget {
+            background-color: #111624;
+            border: 1px solid #242D40;
+            border-radius: 6px;
+            outline: none;
+        }
+        QListWidget::item {
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin: 2px 4px;
+        }
+        QListWidget::item:hover {
+            background-color: #1E273A;
+        }
+        QListWidget::item:selected {
+            background-color: #26C6DA;
+            color: #0A0F1C;
+            font-weight: bold;
+        }
+        QPushButton {
+            background-color: #242D40;
+            color: #FFFFFF;
+            border: 1px solid #364259;
+            border-radius: 4px;
+            padding: 6px 14px;
+            font-weight: 500;
+        }
+        QPushButton:hover {
+            background-color: #2D374D;
+            border-color: #4A5A7A;
+        }
+        QPushButton:pressed {
+            background-color: #1E2536;
+        }
+        QLineEdit, QComboBox, QPlainTextEdit {
+            background-color: #0B101A;
+            border: 1px solid #242D40;
+            border-radius: 4px;
+            padding: 6px;
+            color: #E2E8F0;
+        }
+        QLineEdit:focus, QComboBox:focus, QPlainTextEdit:focus {
+            border: 1px solid #26C6DA;
+        }
+        QSplitter::handle {
+            background-color: #151B2B;
+            width: 4px;
+        }
+        QSplitter::handle:hover {
+            background-color: #26C6DA;
+        }
+        QTabWidget::pane {
+            border: 1px solid #242D40;
+            background: #151B2B;
+            border-radius: 4px;
+        }
+        QTabBar::tab {
+            background: #111624;
+            color: #8F9DB2;
+            padding: 8px 16px;
+            border: 1px solid #242D40;
+            border-bottom: none;
+            border-top-left-radius: 4px;
+            border-top-right-radius: 4px;
+            margin-right: 2px;
+        }
+        QTabBar::tab:selected {
+            background: #151B2B;
+            color: #FFFFFF;
+            border-top: 2px solid #26C6DA;
+            font-weight: bold;
+        }
+        QTabBar::tab:hover:!selected {
+            background: #1A2235;
+        }
+        """
+        self.setStyleSheet(global_qss)
         if not self.embedded:
             toolbar = QToolBar("项目工具栏")
             self.addToolBar(toolbar)
@@ -60,21 +143,27 @@ class UIBuilderMixin:
             toolbar.addAction("重做", self.redo)
             toolbar.addAction("校验", self.validate_current_graph)
             toolbar.addAction("生成", self.generate_application)
+            toolbar.addAction("分组区域", self.create_backdrop_from_selection)
+            self.left_dock_action = toolbar.addAction("资源")
+            self.right_dock_action = toolbar.addAction("属性")
+            self.bottom_dock_action = toolbar.addAction("输出")
             toolbar.addAction("快捷键", self.show_shortcuts)
 
-        root_splitter = QSplitter()
-        self.setCentralWidget(root_splitter)
+        self.setDockNestingEnabled(True)
+        try:
+            dock_opts = (
+                QMainWindow.DockOption.AnimatedDocks
+                | QMainWindow.DockOption.AllowNestedDocks
+                | QMainWindow.DockOption.AllowTabbedDocks
+            )
+        except AttributeError:
+            dock_opts = QMainWindow.AnimatedDocks | QMainWindow.AllowNestedDocks | QMainWindow.AllowTabbedDocks
+        self.setDockOptions(dock_opts)
 
         left = QWidget()
         left.setObjectName("NavRail")
-        left.setMinimumWidth(180)
-        left.setMaximumWidth(260)
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(10, 10, 10, 10)
-        title = QLabel("EFW")
-        title.setStyleSheet("font-size: 18pt; font-weight: 700; color: #ffffff;")
-        left_layout.addWidget(title)
-        left_layout.addWidget(QLabel("Project Builder"))
         self.workflow_list = QListWidget()
         workflow_steps = [
             ("项目总览", "dashboard"),
@@ -124,15 +213,33 @@ class UIBuilderMixin:
         add_btn = QPushButton("添加到当前页面")
         add_btn.clicked.connect(self.add_selected_card)
         left_layout.addWidget(add_btn)
-        shortcuts_btn = QPushButton("⚙ 快捷键设定")
-        shortcuts_btn.clicked.connect(self.open_shortcuts_editor)
-        left_layout.addWidget(shortcuts_btn)
-        root_splitter.addWidget(left)
+        backdrop_btn = QPushButton("创建分组区域")
+        backdrop_btn.clicked.connect(self.create_backdrop_from_selection)
+        left_layout.addWidget(backdrop_btn)
+        left_layout.addWidget(QLabel("提示：双击画布空白处或按 Tab，可在鼠标位置快速搜索并插入节点。"))
 
-        self.workspace_tabs = QTabWidget()
-        self.workspace_tabs.setMinimumWidth(360)
-        self.workspace_tabs.addTab(self._build_dashboard_tab(), "项目总览")
-        self.workspace_tabs.addTab(self._build_assembly_tab(), "模块装配")
+        self.left_dock = QDockWidget("资源管理器", self)
+        self.left_dock.setObjectName("LeftDock")
+        try:
+            features = (
+                QDockWidget.DockWidgetFeature.DockWidgetMovable
+                | QDockWidget.DockWidgetFeature.DockWidgetFloatable
+                | QDockWidget.DockWidgetFeature.DockWidgetClosable
+            )
+        except AttributeError:
+            features = QDockWidget.DockWidgetMovable | QDockWidget.DockWidgetFloatable | QDockWidget.DockWidgetClosable
+        self.left_dock.setFeatures(features)
+        self.left_dock.setMinimumWidth(220)
+        left.setMinimumWidth(220)
+        self.left_dock.setWidget(left)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea if hasattr(Qt, "DockWidgetArea") else Qt.LeftDockWidgetArea, self.left_dock)
+
+        self.center_tabs = QTabWidget()
+        self.center_tabs.setMinimumWidth(360)
+        self.center_tabs.setDocumentMode(True)
+        self.center_tabs.setTabsClosable(False)
+        self.center_tabs.addTab(self._build_dashboard_tab(), "🏠 项目总览")
+        self.center_tabs.addTab(self._build_assembly_tab(), "📦 模块装配")
 
         canvas = QWidget()
         canvas_layout = QVBoxLayout(canvas)
@@ -143,7 +250,6 @@ class UIBuilderMixin:
         self.page_tabs.tabCloseRequested.connect(self.close_page_tab)
         canvas_layout.addWidget(self.page_tabs)
         page_controls = QHBoxLayout()
-        page_controls.addWidget(QLabel("关系视图：用页面标签进入模块/状态机/Topic；连线从输出端口拖到输入端口。"))
         zoom_out_btn = QPushButton("−")
         zoom_out_btn.clicked.connect(lambda: self.zoom_relation_view(1 / 1.15))
         zoom_in_btn = QPushButton("+")
@@ -157,18 +263,16 @@ class UIBuilderMixin:
         page_controls.addWidget(zoom_reset_btn)
         page_controls.addWidget(root_btn)
         canvas_layout.addLayout(page_controls)
-        self.module_scope_label = QLabel("当前视图：根项目")
+        self.module_scope_label = QLabel("")
         canvas_layout.addWidget(self.module_scope_label)
         self.scene = QGraphicsScene()
         self.view = BlueprintView(self.scene, self)
         canvas_layout.addWidget(self.view)
-        self.workspace_tabs.addTab(canvas, "关系视图")
-        self.workspace_tabs.addTab(self._build_release_tab(), "生成发布")
-        root_splitter.addWidget(self.workspace_tabs)
+        self.center_tabs.addTab(canvas, "🔵 关系视图")
+        self.center_tabs.addTab(self._build_release_tab(), "🚀 生成发布")
+        self.setCentralWidget(self.center_tabs)
 
         inspector = QWidget()
-        inspector.setMinimumWidth(260)
-        inspector.setMaximumWidth(720)
         inspector_layout = QVBoxLayout(inspector)
         inspector_layout.setContentsMargins(8, 8, 8, 8)
         title_row = QHBoxLayout()
@@ -182,30 +286,162 @@ class UIBuilderMixin:
         self.inspector_nav = QListWidget()
         inspector_layout.addWidget(self.inspector_nav)
         self.right_tabs = QTabWidget()
-        self.right_tabs.addTab(self._build_structure_tab(), "项目结构")
-        self.right_tabs.addTab(self._build_properties_tab(), "属性表单")
-        self.right_tabs.addTab(self._build_code_tab(), "代码补齐")
-        self.right_tabs.addTab(self._build_validation_tab(), "实时校验")
+        self.right_tabs.setTabPosition(QTabWidget.TabPosition.South if hasattr(QTabWidget, "TabPosition") else QTabWidget.South)
+        self.right_tabs.addTab(self._build_properties_tab(), "属性")
+        self.right_tabs.addTab(self._build_code_tab(), "节点代码")
+        self.right_tabs.addTab(self._build_pin_planner_tab(), "引脚配置")
+        self.right_tabs.addTab(self._build_structure_tab(), "高级 · 项目结构")
         self.right_tabs.addTab(self._build_mapping_tab(), "高级 · 生成映射")
         self.right_tabs.addTab(self._build_file_tree_tab(), "高级 · 文件树预览")
-        self.right_tabs.addTab(self._build_schedule_tab(), "高级 · 任务调度")
-        self.right_tabs.addTab(self._build_pin_planner_tab(), "高级 · Board Profile / Pin Planner")
         self.right_tabs.addTab(self._build_json_tab(), "高级 · Graph JSON")
         self._advanced_inspector_enabled = False
         self._advanced_tab_titles = {
+            "高级 · 项目结构",
             "高级 · 生成映射",
             "高级 · 文件树预览",
-            "高级 · 任务调度",
-            "高级 · Board Profile / Pin Planner",
             "高级 · Graph JSON",
         }
         self.inspector_nav.currentItemChanged.connect(self.switch_inspector_panel)
         self.rebuild_inspector_nav()
         self.right_tabs.tabBar().hide()
         inspector_layout.addWidget(self.right_tabs, 1)
-        root_splitter.addWidget(inspector)
-        root_splitter.setChildrenCollapsible(True)
-        root_splitter.setSizes([210, 620, 320])
+        self.right_dock = QDockWidget("属性与详情", self)
+        self.right_dock.setObjectName("RightDock")
+        self.right_dock.setFeatures(features)
+        self.right_dock.setMinimumWidth(300)
+        inspector.setMinimumWidth(300)
+        self.right_dock.setWidget(inspector)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea if hasattr(Qt, "DockWidgetArea") else Qt.RightDockWidgetArea, self.right_dock)
+
+        self.bottom_tabs = QTabWidget()
+        self.bottom_tabs.addTab(self._build_validation_tab(), "实时校验")
+        self.bottom_tabs.addTab(self._build_release_tab(), "生成日志")
+        self.bottom_tabs.addTab(self._build_schedule_tab(), "任务调度")
+        self.bottom_tabs.setTabPosition(QTabWidget.TabPosition.South if hasattr(QTabWidget, "TabPosition") else QTabWidget.South)
+        self.bottom_dock = QDockWidget("输出 / 日志", self)
+        self.bottom_dock.setObjectName("BottomDock")
+        self.bottom_dock.setFeatures(features)
+        self.bottom_dock.setWidget(self.bottom_tabs)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea if hasattr(Qt, "DockWidgetArea") else Qt.BottomDockWidgetArea, self.bottom_dock)
+        self.bottom_dock.hide()
+        if not self.embedded:
+            self.left_dock_action.triggered.connect(self.toggle_left_dock)
+            self.right_dock_action.triggered.connect(self.toggle_right_dock)
+            self.bottom_dock_action.triggered.connect(self.toggle_bottom_dock)
+            self.toggle_console_shortcut = QShortcut(QKeySequence("Ctrl+`"), self)
+            self.toggle_console_shortcut.activated.connect(self.toggle_bottom_dock)
+        self.resizeDocks([self.left_dock, self.right_dock], [260, 340], Qt.Orientation.Horizontal if hasattr(Qt, "Orientation") else Qt.Horizontal)
+        self._default_window_state = self.saveState()
+        self.quick_add_shortcut = QShortcut(QKeySequence("Tab"), self)
+        self.quick_add_shortcut.activated.connect(self.open_quick_add_palette_at_view_center)
+        self._build_quick_add_popup()
+
+    def _build_quick_add_popup(self) -> None:
+        self.quick_add_popup = QWidget(self, Qt.WindowType.Popup if hasattr(Qt, "WindowType") else Qt.Popup)
+        self.quick_add_popup.setStyleSheet("background: #111624; border: 1px solid #242D40; border-radius: 8px;")
+        self.quick_add_popup.resize(320, 360)
+        layout = QVBoxLayout(self.quick_add_popup)
+        layout.setContentsMargins(8, 8, 8, 8)
+        self.quick_add_input = QLineEdit()
+        self.quick_add_input.setPlaceholderText("输入关键词，例如 motor / sensor / topic…")
+        self.quick_add_input.textChanged.connect(self.filter_quick_add_palette)
+        layout.addWidget(self.quick_add_input)
+        self.quick_add_list = QListWidget()
+        self.quick_add_list.itemDoubleClicked.connect(self.confirm_quick_add_palette)
+        layout.addWidget(self.quick_add_list)
+        self._quick_add_scene_pos = None
+        self.filter_quick_add_palette("")
+
+    def toggle_left_dock(self) -> None:
+        if hasattr(self, "left_dock"):
+            visible = not self.left_dock.isVisible()
+            self.left_dock.setVisible(visible)
+            if visible:
+                self.left_dock.raise_()
+
+    def toggle_right_dock(self) -> None:
+        if hasattr(self, "right_dock"):
+            visible = not self.right_dock.isVisible()
+            self.right_dock.setVisible(visible)
+            if visible:
+                self.right_dock.raise_()
+
+    def toggle_bottom_dock(self) -> None:
+        if hasattr(self, "bottom_dock"):
+            visible = not self.bottom_dock.isVisible()
+            self.bottom_dock.setVisible(visible)
+            if visible:
+                self.bottom_dock.raise_()
+                self.bottom_tabs.setCurrentIndex(0)
+                self.resizeDocks([self.bottom_dock], [220], Qt.Orientation.Vertical if hasattr(Qt, "Orientation") else Qt.Vertical)
+                if hasattr(self, "statusBar"):
+                    self.statusBar().showMessage("已打开底部输出区：实时校验 / 生成日志 / 任务调度", 4000)
+
+    def reset_dock_layout(self) -> None:
+        if hasattr(self, "left_dock"):
+            self.left_dock.setFloating(False)
+        if hasattr(self, "right_dock"):
+            self.right_dock.setFloating(False)
+        if hasattr(self, "bottom_dock"):
+            self.bottom_dock.setFloating(False)
+        if hasattr(self, "_default_window_state"):
+            self.restoreState(self._default_window_state)
+        self.left_dock.show()
+        self.right_dock.show()
+        self.bottom_dock.hide()
+        self.resizeDocks([self.left_dock, self.right_dock], [260, 340], Qt.Orientation.Horizontal if hasattr(Qt, "Orientation") else Qt.Horizontal)
+
+    def open_quick_add_palette_at_view_center(self) -> None:
+        if not hasattr(self, "view"):
+            return
+        center = self.view.viewport().rect().center()
+        global_pos = self.view.mapToGlobal(center)
+        scene_pos = self.view.mapToScene(center)
+        self.open_quick_add_palette(global_pos, scene_pos)
+
+    def open_quick_add_palette(self, global_pos, scene_pos) -> None:
+        self._quick_add_scene_pos = scene_pos
+        self.filter_quick_add_palette("")
+        self.quick_add_popup.move(global_pos)
+        self.quick_add_popup.show()
+        self.quick_add_input.setFocus()
+        self.quick_add_input.selectAll()
+
+    def filter_quick_add_palette(self, text: str) -> None:
+        if not hasattr(self, "quick_add_list"):
+            return
+        role = Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole
+        self.quick_add_list.clear()
+        keyword = text.strip().lower()
+        for category, node_types in NODE_CATEGORIES:
+            visible = []
+            for node_type in node_types:
+                label = f"{display_label(node_type)} {node_type}".lower()
+                if keyword and keyword not in label:
+                    continue
+                visible.append(node_type)
+            if not visible:
+                continue
+            header = QListWidgetItem(f"{category}", self.quick_add_list)
+            header.setFlags(header.flags() & ~Qt.ItemFlag.ItemIsSelectable if hasattr(Qt, "ItemFlag") else header.flags())
+            header.setData(role, "__category__")
+            header.setForeground(QBrush(QColor("#7ec8ff")))
+            for node_type in visible:
+                item = QListWidgetItem(f"  {display_label(node_type)}", self.quick_add_list)
+                item.setData(role, node_type)
+        if self.quick_add_list.count() > 0:
+            self.quick_add_list.setCurrentRow(1 if self.quick_add_list.count() > 1 else 0)
+
+    def confirm_quick_add_palette(self, item: QListWidgetItem | None = None) -> None:
+        item = item or self.quick_add_list.currentItem()
+        if not item:
+            return
+        role = Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole
+        node_type = item.data(role)
+        if not node_type or node_type == "__category__":
+            return
+        self.quick_add_popup.hide()
+        self.add_card_from_template(str(node_type), self._quick_add_scene_pos)
 
     def rebuild_inspector_nav(self) -> None:
         if not hasattr(self, "inspector_nav") or not hasattr(self, "right_tabs"):
@@ -424,7 +660,8 @@ Ctrl+Z    撤销
 Ctrl+Y    重做
 Ctrl+G    生成 application
 Ctrl+M    添加当前选中的模板卡片
-Delete / Backspace 删除当前卡片
+Ctrl+Shift+B 创建分组区域
+Delete / Backspace 删除当前选中的对象（优先删连线）
 Ctrl++ / Ctrl+- 关系视图缩放
 Ctrl+0    关系视图恢复 100%
 Ctrl+1..4 快速切换：总览 / 模块装配 / 关系视图 / 生成发布
