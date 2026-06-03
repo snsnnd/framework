@@ -60,6 +60,24 @@ python3 tools/efw.py studio
 
 如果只需要命令行生成，不需要 VNC 桌面，可以直接在 Codespaces 终端运行 `python3 tools/efw.py codegen ...`。`start-vnc.sh` 每次容器启动都会运行 `check-vnc.sh --quick`，确保 5901/6080 端口已经监听且 noVNC 页面能返回。
 
+## Windows 便携版 Studio
+
+如果你不是从源码运行，而是拿到别人提供的 `EFW Studio Portable` 目录包：
+
+1. 解压整个目录。
+2. 双击 `start_studio.bat`。
+3. 推荐先打开 `examples/projects/generic_embedded_app.efw_project.json`。
+
+这种模式下不需要你自己安装 Python 或 PyQt，运行环境已经随包携带。
+
+如果你是打包方，可在仓库根目录执行：
+
+```bash
+python3 tools/package_studio_portable.py
+```
+
+前提：仓库内已有可运行的 Windows `.venv/`，并且包含 `Scripts/python.exe` 与 PyQt 依赖。
+
 ## 主机侧验证
 
 ```bash
