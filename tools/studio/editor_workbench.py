@@ -31,7 +31,7 @@ from codegen.graph import (
     node_generation_label,
 )
 from studio.core import page_for_node, page_hint, page_key, page_title, root_page, visible_nodes_for_page
-from studio.editor_canvas import GraphNodeItem
+from studio.editor_canvas import EdgeItem, GraphNodeItem
 from studio.editor_registry import NODE_TEMPLATES, TYPE_LABELS
 
 
