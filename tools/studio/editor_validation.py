@@ -67,6 +67,16 @@ class ValidationMixin:
             lines.append(f"  {self.node_action_hint(node)}")
         for flow in self.graph.get("flows", []):
             lines.append(f"- flow:{flow.get('id')} [{flow.get('type')}] → app_bootstrap.c / bind + scheduler")
+        publishers = [node for node in self.graph.get("nodes", []) if node.get("type") == "event.publisher"]
+        if publishers:
+            lines.append("")
+            lines.append("自动发布缓存 / 来源")
+            for node in publishers:
+                source = str(node.get("source", "") or "(无 source)")
+                mode = "expr/size" if node.get("data_expr") and node.get("size_expr") else ("source-auto" if node.get("source") else "manual")
+                interval_ms = int(node.get("interval_ms", 0) or 0)
+                stage = "module.poll" if node.get("module") else "root app_update_1ms"
+                lines.append(f"- {node.get('id')} → topic={node.get('topic')} | source={source} | mode={mode} | stage={stage} | interval_ms={interval_ms}")
         self.mapping_output.setPlainText("\n".join(lines))
 
     def refresh_structure_view(self) -> None:
@@ -222,7 +232,7 @@ class ValidationMixin:
         if missing_callbacks:
             lines.append("- 下一步：到 Code 页点击“一键生成缺失回调”，再补业务逻辑。")
         if any(node.get("type") == "event.publisher" for node in doc_nodes):
-            lines.append("- 注意：event.publisher 不会自动 publish，请在 task/module/custom code 中调用 efw_topic_publish()。")
+            lines.append("- 注意：event.publisher 现在会生成 app_publish_xxx(...) 包装函数；如果 payload 类型可推断，还会生成 typed/value 版本。你可以在 task/module/custom code 中直接调用这些包装函数。")
         if any(node.get("type") == "project.module" for node in doc_nodes):
             lines.append("- 注意：project.module 只做页面/分组，不生成独立模块文件。")
         if hardware_mock_nodes or custom_hardware_nodes:

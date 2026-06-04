@@ -155,6 +155,19 @@ DEFAULT_FLOW = {
     "binary_mode": True,
 }
 
+SINGLE_INPUT_PORT_RULES: dict[str, set[str]] = {
+    "event.publisher": {"topic", "event_source"},
+    "event.subscriber": {"topic", "event"},
+    "sensor.line_tracking": {"hal"},
+    "sensor.custom": {"hal"},
+    "actuator.custom": {"hal", "control"},
+    "algorithm.pid": {"sensor", "processor"},
+    "algorithm.custom": {"sensor", "processor"},
+    "processor.custom": {"sensor", "algorithm", "event", "module_input"},
+    "state.machine": {"state_machine"},
+    "state.transition": {"state_machine", "transition_from"},
+}
+
 DEFAULT_CUSTOM_C = """/**
  * @file    app_custom.c
  * @brief   User code generated from the EFW visual editor.
@@ -318,6 +331,8 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
         self.drag_line: QGraphicsLineItem | None = None
         self.drag_port: PortItem | None = None
         self.drag_target_port: PortItem | None = None
+        self._drag_batch_origin: dict[str, list[float]] = {}
+        self._drag_batch_anchor: str | None = None
         self.validation_messages: list[str] = []
         self.validation_targets: list[str | None] = []
         self.undo_stack: list[dict[str, Any]] = []
@@ -333,9 +348,8 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
         self._autosave_timer.timeout.connect(lambda: self.autosave_graph(force=True))
         self._edge_animation_timer = QTimer(self)
         self._edge_animation_timer.timeout.connect(self.tick_edge_animations)
-        self._edge_animation_timer.start(50)
+        self._edge_animation_timer.start(70)
         self._last_output_dir: Path | None = None
-        self.alignment_guide_items: list[Any] = []
         self._loaded_code_content = ""
         self._code_buffer_dirty = False
         self._suppress_code_text_events = False
@@ -476,6 +490,7 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
             if answer == yes:
                 self._dismissed_recovery_autosaves.discard(autosave_key)
                 self.graph = saved_graph
+                self.normalize_graph_runtime_state()
                 self._is_dirty = True
                 self.refresh_all()
                 return True
@@ -638,46 +653,39 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
     DEFAULT_CUSTOM_C = DEFAULT_CUSTOM_C
 
     def begin_port_drag(self, port: PortItem) -> None:
-        # Clean up any previous drag line (e.g. from rapid double-click)
-        if self.drag_line:
-            self.scene.removeItem(self.drag_line)
-            self.drag_line = None
+        if not self._scene_item_alive(port):
+            return
         self.drag_port = port
-        center = port.sceneBoundingRect().center()
-        self.drag_line = QGraphicsLineItem(center.x(), center.y(), center.x(), center.y())
-        self.drag_line.setPen(QPen(QColor("#29b6f6"), 2))
-        self.drag_line.setZValue(10)
-        self.scene.addItem(self.drag_line)
+        self.drag_line = None
         self.show_compatible_target_preview(port)
 
     def update_port_drag(self, pos: QPointF) -> None:
-        if not self.drag_line or not self.drag_port:
+        if not self.drag_port:
+            return
+        if not self._scene_item_alive(self.drag_port):
+            self.drag_port = None
+            self.drag_target_port = None
             return
         self.show_compatible_target_preview(self.drag_port)
-        start = self.drag_port.sceneBoundingRect().center()
         target = self.port_at(pos)
         if target and target.direction != self.drag_port.direction:
             if self.drag_target_port and self.drag_target_port is not target:
-                self.drag_target_port.setScale(1.0)
-            target_center = target.sceneBoundingRect().center()
-            self.drag_line.setLine(start.x(), start.y(), target_center.x(), target_center.y())
-            target.setScale(1.55)
+                self._safe_scene_call(self.drag_target_port, "setScale", 1.0)
+            self._safe_scene_call(target, "setScale", 1.55)
             self.drag_target_port = target
             return
         if self.drag_target_port:
-            self.drag_target_port.setScale(1.0)
+            self._safe_scene_call(self.drag_target_port, "setScale", 1.0)
             self.drag_target_port = None
-        self.drag_line.setLine(start.x(), start.y(), pos.x(), pos.y())
 
     def finish_port_drag(self, pos: QPointF, released_port: PortItem) -> None:
         start_port = self.drag_port
-        if self.drag_line:
-            self.scene.removeItem(self.drag_line)
         self.drag_line = None
         if self.drag_target_port:
-            self.drag_target_port.setScale(1.0)
+            self._safe_scene_call(self.drag_target_port, "setScale", 1.0)
         self.drag_target_port = None
         self.drag_port = None
+        self.clear_compatible_target_preview()
         self.apply_focus_mode(self.focus_node_id)
         target = self.port_at(pos)
         if not start_port or not target or target is start_port:
@@ -701,15 +709,27 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
         return None
 
     def flash_invalid_connection(self, port: PortItem) -> None:
-        original = port.brush()
-        port.setBrush(QBrush(QColor("#e53935")))
+        if not self._scene_item_alive(port):
+            return
+        try:
+            original = port.brush()
+        except RuntimeError:
+            return
+        if not self._safe_scene_call(port, "setBrush", QBrush(QColor("#e53935"))):
+            return
+
+        def restore_port_brush(p=port, b=original):
+            self._safe_scene_call(p, "setBrush", b)
+
         # Reset after 1.5s so the red flash doesn't persist forever
-        QTimer.singleShot(1500, lambda p=port, b=original: p.setBrush(b) if not p.scene() is None else None)
+        QTimer.singleShot(1500, restore_port_brush)
 
     def connect_ports(self, out_port: PortItem, in_port: PortItem) -> bool:
         src = out_port.node_item.node
         dst = in_port.node_item.node
         if not can_connect_ports(src, dst, out_port.port_type, in_port.port_type):
+            return False
+        if self.single_input_port_occupied(dst, in_port.port_type, exclude_from=str(src.get("id", ""))):
             return False
         # Single undo point for the entire connect operation
         self.push_undo()
@@ -717,6 +737,23 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
             return False
         self.add_graph_edge(src, dst, out_port.port_type, in_port.port_type, "port")
         return True
+
+    def single_input_port_occupied(self, node: dict[str, Any], port_type: str, exclude_from: str | None = None) -> bool:
+        node_type = str(node.get("type", ""))
+        if port_type not in SINGLE_INPUT_PORT_RULES.get(node_type, set()):
+            return False
+        node_id = str(node.get("id", ""))
+        for edge in self.graph.get("edges", []):
+            if not isinstance(edge, dict):
+                continue
+            if str(edge.get("to", "")) != node_id:
+                continue
+            if str(edge.get("to_port", "")) != port_type:
+                continue
+            if exclude_from and str(edge.get("from", "")) == exclude_from:
+                continue
+            return True
+        return False
 
     def connection_failure_reason(self, out_port: PortItem, in_port: PortItem) -> str:
         src = out_port.node_item.node
@@ -727,6 +764,8 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
         dst_label = f"{dst.get('id')} ({TYPE_LABELS.get(dst.get('type'), dst.get('type'))})"
         if src.get("id") == dst.get("id"):
             return "不能把卡片连接到自身；请连接到另一个节点。"
+        if self.single_input_port_occupied(dst, in_port.port_type, exclude_from=str(src.get("id", ""))):
+            return f"{dst_label} 的输入端口 {to_label}({in_port.port_type}) 只允许一条来源连线；请先删除现有连线再连接新的数据源。"
         effect = edge_effect_description(src, dst, out_port.port_type, in_port.port_type)
         if not pair_has_semantics(src, dst):
             return f"{src_label} -> {dst_label} 没有定义 Graph 语义；当前不会自动推导字段或生成代码关系。"
@@ -762,6 +801,44 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
         backdrops.append(backdrop)
         self.refresh_all()
 
+    def begin_batch_drag(self, anchor_id: str | None) -> None:
+        if not anchor_id or anchor_id not in self.node_items:
+            self._drag_batch_origin = {}
+            self._drag_batch_anchor = None
+            return
+        selected_ids = [node_id for node_id, item in self.node_items.items() if item.isSelected()]
+        if len(selected_ids) <= 1 or anchor_id not in selected_ids:
+            selected_ids = [anchor_id]
+        self._drag_batch_anchor = anchor_id
+        self._drag_batch_origin = {
+            node_id: list(self.page_positions().get(node_id, [float(self.node_items[node_id].scenePos().x()), float(self.node_items[node_id].scenePos().y())]))
+            for node_id in selected_ids
+            if node_id in self.node_items
+        }
+
+    def update_node_position(self, node_id: str | None, pos: QPointF) -> None:
+        if not node_id:
+            return
+        if self._drag_batch_anchor == node_id and node_id in self._drag_batch_origin:
+            anchor_origin = self._drag_batch_origin[node_id]
+            dx = pos.x() - anchor_origin[0]
+            dy = pos.y() - anchor_origin[1]
+            for member_id, origin in self._drag_batch_origin.items():
+                self.page_positions()[member_id] = [round(origin[0] + dx, 1), round(origin[1] + dy, 1)]
+                if member_id != node_id and member_id in self.node_items:
+                    member = self.node_items[member_id]
+                    member.blockSignals(True)
+                    member.setPos(QPointF(origin[0] + dx, origin[1] + dy))
+                    member.blockSignals(False)
+            self.refresh_json_editor()
+            return
+        self.page_positions()[node_id] = [round(pos.x(), 1), round(pos.y(), 1)]
+        self.refresh_json_editor()
+
+    def finish_batch_drag(self) -> None:
+        self._drag_batch_origin = {}
+        self._drag_batch_anchor = None
+
     def apply_node_json(self) -> None:
         if not self.current_node_id:
             return
@@ -771,6 +848,8 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
                 raise ValueError("卡片 JSON 必须是对象类型，不能是数组或基本类型")
             old_id = str(self.current_node_id)
             new_id = str(updated.get("id", old_id))
+            if new_id != old_id:
+                raise ValueError("id 由 Studio 根据 display_name 自动生成，不能直接修改。")
             # Validate new_id same as property form does
             if new_id != c_ident(new_id):
                 raise ValueError(f"ID \"{new_id}\" 不是有效的 C 标识符（仅允许字母数字下划线，不能以数字开头）")
@@ -794,31 +873,36 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
             QMessageBox.warning(self, "卡片 JSON 无效", str(exc))
 
     def delete_selected_node(self) -> None:
-        if not self.current_node_id:
+        selected_ids = [node_id for node_id, item in self.node_items.items() if item.isSelected()]
+        if not selected_ids:
+            if not self.current_node_id:
+                return
+            selected_ids = [self.current_node_id]
+        selected_set = {str(node_id) for node_id in selected_ids if node_id}
+        if not selected_set:
             return
         self.push_undo()
-        node_id = self.current_node_id
 
-        # 1. Remove the node itself.
-        self.graph["nodes"] = [node for node in self.graph.get("nodes", []) if node.get("id") != node_id]
+        # 1. Remove selected nodes.
+        self.graph["nodes"] = [node for node in self.graph.get("nodes", []) if str(node.get("id")) not in selected_set]
 
-        # 2. Remove edges that reference the deleted node.
+        # 2. Remove edges that reference deleted nodes.
         self.graph["edges"] = [
             edge for edge in self.graph.get("edges", [])
-            if edge.get("from") != node_id and edge.get("to") != node_id
+            if str(edge.get("from")) not in selected_set and str(edge.get("to")) not in selected_set
         ]
 
-        # 3. Remove flows that reference the deleted node via any reference key.
+        # 3. Remove flows that reference deleted nodes via any reference key.
         flow_refs = {"sensor", "pid", "left_motor", "right_motor", "flow", "source", "target", "input"}
         self.graph["flows"] = [
             flow for flow in self.graph.get("flows", [])
-            if not any(flow.get(key) == node_id for key in flow_refs)
+            if not any(str(flow.get(key)) in selected_set for key in flow_refs)
         ]
 
-        # 4. Remove tasks that reference the deleted node or its flow.
+        # 4. Remove tasks that reference deleted nodes or their flow.
         self.graph["tasks"] = [
             task for task in self.graph.get("tasks", [])
-            if task.get("flow") != node_id and task.get("call") != node_id
+            if str(task.get("flow")) not in selected_set and str(task.get("call")) not in selected_set
         ]
 
         # 5. Clear dangling references in remaining nodes.
@@ -828,14 +912,19 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
         }
         for node in self.graph.get("nodes", []):
             for key in reference_keys:
-                if node.get(key) == node_id:
+                if str(node.get(key)) in selected_set:
                     node[key] = ""
 
         # 6. Clean up UI state.
         ui = self.graph.get("ui", {})
-        ui.get("positions", {}).pop(node_id, None)
+        for node_id in selected_set:
+            ui.get("positions", {}).pop(node_id, None)
         for page_positions in ui.get("positions_by_page", {}).values():
-            page_positions.pop(node_id, None)
+            for node_id in selected_set:
+                page_positions.pop(node_id, None)
+        for group in ui.get("backdrops", []):
+            if isinstance(group, dict):
+                group["node_ids"] = [node_id for node_id in group.get("node_ids", []) if str(node_id) not in selected_set]
 
         self.current_node_id = None
         self.refresh_all()
@@ -882,6 +971,7 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
         self.graph_path = Path(path)
         self.push_undo()
         self.graph = json.loads(self.graph_path.read_text(encoding="utf-8"))
+        self.normalize_graph_runtime_state()
         self.current_node_id = None
         self._is_dirty = False
         self._set_loaded_code_content("")

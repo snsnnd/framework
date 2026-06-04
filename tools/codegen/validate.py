@@ -12,6 +12,19 @@ from typing import Any
 
 from codegen.graph import CALLBACK_RETURNS, CALLBACK_SIGNATURES, GENERATED_FILES, NODE_CONTRACTS, SUPPORTED_FLOW_TYPES, SUPPORTED_NODE_TYPES, VALID_EDGE_KINDS, apply_pair_semantics, node_generation_label
 
+SINGLE_INPUT_PORT_RULES: dict[str, set[str]] = {
+    "event.publisher": {"topic", "event_source"},
+    "event.subscriber": {"topic", "event"},
+    "sensor.line_tracking": {"hal"},
+    "sensor.custom": {"hal"},
+    "actuator.custom": {"hal", "control"},
+    "algorithm.pid": {"sensor", "processor"},
+    "algorithm.custom": {"sensor", "processor"},
+    "processor.custom": {"sensor", "algorithm", "event", "module_input"},
+    "state.machine": {"state_machine"},
+    "state.transition": {"state_machine", "transition_from"},
+}
+
 
 def c_ident(value: str, fallback: str = "app") -> str:
     ident = re.sub(r"[^0-9A-Za-z_]", "_", value or fallback)
@@ -183,27 +196,27 @@ def find_c_condition_defs(files: list[dict[str, str]]) -> dict[str, dict[str, st
 
 
 def validate_file_items(items: Any, field_name: str) -> list[dict[str, str]]:
-    require(isinstance(items, list), f"{field_name} must be an array when present")
+    require(isinstance(items, list), f"{field_name} 必须是数组类型")
     result = []
     seen = set()
     for item in items:
-        require(isinstance(item, dict), f"each {field_name} item must be an object")
+        require(isinstance(item, dict), f"{field_name} 中的每一项必须是对象类型")
         rel_path = item.get("path")
         content = item.get("content", "")
-        require(isinstance(rel_path, str) and rel_path, f"{field_name} path must be a non-empty string")
-        require(isinstance(content, str), f"{field_name} content must be a string: {rel_path}")
+        require(isinstance(rel_path, str) and rel_path, f"{field_name} 的 path 不能为空，请填写相对文件路径")
+        require(isinstance(content, str), f"{field_name} 的 content 必须是字符串：{rel_path}")
         path = Path(rel_path)
-        require(not path.is_absolute(), f"{field_name} path must be relative: {rel_path}")
-        require(".." not in path.parts, f"{field_name} path must not contain '..': {rel_path}")
-        require(path.suffix in {".c", ".h", ".inc", ".md", ".txt"}, f"{field_name} extension is not allowed: {rel_path}")
+        require(not path.is_absolute(), f"{field_name} 路径必须是相对路径：{rel_path}")
+        require(".." not in path.parts, f"{field_name} 路径不能包含 '..'：{rel_path}")
+        require(path.suffix in {".c", ".h", ".inc", ".md", ".txt"}, f"{field_name} 文件扩展名不支持：{rel_path}，仅支持 .c/.h/.inc/.md/.txt")
         normalized = path.as_posix()
-        require(normalized not in GENERATED_FILES, f"{field_name} must not overwrite generated file: {normalized}")
-        require(normalized not in seen, f"duplicate {field_name} path: {normalized}")
+        require(normalized not in GENERATED_FILES, f"{field_name} 不能覆盖自动生成的文件：{normalized}（请改用其他文件名）")
+        require(normalized not in seen, f"{field_name} 路径重复：{normalized}")
         seen.add(normalized)
         if normalized.endswith(".c") and "efw_status_t" in content:
             has_include = '#include "efw/efw.h"' in content or "#include <efw/efw.h>" in content
             has_app_header = re.search(r'#include\s+"app_[A-Za-z0-9_./-]+\.h"', content) is not None
-            require(has_include or has_app_header, f"{normalized} uses EFW symbols but does not include efw/efw.h or an app_*.h header")
+            require(has_include or has_app_header, f"{normalized} 使用了 EFW 符号但未包含 efw/efw.h 或 app_*.h 头文件，请添加 #include \"efw/efw.h\"")
         result.append({"path": normalized, "content": content})
     return result
 
@@ -282,7 +295,7 @@ def apply_edge_semantics(raw_edges: list[dict[str, Any]], nodes_by_id: dict[str,
         dst = nodes_by_id.get(edge.get("to"))
         if not src or not dst:
             continue
-        apply_pair_semantics(src, dst, graph_view, c_ident_func=c_ident, overwrite=False)
+        apply_pair_semantics(src, dst, graph_view, c_ident_func=c_ident, overwrite=True)
 
 
 def contract_registry(graph: dict[str, Any], nodes_by_id: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -382,20 +395,20 @@ def validate_runtime_dataflows(paths: list[list[str]], nodes_by_id: dict[str, di
 
 
 def validate_graph(graph: dict[str, Any]) -> dict[str, Any]:
-    require(isinstance(graph, dict), "graph root must be an object")
+    require(isinstance(graph, dict), "Graph 根节点必须是对象（JSON object），不能是数组或基本类型")
     project = graph.get("project", {})
-    require(isinstance(project, dict), "project must be an object")
-    require(isinstance(project.get("name", "generated_app"), str), "project.name must be a string")
+    require(isinstance(project, dict), "project 字段必须是对象类型，请添加 {\"name\": \"...\", \"tick_ms\": 1}")
+    require(isinstance(project.get("name", "generated_app"), str), "project.name 必须是字符串，请设置项目名称")
     tick_ms = int(project.get("tick_ms", 1))
-    require(tick_ms > 0, "project.tick_ms must be > 0")
+    require(tick_ms > 0, "project.tick_ms 必须大于 0，建议设为 1（1ms 周期）")
 
     contracts_decl = graph.get("contracts", [])
-    require(isinstance(contracts_decl, list), "contracts must be an array when present")
+    require(isinstance(contracts_decl, list), "contracts 必须是数组类型，请使用 [] 语法")
 
     board = graph.get("board", {})
-    require(isinstance(board, dict), "board must be an object when present")
+    require(isinstance(board, dict), "board 必须是对象类型，请至少设置 {\"profile\": \"generic-mock\"}")
     if "profile" in board:
-        require(isinstance(board.get("profile"), str), "board.profile must be a string")
+        require(isinstance(board.get("profile"), str), "board.profile 必须是字符串，如 \"generic-mock\" 或 \"stm32-basic\"")
     pin_plan = board.get("pin_plan", [])
     require(isinstance(pin_plan, list), "board.pin_plan must be an array when present")
     seen_board_pins = set()
@@ -411,31 +424,43 @@ def validate_graph(graph: dict[str, Any]) -> dict[str, Any]:
     raw_flows = graph.get("flows", [])
     raw_tasks = graph.get("tasks", [])
     raw_edges = graph.get("edges", [])
-    require(isinstance(raw_nodes, list) and raw_nodes, "nodes must be a non-empty array")
-    require(isinstance(raw_flows, list), "flows must be an array")
-    require(isinstance(raw_tasks, list), "tasks must be an array when present")
-    require(isinstance(raw_edges, list), "edges must be an array when present")
+    require(isinstance(raw_nodes, list) and raw_nodes, "nodes 不能为空数组，请至少添加一个节点（如 project.module）")
+    require(isinstance(raw_flows, list), "flows 必须是数组类型，可以为空数组 []")
+    require(isinstance(raw_tasks, list), "tasks 必须是数组类型，可以为空数组 []")
+    require(isinstance(raw_edges, list), "edges 必须是数组类型，可以为空数组 []")
 
     nodes_by_id = {}
     for node in raw_nodes:
-        require(isinstance(node, dict), "each node must be an object")
+        require(isinstance(node, dict), "每个节点（node）必须是对象类型，请检查 nodes 数组中的元素格式")
         node_id = node.get("id")
         node_type_name = node.get("type")
-        require(isinstance(node_id, str) and node_id, "each node needs a non-empty string id")
-        require(node_type_name in SUPPORTED_NODE_TYPES, f"unsupported node type for {node_id}: {node_type_name}")
-        require(node_id not in nodes_by_id, f"duplicate node id: {node_id}")
+        require(isinstance(node_id, str) and node_id, "每个节点必须有非空的 id 字段（字符串），请为节点设置唯一标识")
+        require(node_type_name in SUPPORTED_NODE_TYPES, f"节点 {node_id} 的类型 \"{node_type_name}\" 不受支持，可用类型见模板面板")
+        require(node_id not in nodes_by_id, f"节点 ID \"{node_id}\" 重复，请使用唯一的 id（可在属性面板中修改）")
         nodes_by_id[node_id] = node
 
     edge_ids = set()
     for index, edge in enumerate(raw_edges):
-        require(isinstance(edge, dict), f"edges[{index}] must be an object")
+        require(isinstance(edge, dict), f"edges[{index}] 必须是对象类型")
         edge_id = edge.get("id", f"edge_{index}")
-        require(edge_id not in edge_ids, f"duplicate edge id: {edge_id}")
+        require(edge_id not in edge_ids, f"连线 ID \"{edge_id}\" 重复，请使用唯一的 id")
         edge_ids.add(edge_id)
-        require(edge.get("from") in nodes_by_id, f"edge {edge_id}.from must reference an existing node")
-        require(edge.get("to") in nodes_by_id, f"edge {edge_id}.to must reference an existing node")
+        require(edge.get("from") in nodes_by_id, f"连线 {edge_id} 的 from 字段引用了不存在的节点 \"{edge.get('from')}\"，请检查连线起点")
+        require(edge.get("to") in nodes_by_id, f"连线 {edge_id} 的 to 字段引用了不存在的节点 \"{edge.get('to')}\"，请检查连线终点")
         kind = edge.get("kind", "generic")
-        require(kind in VALID_EDGE_KINDS, f"edge {edge_id}.kind has unsupported semantic kind: {kind}")
+        require(kind in VALID_EDGE_KINDS, f"连线 {edge_id} 的 kind \"{kind}\" 不受支持，可用类型：{', '.join(sorted(VALID_EDGE_KINDS))}")
+    incoming_single_ports: dict[tuple[str, str], str] = {}
+    for edge in raw_edges:
+        dst_id = str(edge.get("to", ""))
+        to_port = str(edge.get("to_port", ""))
+        dst_node = nodes_by_id.get(dst_id)
+        dst_type = str(dst_node.get("type", "")) if dst_node else ""
+        if to_port not in SINGLE_INPUT_PORT_RULES.get(dst_type, set()):
+            continue
+        key = (dst_id, to_port)
+        existing_edge_id = incoming_single_ports.get(key)
+        require(existing_edge_id is None, f"节点 {dst_id} 的输入端口 {to_port} 只允许一条来源连线；发现重复连线：{existing_edge_id} 和 {edge.get('id', 'edge')}。")
+        incoming_single_ports[key] = str(edge.get("id", "edge"))
     apply_edge_semantics(raw_edges, nodes_by_id)
 
     for node in raw_nodes:
@@ -443,67 +468,87 @@ def validate_graph(graph: dict[str, Any]) -> dict[str, Any]:
         node_type_name = node["type"]
         if node_type_name == "hal.gpio_line_input":
             channels = int(node.get("channels", 0))
-            require(channels > 0, f"{node['id']}.channels must be > 0")
-            require(channels <= 8, f"{node['id']}.channels must be <= EFW_LINE_TRACKING_MAX_CHANNELS default 8")
-            require(len(node.get("pins", [])) == channels, f"{node['id']}.pins length must equal channels")
+            require(channels > 0, f"{node['id']}.channels 必须大于 0，请设置循迹传感器的通道数")
+            require(channels <= 8, f"{node['id']}.channels 不能超过默认最大值 EFW_LINE_TRACKING_MAX_CHANNELS=8")
+            require(len(node.get("pins", [])) == channels, f"{node['id']}.pins 数组长度必须等于 channels={channels}，请补齐引脚定义")
         elif node_type_name == "sensor.line_tracking":
-            require(node.get("input") in nodes_by_id, f"{node['id']}.input must reference a HAL node")
-            require(node_type(nodes_by_id, node.get("input")) == "hal.gpio_line_input", f"{node['id']}.input must be hal.gpio_line_input")
+            require(node.get("input") in nodes_by_id, f"{node['id']}.input 必须引用一个 HAL 节点（如 hal.gpio_line_input）")
+            require(node_type(nodes_by_id, node.get("input")) == "hal.gpio_line_input", f"{node['id']}.input 必须引用 hal.gpio_line_input 类型的节点")
         elif node_type_name == "actuator.motor":
-            require(isinstance(node.get("pwm"), dict), f"{node['id']}.pwm must be an object")
-            require(isinstance(node.get("dir_pin"), dict), f"{node['id']}.dir_pin must be an object")
+            require(isinstance(node.get("pwm"), dict), f"{node['id']}.pwm 必须是对象类型，请设置 timer 和 channel 字段")
+            require(isinstance(node.get("dir_pin"), dict), f"{node['id']}.dir_pin 必须是对象类型，请设置 port 和 pin 字段")
         elif node_type_name in {"actuator.custom", "sensor.custom"}:
             if node.get("hal_name"):
-                require(node.get("hal_name") in nodes_by_id and nodes_by_id[node.get("hal_name")]["type"].startswith("hal."), f"{node['id']}.hal_name must reference a HAL node")
+                require(node.get("hal_name") in nodes_by_id and nodes_by_id[node.get("hal_name")]["type"].startswith("hal."), f"{node['id']}.hal_name 必须引用一个 HAL 类型节点，当前引用 \"{node.get('hal_name')}\" 不存在或类型不对")
         elif node_type_name == "project.module":
-            require(isinstance(node.get("display_name", node["id"]), str), f"{node['id']}.display_name must be a string")
+            require(isinstance(node.get("display_name", node["id"]), str), f"{node['id']}.display_name 必须是字符串，用于在 UI 中显示模块名称")
         elif node_type_name == "event.topic":
             topic_id = int(node.get("topic_id", -1))
-            require(0 <= topic_id <= 65535, f"{node['id']}.topic_id must be 0..65535")
-            require(isinstance(node.get("payload_type", "void"), str), f"{node['id']}.payload_type must be a string")
+            require(0 <= topic_id <= 65535, f"{node['id']}.topic_id 必须在 0~65535 范围内，当前值={topic_id}")
+            require(isinstance(node.get("payload_type", "void"), str), f"{node['id']}.payload_type 必须是字符串，如 \"float\" 或 \"uint16_t\"")
         elif node_type_name == "event.publisher":
-            require(node.get("topic") in nodes_by_id and nodes_by_id[node.get("topic")]["type"] == "event.topic", f"{node['id']}.topic must reference event.topic")
+            require(node.get("topic") in nodes_by_id and nodes_by_id[node.get("topic")]["type"] == "event.topic", f"{node['id']}.topic 必须引用一个 event.topic 节点，当前引用 \"{node.get('topic')}\" 不存在")
             if node.get("source"):
-                require(node.get("source") in nodes_by_id, f"{node['id']}.source must reference an existing node")
+                require(node.get("source") in nodes_by_id, f"{node['id']}.source 引用了不存在的节点 \"{node.get('source')}\"，请检查数据来源节点是否存在")
+            if node.get("data_expr"):
+                require(isinstance(node.get("data_expr"), str) and node.get("data_expr"), f"{node['id']}.data_expr 必须是有效的 C 表达式字符串，如 \"&sensor_value\"")
+            if node.get("size_expr"):
+                require(isinstance(node.get("size_expr"), str) and node.get("size_expr"), f"{node['id']}.size_expr 必须是有效的 C 表达式字符串，如 \"sizeof(sensor_value)\"")
         elif node_type_name == "event.subscriber":
-            require(node.get("topic") in nodes_by_id and nodes_by_id[node.get("topic")]["type"] == "event.topic", f"{node['id']}.topic must reference event.topic")
+            require(node.get("topic") in nodes_by_id and nodes_by_id[node.get("topic")]["type"] == "event.topic", f"{node['id']}.topic 必须引用一个 event.topic 节点，当前引用 \"{node.get('topic')}\" 不存在")
             if node.get("target"):
-                require(node.get("target") in nodes_by_id, f"{node['id']}.target must reference an existing node")
+                require(node.get("target") in nodes_by_id, f"{node['id']}.target 引用了不存在的节点 \"{node.get('target')}\"，请检查订阅目标节点是否存在")
             callback = node.get("callback")
-            require(isinstance(callback, str) and callback == c_ident(callback), f"{node['id']}.callback must be a valid C identifier")
+            require(isinstance(callback, str) and callback == c_ident(callback), f"{node['id']}.callback 必须是有效的 C 标识符（仅字母数字下划线，不能以数字开头）")
         elif node_type_name == "state.machine":
-            require(isinstance(node.get("initial", ""), str), f"{node['id']}.initial must be a string")
+            require(isinstance(node.get("initial", ""), str), f"{node['id']}.initial 必须是字符串，设为初始状态的 ID")
+            machine_id = node.get("id")
+            initial = node.get("initial", "")
+            machine_states = [n for n in raw_nodes if n.get("type") == "state.state" and n.get("machine") == machine_id]
+            if initial and machine_states:
+                require(any(s.get("id") == initial for s in machine_states), f"{node['id']}.initial=\"{initial}\" 引用了不存在的状态，可用状态：{', '.join(s['id'] for s in machine_states)}")
         elif node_type_name == "state.state":
-            require(node.get("machine") in nodes_by_id and nodes_by_id[node.get("machine")]["type"] == "state.machine", f"{node['id']}.machine must reference state.machine")
+            require(node.get("machine") in nodes_by_id and nodes_by_id[node.get("machine")]["type"] == "state.machine", f"{node['id']}.machine 必须引用一个 state.machine 节点，当前引用 \"{node.get('machine')}\" 不存在")
         elif node_type_name == "state.transition":
-            require(node.get("machine") in nodes_by_id and nodes_by_id[node.get("machine")]["type"] == "state.machine", f"{node['id']}.machine must reference state.machine")
-            require(node.get("from") in nodes_by_id and nodes_by_id[node.get("from")]["type"] == "state.state", f"{node['id']}.from must reference state.state")
-            require(node.get("to") in nodes_by_id and nodes_by_id[node.get("to")]["type"] == "state.state", f"{node['id']}.to must reference state.state")
-            require(nodes_by_id[node.get("from")].get("machine") == node.get("machine") and nodes_by_id[node.get("to")].get("machine") == node.get("machine"), f"{node['id']} endpoints must belong to the same state.machine")
+            require(node.get("machine") in nodes_by_id and nodes_by_id[node.get("machine")]["type"] == "state.machine", f"{node['id']}.machine 必须引用一个 state.machine 节点，当前引用 \"{node.get('machine')}\" 不存在")
+            require(node.get("from") in nodes_by_id and nodes_by_id[node.get("from")]["type"] == "state.state", f"{node['id']}.from 必须引用一个 state.state 节点（转换起点状态），当前引用 \"{node.get('from')}\" 不存在")
+            require(node.get("to") in nodes_by_id and nodes_by_id[node.get("to")]["type"] == "state.state", f"{node['id']}.to 必须引用一个 state.state 节点（转换目标状态），当前引用 \"{node.get('to')}\" 不存在")
+            require(nodes_by_id[node.get("from")].get("machine") == node.get("machine") and nodes_by_id[node.get("to")].get("machine") == node.get("machine"), f"{node['id']} 的起点和终点状态必须属于同一个 state.machine \"{node.get('machine')}\"")
             condition = str(node.get("condition", "")).strip()
-            require(condition, f"{node['id']}.condition must be a non-empty C condition callback")
-            require(condition == c_ident(condition), f"{node['id']}.condition must be a valid C identifier")
+            require(condition, f"{node['id']}.condition 不能为空，请填写 C 条件函数名（如 check_timeout）")
+            require(condition == c_ident(condition), f"{node['id']}.condition 必须是有效的 C 标识符")
             if node.get("action"):
-                require(node.get("action") == c_ident(node.get("action")), f"{node['id']}.action must be a valid C identifier")
-            require(int(node.get("priority", 0)) >= 0, f"{node['id']}.priority must be >= 0")
-            require(int(node.get("timeout_ms", 0)) >= 0, f"{node['id']}.timeout_ms must be >= 0")
-            require(isinstance(node.get("event_trigger", ""), str), f"{node['id']}.event_trigger must be a string")
+                require(node.get("action") == c_ident(node.get("action")), f"{node['id']}.action 必须是有效的 C 标识符")
+            require(int(node.get("priority", 0)) >= 0, f"{node['id']}.priority 必须 >= 0")
+            require(int(node.get("timeout_ms", 0)) >= 0, f"{node['id']}.timeout_ms 必须 >= 0")
+            event_trigger = str(node.get("event_trigger", "")).strip()
+            require(isinstance(node.get("event_trigger", ""), str), f"{node['id']}.event_trigger 必须是字符串")
+            if event_trigger:
+                if event_trigger.startswith("topic:"):
+                    topic_ref = event_trigger.split(":", 1)[1].strip()
+                    require(topic_ref in nodes_by_id and nodes_by_id[topic_ref].get("type") == "event.topic", f"{node['id']}.event_trigger 使用 topic: 前缀时，必须引用存在的 event.topic 节点；当前值={event_trigger}")
+                elif event_trigger.startswith("event:"):
+                    event_name = event_trigger.split(":", 1)[1].strip()
+                    require(bool(event_name), f"{node['id']}.event_trigger 使用 event: 前缀时，事件名不能为空")
+                    require(event_name == c_ident(event_name), f"{node['id']}.event_trigger 自定义事件名必须是有效的 C 标识符；当前值={event_trigger}")
+                else:
+                    require(False, f"{node['id']}.event_trigger 必须使用明确格式：topic:<event.topic节点id> 或 event:<事件名>")
         elif node_type_name == "processor.custom":
             process = node.get("process")
-            require(isinstance(process, str) and process == c_ident(process), f"{node['id']}.process must be a valid C identifier")
-            require(isinstance(node.get("input_contract", "custom"), str), f"{node['id']}.input_contract must be a string")
-            require(isinstance(node.get("output_contract", "custom"), str), f"{node['id']}.output_contract must be a string")
+            require(isinstance(process, str) and process == c_ident(process), f"{node['id']}.process 必须是有效的 C 标识符（处理函数名）")
+            require(isinstance(node.get("input_contract", "custom"), str), f"{node['id']}.input_contract 必须是字符串，指定输入数据契约名称")
+            require(isinstance(node.get("output_contract", "custom"), str), f"{node['id']}.output_contract 必须是字符串，指定输出数据契约名称")
 
     module_ids = {node["id"] for node in raw_nodes if node.get("type") == "project.module"}
     contracts = contract_registry(graph, nodes_by_id)
     for node in raw_nodes:
         if node.get("module"):
-            require(node.get("module") in module_ids, f"{node['id']}.module must reference project.module")
+            require(node.get("module") in module_ids, f"{node['id']}.module 引用了不存在的模块 \"{node.get('module')}\"，请先创建对应的 project.module")
         if node.get("type") == "project.module":
-            require(isinstance(node.get("inputs", []), list), f"{node['id']}.inputs must be an array")
-            require(isinstance(node.get("outputs", []), list), f"{node['id']}.outputs must be an array")
+            require(isinstance(node.get("inputs", []), list), f"{node['id']}.inputs 必须是数组类型")
+            require(isinstance(node.get("outputs", []), list), f"{node['id']}.outputs 必须是数组类型")
             for name in node.get("inputs", []) + node.get("outputs", []):
-                require(str(name) in contracts, f"{node['id']} references unknown contract: {name}")
+                require(str(name) in contracts, f"{node['id']} 引用了未知的数据契约 \"{name}\"，请在 contracts 中声明")
 
     runtime_paths = runtime_dataflow_paths(raw_nodes, raw_edges, nodes_by_id, raw_flows, project)
     validate_runtime_dataflows(runtime_paths, nodes_by_id, contracts, project, tick_ms)
@@ -511,46 +556,46 @@ def validate_graph(graph: dict[str, Any]) -> dict[str, Any]:
     flows = []
     flow_ids = set()
     for flow in raw_flows:
-        require(isinstance(flow, dict), "each flow must be an object")
-        require(flow.get("type") in SUPPORTED_FLOW_TYPES, f"unsupported flow type: {flow.get('type')}")
+        require(isinstance(flow, dict), "每个 flow 必须是对象类型")
+        require(flow.get("type") in SUPPORTED_FLOW_TYPES, f"不受支持的 flow 类型：{flow.get('type')}，可用类型：{', '.join(SUPPORTED_FLOW_TYPES)}")
         flow_id = flow.get("id")
-        require(isinstance(flow_id, str) and flow_id, "each flow needs a non-empty id")
-        require(flow_id not in flow_ids, f"duplicate flow id: {flow_id}")
+        require(isinstance(flow_id, str) and flow_id, "每个 flow 必须有非空的 id")
+        require(flow_id not in flow_ids, f"flow ID \"{flow_id}\" 重复")
         flow_ids.add(flow_id)
         sensor = nodes_by_id.get(flow.get("sensor"))
         pid = nodes_by_id.get(flow.get("pid"))
         left_motor = nodes_by_id.get(flow.get("left_motor"))
         right_motor = nodes_by_id.get(flow.get("right_motor"))
-        require(sensor and sensor.get("type") == "sensor.line_tracking", f"{flow_id}.sensor must reference sensor.line_tracking")
-        require(pid and pid.get("type") in {"algorithm.pid", "algorithm.custom"}, f"{flow_id}.pid must reference algorithm.pid or algorithm.custom")
+        require(sensor and sensor.get("type") == "sensor.line_tracking", f"{flow_id}.sensor 必须引用 sensor.line_tracking 类型节点")
+        require(pid and pid.get("type") in {"algorithm.pid", "algorithm.custom"}, f"{flow_id}.pid 必须引用 algorithm.pid 或 algorithm.custom 类型节点")
         if pid and pid.get("type") == "algorithm.custom":
-            require(pid.get("io_contract") == "efw_pid", f"{flow_id}.pid custom algorithm must declare io_contract=efw_pid because LineFollower passes efw_pid_input_t and expects efw_pid_output_t")
-        require(left_motor and left_motor.get("type") == "actuator.motor", f"{flow_id}.left_motor must reference actuator.motor")
-        require(right_motor and right_motor.get("type") == "actuator.motor", f"{flow_id}.right_motor must reference actuator.motor")
+            require(pid.get("io_contract") == "efw_pid", f"{flow_id}.pid 是自定义算法，必须声明 io_contract=efw_pid（LineFollower 传入 efw_pid_input_t 并期望 efw_pid_output_t）")
+        require(left_motor and left_motor.get("type") == "actuator.motor", f"{flow_id}.left_motor 必须引用 actuator.motor 类型节点")
+        require(right_motor and right_motor.get("type") == "actuator.motor", f"{flow_id}.right_motor 必须引用 actuator.motor 类型节点")
         input_node = nodes_by_id[sensor["input"]]
-        require(len(flow.get("weights", [])) == int(input_node["channels"]), f"{flow_id}.weights length must match sensor channels")
-        require(float(flow.get("dt", 0.001)) > 0.0, f"{flow_id}.dt must be > 0")
+        require(len(flow.get("weights", [])) == int(input_node["channels"]), f"{flow_id}.weights 数组长度必须等于传感器通道数 {int(input_node['channels'])}")
+        require(float(flow.get("dt", 0.001)) > 0.0, f"{flow_id}.dt 必须大于 0")
         period_ms = int(flow.get("period_ms", tick_ms))
-        require(period_ms > 0, f"{flow_id}.period_ms must be > 0")
-        require(period_ms % tick_ms == 0, f"{flow_id}.period_ms must be a multiple of project.tick_ms")
+        require(period_ms > 0, f"{flow_id}.period_ms 必须大于 0")
+        require(period_ms % tick_ms == 0, f"{flow_id}.period_ms 必须是 project.tick_ms={tick_ms} 的整数倍")
         flows.append(flow)
 
     tasks = []
     task_ids = set()
     flow_ids_known = {flow["id"] for flow in flows}
     for item in raw_tasks + [node for node in raw_nodes if node.get("type") == "task.periodic"]:
-        require(isinstance(item, dict), "each task must be an object")
-        require(item.get("type", "task.periodic") == "task.periodic", f"unsupported task type: {item.get('type')}")
+        require(isinstance(item, dict), "每个 task 必须是对象类型")
+        require(item.get("type", "task.periodic") == "task.periodic", f"不受支持的 task 类型：{item.get('type')}，只支持 task.periodic")
         task_id = item.get("id")
-        require(isinstance(task_id, str) and task_id, "each task needs a non-empty id")
-        require(task_id not in task_ids, f"duplicate task id: {task_id}")
+        require(isinstance(task_id, str) and task_id, "每个 task 必须有非空的 id")
+        require(task_id not in task_ids, f"task ID \"{task_id}\" 重复")
         task_ids.add(task_id)
-        require(item.get("call") or item.get("flow"), f"task {item.get('id')} needs call or flow")
+        require(item.get("call") or item.get("flow"), f"task \"{task_id}\" 需要设置 call 或 flow 字段（指定要调度执行的函数或流程）")
         if item.get("flow"):
-            require(item.get("flow") in flow_ids_known, f"task {task_id}.flow must reference an existing flow id")
+            require(item.get("flow") in flow_ids_known, f"task \"{task_id}\".flow 引用了不存在的 flow \"{item.get('flow')}\"，可用 flow：{', '.join(sorted(flow_ids_known)) if flow_ids_known else '(无)'}")
         task_period = int(item.get("period_ms", tick_ms))
-        require(task_period > 0, f"task {item.get('id')}.period_ms must be > 0")
-        require(task_period % tick_ms == 0, f"task {task_id}.period_ms must be a multiple of project.tick_ms")
+        require(task_period > 0, f"task \"{task_id}\".period_ms 必须大于 0")
+        require(task_period % tick_ms == 0, f"task \"{task_id}\".period_ms 必须是 project.tick_ms={tick_ms} 的整数倍")
         tasks.append(item)
 
     custom_files, board_adapters = validate_custom_files(graph)

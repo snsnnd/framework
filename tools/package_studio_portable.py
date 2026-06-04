@@ -7,6 +7,7 @@ Usage:
 
 from __future__ import annotations
 
+import subprocess
 import shutil
 from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
@@ -96,6 +97,11 @@ def copy_package_readme() -> None:
     shutil.copy2(PACKAGING_ROOT / "studio-portable-README.md", PACKAGE_ROOT / "PACKAGE_README.md")
 
 
+def ensure_pypinyin_available() -> None:
+    python_exe = WINDOWS_VENV / "Scripts" / "python.exe"
+    subprocess.run([str(python_exe), "-c", "import pypinyin"], cwd=REPO_ROOT, check=True)
+
+
 def zip_output() -> Path:
     zip_path = DIST_ROOT / "efw-studio-portable.zip"
     with ZipFile(zip_path, "w", compression=ZIP_DEFLATED) as zf:
@@ -108,6 +114,10 @@ def zip_output() -> Path:
 def main() -> int:
     if not WINDOWS_VENV.exists() or not (WINDOWS_VENV / "Scripts" / "python.exe").exists():
         raise SystemExit("Missing Windows .venv with Scripts/python.exe; cannot build portable Studio package.")
+    try:
+        ensure_pypinyin_available()
+    except subprocess.CalledProcessError as exc:
+        raise SystemExit("Missing required dependency 'pypinyin' in .venv; install it before building the portable Studio package.") from exc
     DIST_ROOT.mkdir(parents=True, exist_ok=True)
     clean_output()
     for rel_path in INCLUDE_PATHS:

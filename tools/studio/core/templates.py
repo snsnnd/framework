@@ -167,7 +167,7 @@ def property_choices(graph: dict[str, Any], node: dict[str, Any], key: str, node
     if key == "machine":
         return [""] + by_type("state.machine")
     if key == "event_trigger":
-        return [""] + by_type("event.topic")
+        return [""] + [f"topic:{item}" for item in by_type("event.topic")] + ["event:start", "event:stop", "event:error"]
     if key in {"from", "to"} and node_type == "state.transition":
         states = [n.get("id", "") for n in graph.get("nodes", []) if n.get("type") == "state.state" and (not node.get("machine") or n.get("machine") == node.get("machine"))]
         return [""] + states

@@ -241,6 +241,21 @@ class CallbackMixin:
                         stubs.append(f"efw_status_t {name}(void *ctx, void *buf, uint16_t len, uint16_t *actual) {{\n    EFW_UNUSED(ctx);\n    EFW_UNUSED(buf);\n    EFW_UNUSED(len);\n    if (actual) *actual = 0;\n    return EFW_OK;\n}}\n")
                     elif ntype == "hal.custom" and field == "write":
                         stubs.append(f"efw_status_t {name}(void *ctx, const void *buf, uint16_t len, uint16_t *actual) {{\n    EFW_UNUSED(ctx);\n    EFW_UNUSED(buf);\n    if (actual) *actual = len;\n    return EFW_OK;\n}}\n")
+                    elif ntype == "module.custom" and field == "poll":
+                        source_publishers = [item for item in self.graph.get("nodes", []) if item.get("type") == "event.publisher" and item.get("source") == node.get("id")]
+                        hint = ""
+                        if source_publishers:
+                            source_id = str(node.get("id"))
+                            helper_id = source_id.replace("-", "_")
+                            hint = (
+                                f"    /* This module is the source of {len(source_publishers)} event.publisher node(s).\n"
+                                f"       To feed generated auto-publishers, write your latest output into the generated cache helper, for example:\n"
+                                f"       app_source_{helper_id}_store(...);\n"
+                                f"       app_source_{helper_id}_store_typed(...);\n"
+                                f"       app_source_{helper_id}_store_value(...);\n"
+                                f"    */\n"
+                            )
+                        stubs.append(f"efw_status_t {name}(void *ctx) {{\n    EFW_UNUSED(ctx);\n{hint}    return EFW_OK;\n}}\n")
                     else:
                         stubs.append(signature.format(name=name) + " {\n" + body + "\n}\n")
             if ntype == "event.subscriber" and node.get("callback") and not has_symbol(str(node.get("callback"))):

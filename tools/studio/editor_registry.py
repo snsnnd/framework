@@ -170,6 +170,7 @@ NODE_TEMPLATES: dict[str, dict[str, Any]] = {
         "data_type": "float",
         "data_expr": "&battery_voltage",
         "size_expr": "sizeof(battery_voltage)",
+        "interval_ms": 0,
     },
     "event.subscriber": {
         "id": "subscribe_battery",
@@ -257,7 +258,7 @@ PROPERTY_FIELD_ORDER = {
     "module.custom": ["id", "type", "module", "module_type", "input_type", "output_type", "output_desc", "ctx_name", "init", "start", "stop", "poll"],
     "task.periodic": ["id", "type", "module", "period_ms", "call", "flow"],
     "event.topic": ["id", "type", "module", "topic_id", "payload_type", "description"],
-    "event.publisher": ["id", "type", "module", "topic", "source", "data_type", "data_expr", "size_expr"],
+    "event.publisher": ["id", "type", "module", "topic", "source", "data_type", "data_expr", "size_expr", "interval_ms"],
     "event.subscriber": ["id", "type", "module", "topic", "target", "callback", "user"],
     "state.machine": ["id", "type", "module", "initial", "description"],
     "state.state": ["id", "type", "machine", "on_enter", "on_update", "on_exit"],

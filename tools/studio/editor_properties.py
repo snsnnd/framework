@@ -49,8 +49,10 @@ class PropertyMixin:
 
     def property_contract_role(self, node: dict[str, Any], key: str) -> str:
         contract = NODE_CONTRACTS.get(str(node.get("type")), {})
-        if key in {"name", "display_name", "description"}:
+        if key in {"display_name", "description"}:
             return "显示"
+        if key == "name":
+            return "兼容"
         if key == "id":
             return "主键"
         if key in {"input_type", "output_type", "payload_type", "data_type", "output_desc"}:
@@ -83,10 +85,13 @@ class PropertyMixin:
 
     def populate_property_form(self, node: dict[str, Any]) -> None:
         self.property_table.setRowCount(0)
-        ordered_keys = ["id", "type", "name", "description"]
+        node_type = str(node.get("type", ""))
+        ordered_keys = ["display_name", "id", "type", "description"]
         ordered_keys.extend(key for key in PROPERTY_FIELD_ORDER.get(str(node.get("type")), []) if key not in ordered_keys)
         ordered_keys.extend(key for key in node if key not in ordered_keys)
         for key in ordered_keys:
+            if key == "name" and not self._uses_legacy_name_field(node_type):
+                continue
             value = node.get(key, "")
             row = self.property_table.rowCount()
             self.property_table.insertRow(row)
@@ -117,6 +122,9 @@ class PropertyMixin:
                 self.property_table.setCellWidget(row, 1, check)
             else:
                 item = QTableWidgetItem(form_value_text(value))
+                if key == "id":
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable if hasattr(Qt, "ItemFlag") else item.flags())
+                    item.setToolTip("id 由 display_name 自动生成，仅用于查看。")
                 if issue:
                     item.setBackground(QBrush(QColor("#5b1f24")))
                     item.setForeground(QBrush(QColor("#ffb3b3")))
@@ -147,6 +155,10 @@ class PropertyMixin:
             return f"用户代码需要实现该回调，签名：{callback_signature(callbacks[key])}"
         if key == "id":
             return "卡片主键。用于连线、页面、归属和 codegen 引用；创建时自动分配，修改时必须保持唯一。"
+        if key == "event_trigger":
+            return "状态机事件触发器。必须写成 topic:<event.topic节点id> 或 event:<事件名>。topic: 前缀表示按 topic_id/payload 触发；event: 前缀表示按自定义事件名触发。"
+        if key == "interval_ms":
+            return "自动发布最小间隔（毫秒）。0 表示不额外节流；如果 payload 没变化，系统仍会自动跳过重复发布。"
         if role == "数据契约":
             return "Studio 层的数据说明，用来表达输入/输出/payload 是 float、int、struct、enum 或自定义类型。"
         if role == "必填":
@@ -168,17 +180,14 @@ class PropertyMixin:
         new_period = updated.get("period_ms")
         if old_period == new_period or new_period in (None, ""):
             return
-        old_id = str(old_node.get("id", "custom_task_10ms"))
         old_call = str(old_node.get("call", "app_custom_task_10ms"))
-        old_name = str(old_node.get("name", old_id))
+        old_display_name = str(old_node.get("display_name", old_node.get("id", "custom_task_10ms")))
         old_token = f"{old_period}ms"
         new_token = f"{new_period}ms"
-        if old_token in old_id:
-            updated["id"] = old_id.replace(old_token, new_token)
         if old_token in old_call:
             updated["call"] = old_call.replace(old_token, new_token)
-        if old_token in old_name:
-            updated["name"] = old_name.replace(old_token, new_token)
+        if old_token in old_display_name:
+            updated["display_name"] = old_display_name.replace(old_token, new_token)
 
     def apply_property_form(self) -> None:
         if not self.current_node_id:
@@ -207,7 +216,8 @@ class PropertyMixin:
                     raw_value = ""
                 value = parse_form_value(raw_value)
             updated[key] = value
-        new_id = str(updated.get("id", old_id))
+        updated["id"] = old_id
+        new_id = old_id
         if new_id != c_ident(new_id):
             QMessageBox.warning(self, "ID 无效", "id 必须是合法 C 标识符：只能包含字母、数字、下划线，且不能以数字开头。")
             return

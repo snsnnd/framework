@@ -85,6 +85,21 @@ python3 tools/efw.py studio
 
 如果字段比较复杂，也可以在同一面板下方使用 `高级 JSON` 修改当前节点。
 
+### 通信与状态机字段说明
+
+1. `event.publisher` 连接好 `topic` 和 `source` 后，生成代码里会提供：
+   - `app_publish_xxx(data, size)`
+   - 如果 payload 类型可推断，还会提供 `app_publish_xxx_typed(...)`
+   - 对标量类型，还会提供 `app_publish_xxx_value(...)`
+2. `event.subscriber` 需要填写 `callback`，生成代码会自动完成 `efw_topic_subscribe(...)` 绑定。
+3. `state.transition.event_trigger` 现在必须写成明确格式：
+   - `topic:<event.topic节点id>`
+   - `event:<事件名>`
+4. 例子：
+   - `topic:root__topic__start_evt`
+   - `event:start`
+5. `topic:` 形式适合把通信层事件直接送进状态机；`event:` 形式适合应用内部自定义事件。
+
 ## 7. 代码补齐
 
 进入 `代码补齐` 页后，可以：
@@ -95,6 +110,25 @@ python3 tools/efw.py studio
 - 一键创建条件函数
 
 如果文件切换前有未保存修改，Studio 会先提示是否保存。
+
+### 运行时入口
+
+当前生成代码会提供这些运行时入口：
+
+- `app_main()`：完整系统主入口
+- `app_poll_forever()`：持续轮询主循环
+- `app_dispatch_event(event_name, topic_id, data, size)`：系统级事件分发入口
+- `app_sm_xxx_tick()`：单个状态机 tick
+- `app_sm_xxx_dispatch_event(...)`：单个状态机事件分发
+- `app_sm_xxx_transition_to(...)`：强制切换到指定状态
+- `app_sm_xxx_current_state()`：查询当前状态名
+
+如果你在应用代码里主动推事件，推荐统一调用：
+
+```c
+app_dispatch_event("start", 0u, 0, 0u);
+app_dispatch_event(0, APP_TOPIC_ROOT__TOPIC__START_EVT, &payload, sizeof(payload));
+```
 
 ## 8. 实时校验
 

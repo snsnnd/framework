@@ -103,12 +103,12 @@ NODE_CONTRACTS: dict[str, dict[str, Any]] = {
         "boundary": "period_ms must be a multiple of project.tick_ms; task can call a user function or schedule a flow.",
     },
     "project.module": {
-        "generation": GEN_DOC,
-        "owner": "studio",
+        "generation": GEN_PARTIAL,
+        "owner": "codegen",
         "required": ["id", "type"],
         "optional": ["display_name", "description", "inputs", "outputs", "subgraph"],
-        "generated": [],
-        "boundary": "Current module nodes organize pages and ownership; they are not independent compilation units yet.",
+        "generated": ["efw_module_ops_t shell", "module poll hook", "module registration"],
+        "boundary": "Generates a lightweight runnable module shell. It still does not create an independent compilation unit per module, but it can host auto-publish hooks and state-machine ticks.",
     },
     "event.topic": {
         "generation": GEN_PARTIAL,
@@ -119,12 +119,12 @@ NODE_CONTRACTS: dict[str, dict[str, Any]] = {
         "boundary": "Defines a topic ID. Publish calls still belong in user code unless a task/module callback emits them.",
     },
     "event.publisher": {
-        "generation": GEN_DOC,
-        "owner": "user-code",
+        "generation": GEN_PARTIAL,
+        "owner": "codegen+user-code",
         "required": ["id", "type", "topic"],
         "optional": ["source", "target", "data_expr", "size_expr", "module"],
-        "generated": [],
-        "boundary": "Documents publish intent. The actual efw_topic_publish call is written in custom_files/module/task code.",
+        "generated": ["publish wrapper", "typed publish wrapper", "value publish wrapper", "optional auto-publish wrapper"],
+        "boundary": "Codegen generates publish entry points. If data_expr/size_expr are provided, runtime can auto-publish; otherwise user code chooses when to call the wrapper.",
     },
     "event.subscriber": {
         "generation": GEN_PARTIAL,

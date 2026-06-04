@@ -88,7 +88,7 @@ def form_value_text(value: Any) -> str:
 
 
 def card_display_name(node: dict[str, Any]) -> str:
-    return str(node.get("name") or node.get("display_name") or node.get("title") or node.get("id") or "未命名")
+    return str(node.get("display_name") or node.get("title") or node.get("id") or "未命名")
 
 
 def card_description(node: dict[str, Any]) -> str:
@@ -141,18 +141,40 @@ class PortItem(QGraphicsEllipseItem):
         self.port_type = port_type
         self.label = label
         self.base_color = QColor(PORT_COLORS.get(port_type, "#26c6da"))
+        self.is_enabled = True
+        self.preview_state = "normal"
         self.setAcceptHoverEvents(True)
         self.setZValue(10)
         self._update_style(False)
 
     def _update_style(self, hovered: bool = False) -> None:
-        fill_color = self.base_color.lighter(130) if hovered else self.base_color
+        if not self.is_enabled:
+            self.setBrush(QBrush(QColor("#5a6478")))
+            self.setPen(QPen(QColor("#111624"), 3.0))
+            return
+        if self.preview_state == "dim":
+            fill_color = QColor("#4b5568")
+        elif self.preview_state == "highlight":
+            fill_color = self.base_color.lighter(155 if hovered else 145)
+        else:
+            fill_color = self.base_color.lighter(130) if hovered else self.base_color
         self.setBrush(QBrush(fill_color))
-        stroke_color = QColor("#26c6da") if hovered else QColor("#111624")
+        stroke_color = QColor("#26c6da") if hovered or self.preview_state == "highlight" else QColor("#111624")
         stroke_width = 2.5 if hovered else 3.0
         self.setPen(QPen(stroke_color, stroke_width))
 
+    def set_enabled_state(self, enabled: bool) -> None:
+        self.is_enabled = enabled
+        self._update_style(False)
+
+    def set_preview_state(self, state: str) -> None:
+        self.preview_state = state
+        self._update_style(state == "highlight")
+
     def mousePressEvent(self, event):
+        if not self.is_enabled:
+            event.ignore()
+            return
         self.node_item.editor.begin_port_drag(self)
         event.accept()
 
@@ -165,6 +187,9 @@ class PortItem(QGraphicsEllipseItem):
         event.accept()
 
     def hoverEnterEvent(self, event):
+        if not self.is_enabled:
+            self.setCursor(Qt.CursorShape.ForbiddenCursor if hasattr(Qt, "CursorShape") else Qt.ForbiddenCursor)
+            return
         self.setCursor(Qt.CursorShape.CrossCursor if hasattr(Qt, "CursorShape") else Qt.CrossCursor)
         self.setScale(1.3)
         self._update_style(True)
@@ -182,36 +207,18 @@ class EdgeItem(QGraphicsPathItem):
         super().__init__()
         self.edge = edge
         self.editor = editor
-        self.base_color = QColor("#6C7A9C")
-        self.active_color = QColor("#4DD0E1")
         self._dash_offset = 0.0
-        try:
-            self._selection_change = QGraphicsItem.GraphicsItemChange.ItemSelectedHasChanged
-            self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
-        except AttributeError:
-            self._selection_change = QGraphicsItem.ItemSelectedHasChanged
-            self.setFlag(QGraphicsItem.ItemIsSelectable, True)
         self.setZValue(-1)
-        self._update_pen()
+        self.refresh_pen()
 
-    def _update_pen(self):
-        color = self.active_color if self.isSelected() else self.base_color
-        pen = QPen(color, 2.5 if self.isSelected() else 1.8)
-        try:
-            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
-            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
-        except AttributeError:
-            pen.setCapStyle(Qt.RoundCap)
-            pen.setJoinStyle(Qt.RoundJoin)
-        if str(self.edge.get("kind", "generic")) in {"data_flow", "control_flow", "event"}:
-            pen.setStyle(Qt.PenStyle.DashLine if hasattr(Qt, "PenStyle") else Qt.DashLine)
-            pen.setDashPattern([6.0, 8.0])
-            pen.setDashOffset(self._dash_offset)
+    def refresh_pen(self):
+        selected = str(self.edge.get("id")) == getattr(self.editor, "selected_edge_id", None)
+        pen = self.editor.edge_pen_for_item(self.edge, selected=selected, dash_offset=self._dash_offset)
         self.setPen(pen)
 
     def advance_flow(self, amount: float = 1.0):
         self._dash_offset -= amount
-        self._update_pen()
+        self.refresh_pen()
 
     def set_emphasis_pen(self, pen: QPen):
         self.setPen(pen)
@@ -225,14 +232,9 @@ class EdgeItem(QGraphicsPathItem):
         path.cubicTo(ctrl1, ctrl2, end_pos)
         self.setPath(path)
 
-    def itemChange(self, change, value):
-        if change == getattr(self, "_selection_change", None):
-            self._update_pen()
-        return super().itemChange(change, value)
-
     def mousePressEvent(self, event):
         self.editor.select_edge(self.edge)
-        super().mousePressEvent(event)
+        event.accept()
 
 
 class BackdropItem(QGraphicsRectItem):
@@ -373,6 +375,7 @@ class GraphNodeItem(QGraphicsObject):
         self.shadow.setOffset(0, 8)
         self.shadow.setColor(QColor(0, 0, 0, 150))
         self.setGraphicsEffect(self.shadow)
+        self.setToolTip(self.editor.node_tooltip_text(self.node))
         self.ports: list[PortItem] = []
         for idx, port_type in enumerate(self.in_ports):
             y = self.HEADER_HEIGHT + self.BODY_TOP_PADDING + idx * self.PORT_ROW_HEIGHT + (self.PORT_ROW_HEIGHT / 2)
@@ -386,6 +389,8 @@ class GraphNodeItem(QGraphicsObject):
             port.setPos(self.WIDTH, y)
             port.setToolTip(self.editor.port_detail_tooltip(self.node, "out", port_type))
             self.ports.append(port)
+        for port in self.ports:
+            port.set_enabled_state(self.editor.port_is_enabled(self.node, port.direction, port.port_type))
         self.update_lod(1.0)
 
     def boundingRect(self):
@@ -490,12 +495,24 @@ class GraphNodeItem(QGraphicsObject):
         self._press_scene_pos = event.scenePos() if hasattr(event, "scenePos") else None
         self._dragged_during_press = False
         self._original_scene_pos = self.scenePos()
+        modifiers = event.modifiers() if hasattr(event, "modifiers") else Qt.NoModifier
+        ctrl = Qt.KeyboardModifier.ControlModifier if hasattr(Qt, "KeyboardModifier") else Qt.ControlModifier
+        preserve_selection = []
+        if self.isSelected() and not (modifiers & ctrl):
+            preserve_selection = [
+                node_id for node_id, item in self.editor.node_items.items()
+                if item.isSelected()
+            ]
         self.editor.select_edge(None)
         super().mousePressEvent(event)
+        if len(preserve_selection) > 1:
+            for node_id in preserve_selection:
+                if node_id in self.editor.node_items:
+                    self.editor.node_items[node_id].setSelected(True)
+        self.editor.begin_batch_drag(str(self.node.get("id")))
 
     def mouseReleaseEvent(self, event):
         super().mouseReleaseEvent(event)
-        self.editor.clear_alignment_guides()
         moved = self._dragged_during_press
         if self._press_scene_pos is not None and hasattr(event, "scenePos"):
             delta = event.scenePos() - self._press_scene_pos
@@ -505,6 +522,7 @@ class GraphNodeItem(QGraphicsObject):
             moved = moved or (abs(scene_delta.x()) > 0.5 or abs(scene_delta.y()) > 0.5)
         if not moved:
             self.editor.select_node(self.node.get("id"))
+        self.editor.finish_batch_drag()
         self._press_scene_pos = None
         self._dragged_during_press = False
         self._original_scene_pos = None
@@ -540,6 +558,9 @@ class TemplatePalette(QListWidget):
 
 
 class BlueprintView(QGraphicsView):
+    MIN_ZOOM = 0.35
+    MAX_ZOOM = 3.0
+
     def __init__(self, scene: QGraphicsScene, editor: "VisualEditorWindow"):
         super().__init__(scene)
         self.editor = editor
@@ -551,6 +572,8 @@ class BlueprintView(QGraphicsView):
         self.setRenderHint(render_hint.SmoothPixmapTransform)
         self.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.MinimalViewportUpdate if hasattr(QGraphicsView, "ViewportUpdateMode") else QGraphicsView.MinimalViewportUpdate)
         self.setCacheMode(QGraphicsView.CacheModeFlag.CacheBackground if hasattr(QGraphicsView, "CacheModeFlag") else QGraphicsView.CacheBackground)
+        selection_mode = Qt.ItemSelectionMode.ContainsItemBoundingRect if hasattr(Qt, "ItemSelectionMode") else Qt.ContainsItemBoundingRect
+        self.setRubberBandSelectionMode(selection_mode)
         try:
             flags = QGraphicsView.OptimizationFlag.DontSavePainterState | QGraphicsView.OptimizationFlag.DontAdjustForAntialiasing
         except AttributeError:
@@ -560,7 +583,13 @@ class BlueprintView(QGraphicsView):
         self.setHorizontalScrollBarPolicy(policy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(policy.ScrollBarAlwaysOff)
         self.setStyleSheet("border: none; background-color: #0A0F1C;")
+        self._set_pan_drag_mode()
+
+    def _set_pan_drag_mode(self) -> None:
         self.setDragMode(QGraphicsView.DragMode.ScrollHandDrag if hasattr(QGraphicsView, "DragMode") else QGraphicsView.ScrollHandDrag)
+
+    def _set_rubber_band_drag_mode(self) -> None:
+        self.setDragMode(QGraphicsView.DragMode.RubberBandDrag if hasattr(QGraphicsView, "DragMode") else QGraphicsView.RubberBandDrag)
 
     def drawBackground(self, painter, rect):
         super().drawBackground(painter, rect)
@@ -580,14 +609,31 @@ class BlueprintView(QGraphicsView):
     def wheelEvent(self, event):
         modifiers = event.modifiers()
         ctrl = Qt.KeyboardModifier.ControlModifier if hasattr(Qt, "KeyboardModifier") else Qt.ControlModifier
+        shift = Qt.KeyboardModifier.ShiftModifier if hasattr(Qt, "KeyboardModifier") else Qt.ShiftModifier
         if modifiers & ctrl:
             delta = event.angleDelta().y() if hasattr(event, "angleDelta") else event.delta()
             zoom_factor = 1.15 if delta > 0 else 1 / 1.15
+            target_zoom = self.zoom_level * zoom_factor
+            if target_zoom < self.MIN_ZOOM:
+                zoom_factor = self.MIN_ZOOM / self.zoom_level
+                target_zoom = self.MIN_ZOOM
+            elif target_zoom > self.MAX_ZOOM:
+                zoom_factor = self.MAX_ZOOM / self.zoom_level
+                target_zoom = self.MAX_ZOOM
+            if abs(target_zoom - self.zoom_level) < 1e-6:
+                event.accept()
+                return
             anchor = QGraphicsView.ViewportAnchor.AnchorUnderMouse if hasattr(QGraphicsView, "ViewportAnchor") else QGraphicsView.AnchorUnderMouse
             self.setTransformationAnchor(anchor)
             self.scale(zoom_factor, zoom_factor)
-            self.zoom_level *= zoom_factor
+            self.zoom_level = target_zoom
             self.editor.update_canvas_lod(self.zoom_level)
+            event.accept()
+            return
+        if modifiers & shift:
+            delta = event.angleDelta().y() if hasattr(event, "angleDelta") else event.delta()
+            step = int(delta / 2) if delta else 0
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - step)
             event.accept()
             return
         super().wheelEvent(event)
@@ -606,12 +652,25 @@ class BlueprintView(QGraphicsView):
 
     def mousePressEvent(self, event):
         pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
-        if self.itemAt(pos) is None:
+        button = event.button() if hasattr(event, "button") else None
+        modifiers = event.modifiers() if hasattr(event, "modifiers") else Qt.NoModifier
+        ctrl = Qt.KeyboardModifier.ControlModifier if hasattr(Qt, "KeyboardModifier") else Qt.ControlModifier
+        left_button = Qt.MouseButton.LeftButton if hasattr(Qt, "MouseButton") else Qt.LeftButton
+        rubber_band = button == left_button and bool(modifiers & ctrl)
+        if rubber_band:
+            self._set_rubber_band_drag_mode()
+        else:
+            self._set_pan_drag_mode()
+        if self.itemAt(pos) is None and not rubber_band:
             if self.scene() is not None:
                 self.scene().clearSelection()
             self.editor.select_edge(None)
             self.editor.select_node(None)
         super().mousePressEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        super().mouseReleaseEvent(event)
+        self._set_pan_drag_mode()
 
     def dragEnterEvent(self, event):
         if event.mimeData().text().startswith("efw-template:"):

@@ -266,6 +266,7 @@ class UIBuilderMixin:
         self.module_scope_label = QLabel("")
         canvas_layout.addWidget(self.module_scope_label)
         self.scene = QGraphicsScene()
+        self.scene.selectionChanged.connect(self.handle_scene_selection_changed)
         self.view = BlueprintView(self.scene, self)
         canvas_layout.addWidget(self.view)
         self.center_tabs.addTab(canvas, "🔵 关系视图")
@@ -668,6 +669,33 @@ Ctrl+1..4 快速切换：总览 / 模块装配 / 关系视图 / 生成发布
 Alt+1..4  快速切换 Inspector：项目结构 / 属性 / 代码 / 校验
 F5        实时校验
 Esc       返回根项目页面
+
+画布操作
+鼠标左键拖空白处  平移画布
+Ctrl + 鼠标左键   框选多个节点
+Ctrl + 滚轮       缩放关系视图
+双击空白处        打开快速插入
+拖动已选中节点    移动该节点；如果已经多选，则一起移动
+
+线条说明
+实线 data_flow            运行时数据流。常见于 Sensor -> Process、Process -> Algorithm / Actuator；为了便于区分，它会有较明显的流动效果。
+点线 hardware_dependency  硬件依赖。常见于 HAL -> Sensor / Actuator；这类边表示接线或底层依赖，不强调运行方向，所以不做流动动画。
+虚线 schedule            调度或周期关系。常见于 task / flow 对运行单元的驱动。
+虚线 event               事件或主题发布订阅关系。
+虚线 contains            容器或归属关系，例如根项目里的模块组织关系。
+点线 code                自定义代码文件与运行节点的关联。
+青绿色状态线            状态机迁移相关关系。
+
+说明
+HAL 和 Sensor 的线现在通常不会流动，是因为它们多数会被识别成 hardware_dependency，表示“依赖哪路硬件”而不是“数据正在沿这条边流动”。
+Sensor 和 Process 的线与其他线差异更大是刻意保留的视觉区分：这类边最接近主数据通路，做得更明显更容易一眼看出系统的数据入口和处理链。
+
+通信与状态机
+event.publisher 现在会生成可调用的发布包装函数：`app_publish_xxx(data, size)`；如果 payload 类型可推断，还会生成 `app_publish_xxx_typed(...)` 和标量版 `app_publish_xxx_value(...)`。
+如果填写 `interval_ms`，自动发布会按该最小间隔节流；如果 payload 与上次完全相同，也会自动跳过重复发布。
+event.subscriber 仍会生成 `efw_topic_subscribe(...)` 绑定和回调声明。
+状态机现在会生成 `app_sm_xxx_tick()`、`app_sm_xxx_dispatch_event()`、`app_sm_xxx_transition_to()`、`app_sm_xxx_current_state()`，并提供系统级 `app_dispatch_event(...)` 入口。
+`event_trigger` 现在必须写成明确格式：`topic:<event.topic节点id>` 或 `event:<事件名>`。例如：`topic:root__topic__start_evt`、`event:start`。
 
 当前阶段先固定快捷键，避免设置项和项目文件格式过早复杂化；如果后续用户频繁冲突，再加入可配置快捷键。"""
 

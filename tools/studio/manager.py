@@ -143,7 +143,6 @@ def blank_graph(name: str, board_profile: str) -> dict[str, Any]:
             {
                 "id": "app_module",
                 "type": "project.module",
-                "name": "app_module",
                 "display_name": "应用模块",
                 "description": "项目的第一个模块。",
             }
@@ -578,6 +577,7 @@ class ProjectManagerWindow(QMainWindow):
             return
         self.embedded_editor.graph_path = graph_path
         self.embedded_editor.graph = json.loads(graph_path.read_text(encoding="utf-8"))
+        self.embedded_editor.normalize_graph_runtime_state()
         self.embedded_editor.current_node_id = None
         self.embedded_editor._is_dirty = False
         self.embedded_editor.state_changed_callback = self.update_workspace_state
