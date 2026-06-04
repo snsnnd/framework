@@ -118,7 +118,12 @@ class PropertyMixin:
             issue = self.property_issue(node, str(key), value, choices)
             role = self.property_contract_role(node, str(key))
             section = self.property_section(node, str(key), role)
-            table = getattr(self, "property_tables_by_section", {}).get(section, self.property_table)
+            table = getattr(self, "property_tables_by_section", {}).get(section)
+            if table is None:
+                fallback_tables = self.property_tables()
+                if not fallback_tables:
+                    continue
+                table = fallback_tables[0]
             row = table.rowCount()
             table.insertRow(row)
             key_item = QTableWidgetItem(str(key))
