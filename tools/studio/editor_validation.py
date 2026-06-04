@@ -19,6 +19,7 @@ else:
     Qt = QBrush = QColor = QListWidgetItem = QMessageBox = object
 
 from codegen import c_ident
+from codegen.generator import build_runtime_summary
 from codegen.validate import validate_graph
 from codegen.graph import NODE_CONTRACTS, apply_pair_semantics, callback_signature, node_generation_label, semantic_edge_kind
 from studio.editor_registry import TYPE_LABELS
@@ -26,6 +27,14 @@ from studio.model import GENERATED_APPLICATION_TREE, NODE_GENERATION_STATUS
 
 
 class ValidationMixin:
+    def runtime_summary(self) -> dict[str, Any]:
+        try:
+            summary = build_runtime_summary(validate_graph(self.graph))
+        except Exception:
+            summary = {}
+        self._runtime_summary_cache = summary
+        return summary
+
     def action_for_validation_message(self, message: str, target: str | None) -> str:
         if "Pin Planner 冲突" in message:
             return "打开高级面板里的 Board Profile / Pin Planner，修改重复资源后再重新校验。"
@@ -43,6 +52,7 @@ class ValidationMixin:
         if not hasattr(self, "mapping_output"):
             return
         lines = ["Graph → Generated Code 映射（来自 codegen 契约）", ""]
+        runtime_summary = self.runtime_summary()
         for node in self.graph.get("nodes", []):
             node_type = node.get("type")
             if node_type and node_type.startswith(("hal.", "sensor.", "actuator.")):
@@ -67,21 +77,21 @@ class ValidationMixin:
             lines.append(f"  {self.node_action_hint(node)}")
         for flow in self.graph.get("flows", []):
             lines.append(f"- flow:{flow.get('id')} [{flow.get('type')}] → app_bootstrap.c / bind + scheduler")
-        publishers = [node for node in self.graph.get("nodes", []) if node.get("type") == "event.publisher"]
+        publishers = runtime_summary.get("publishers", []) if isinstance(runtime_summary, dict) else []
         if publishers:
             lines.append("")
             lines.append("自动发布缓存 / 来源")
-            for node in publishers:
-                source = str(node.get("source", "") or "(无 source)")
-                mode = "expr/size" if node.get("data_expr") and node.get("size_expr") else ("source-auto" if node.get("source") else "manual")
-                interval_ms = int(node.get("interval_ms", 0) or 0)
-                stage = "module.poll" if node.get("module") else "root app_update_1ms"
-                lines.append(f"- {node.get('id')} → topic={node.get('topic')} | source={source} | mode={mode} | stage={stage} | interval_ms={interval_ms}")
+            for item in publishers:
+                node = item.get("node", {})
+                source = str(item.get("source_id") or "(无 source)")
+                lines.append(f"- {item.get('id')} → topic={node.get('topic')} | source={source} | mode={item.get('mode')} | stage={item.get('stage')} | interval_ms={item.get('interval_ms')}")
         self.mapping_output.setPlainText("\n".join(lines))
 
     def refresh_structure_view(self) -> None:
         if not hasattr(self, "structure_output"):
             return
+        runtime_summary = self.runtime_summary()
+        module_runtime = runtime_summary.get("project_modules", []) if isinstance(runtime_summary, dict) else []
         modules = [node for node in self.graph.get("nodes", []) if node.get("type") == "project.module"]
         lines = ["项目结构解释", ""]
         if not modules:
@@ -92,6 +102,10 @@ class ValidationMixin:
             for node in self.graph.get("nodes", []):
                 if node.get("module") == mid:
                     lines.append(f"  - {node.get('id')} [{TYPE_LABELS.get(node.get('type'), node.get('type'))}]")
+            runtime_item = next((item for item in module_runtime if item.get("module_id") == mid), None)
+            if runtime_item:
+                lines.append(f"  · 自动发布者：{len(runtime_item.get('publishers', []))}")
+                lines.append(f"  · 状态机：{len(runtime_item.get('state_machines', []))}")
             lines.append("")
         loose = [node for node in self.graph.get("nodes", []) if node.get("type") != "project.module" and not node.get("module")]
         if loose:
@@ -223,10 +237,15 @@ class ValidationMixin:
         partial_nodes = [node for node in self.graph.get("nodes", []) if node_generation_label(str(node.get("type"))) == "部分生成"]
         hardware_mock_nodes = [node for node in self.graph.get("nodes", []) if node.get("type") in {"hal.gpio_line_input", "actuator.motor"}]
         custom_hardware_nodes = [node for node in self.graph.get("nodes", []) if node.get("type") in {"hal.custom", "sensor.custom", "actuator.custom"}]
+        runtime_summary = self.runtime_summary()
+        publishers = runtime_summary.get("publishers", []) if isinstance(runtime_summary, dict) else []
+        state_machines = runtime_summary.get("state_machines", []) if isinstance(runtime_summary, dict) else []
         lines = ["生成就绪度："]
         lines.append(f"- 缺失用户回调：{len(missing_callbacks)} 个")
         lines.append(f"- 部分生成节点：{len(partial_nodes)} 个")
         lines.append(f"- 仅说明/组织节点：{len(doc_nodes)} 个")
+        lines.append(f"- 运行时发布者：{len(publishers)} 个")
+        lines.append(f"- 运行时状态机：{len(state_machines)} 个")
         lines.append(f"- host mock 硬件节点：{len(hardware_mock_nodes)} 个")
         lines.append(f"- 需要真实 BSP/board_adapters 关注的自定义硬件节点：{len(custom_hardware_nodes)} 个")
         if missing_callbacks:

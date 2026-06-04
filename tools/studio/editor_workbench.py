@@ -402,6 +402,9 @@ class WorkbenchMixin:
         page = self.active_page()
         visible_count = len(self.visible_nodes())
         selected = self.current_node_id or "未选择"
+        runtime_summary = self.runtime_summary() if hasattr(self, "runtime_summary") else {}
+        publisher_count = len(runtime_summary.get("publishers", [])) if isinstance(runtime_summary, dict) else 0
+        state_machine_count = len(runtime_summary.get("state_machines", [])) if isinstance(runtime_summary, dict) else 0
         if page.get("kind") == "root":
             next_step = "先在“模块装配”里创建模块，再双击模块进入内部装配。"
         elif page.get("kind") == "module":
@@ -412,7 +415,7 @@ class WorkbenchMixin:
             next_step = "添加发布者和订阅者，再到代码补齐页实现回调或 publish 逻辑。"
         else:
             next_step = "选择一个节点后先改属性，再到代码补齐和生成发布完成收尾。"
-        self.workflow_hint.setText(f"当前页面：{page_title(page)}\n可见节点：{visible_count}\n当前选择：{selected}\n建议：{next_step}")
+        self.workflow_hint.setText(f"当前页面：{page_title(page)}\n可见节点：{visible_count}\n当前选择：{selected}\n运行时发布者：{publisher_count}\n运行时状态机：{state_machine_count}\n建议：{next_step}")
         if hasattr(self, "palette_label"):
             self.palette_label.setText(f"当前页面可添加：{page_title(page)}")
 
@@ -430,7 +433,9 @@ class WorkbenchMixin:
         nodes = self.graph.get("nodes", [])
         modules = [node for node in nodes if node.get("type") == "project.module"]
         topics = [node for node in nodes if node.get("type") == "event.topic"]
-        machines = [node for node in nodes if node.get("type") == "state.machine"]
+        runtime_summary = self.runtime_summary() if hasattr(self, "runtime_summary") else {}
+        publishers = runtime_summary.get("publishers", []) if isinstance(runtime_summary, dict) else []
+        machines = runtime_summary.get("state_machines", []) if isinstance(runtime_summary, dict) else []
         missing = self.missing_callback_requirements()
         conflicts = self.collect_pin_conflicts()
         errors = [msg for msg in self.validation_messages if msg.startswith("❌")]
@@ -460,6 +465,7 @@ class WorkbenchMixin:
             f"- 组件：{len([node for node in nodes if node.get('type') != 'project.module'])}",
             f"- Topic：{len(topics)}",
             f"- 状态机：{len(machines)}",
+            f"- 发布者：{len(publishers)}",
             f"- Flow：{len(self.graph.get('flows', []))}",
             f"- Task：{len(self.graph.get('tasks', [])) + len([node for node in nodes if node.get('type') == 'task.periodic'])}",
             "",
@@ -501,6 +507,9 @@ class WorkbenchMixin:
         conflicts = self.collect_pin_conflicts()
         errors = [msg for msg in self.validation_messages if msg.startswith("❌")]
         warnings = [msg for msg in self.validation_messages if msg.startswith("⚠️")]
+        runtime_summary = self.runtime_summary() if hasattr(self, "runtime_summary") else {}
+        publishers = runtime_summary.get("publishers", []) if isinstance(runtime_summary, dict) else []
+        state_machines = runtime_summary.get("state_machines", []) if isinstance(runtime_summary, dict) else []
         lines = ["生成发布检查清单", "", "先让下面五项尽量都变成 [OK]，再点击生成 application。", ""]
         checks = [
             (not errors, f"Graph 校验错误：{len(errors)}"),
@@ -521,6 +530,13 @@ class WorkbenchMixin:
             lines.append("校验消息：")
             for message in (errors + warnings)[:12]:
                 lines.append(f"- {message}")
+        if publishers or state_machines:
+            lines.append("")
+            lines.append("运行时摘要：")
+            lines.append(f"- 自动/手动发布者：{len(publishers)}")
+            lines.append(f"- 状态机：{len(state_machines)}")
+            for item in publishers[:8]:
+                lines.append(f"  - publisher {item.get('id')} | mode={item.get('mode')} | stage={item.get('stage')}")
         self.release_output.setPlainText("\n".join(lines))
 
     def open_module_item(self, item: QListWidgetItem) -> None:
@@ -1103,10 +1119,14 @@ class WorkbenchMixin:
     def node_action_hint(self, node: dict[str, Any]) -> str:
         node_type = str(node.get("type"))
         contract = NODE_CONTRACTS.get(node_type, {})
+        runtime_summary = getattr(self, "_runtime_summary_cache", {})
         if node_type == "processor.custom":
             return "行动：实现 process(ctx, in, out)。当它位于 Sensor → Processor → Algorithm/Actuator 数据流上时，codegen 会生成周期执行链；连接到 project.module 只声明模块接口。"
         if node_type == "event.publisher":
-            return "行动：连接 topic 和 source 后，codegen 会生成 `app_publish_xxx(...)` 包装函数；若 payload 类型可推断，还会生成 typed/value 版本。你可以在 task/module/custom code 中直接调用这些包装函数。"
+            runtime_item = next((item for item in runtime_summary.get("publishers", []) if item.get("id") == str(node.get("id"))), None) if isinstance(runtime_summary, dict) else None
+            mode = runtime_item.get("mode") if runtime_item else "manual"
+            stage = runtime_item.get("stage") if runtime_item else "unknown"
+            return f"行动：连接 topic 和 source 后，codegen 会生成 `app_publish_xxx(...)` 包装函数；若 payload 类型可推断，还会生成 typed/value 版本。当前模式={mode}，挂接阶段={stage}。你可以在 task/module/custom code 中直接调用这些包装函数。"
         if node_type == "event.subscriber":
             return "行动：填写 callback，codegen 会生成 efw_topic_subscribe(...) 绑定；业务逻辑写在订阅回调里。"
         if node_type == "state.machine":
@@ -1114,6 +1134,9 @@ class WorkbenchMixin:
         if node_type == "state.transition":
             return "行动：填写 condition，必要时填写 action。event_trigger 必须写成 `topic:<event.topic节点id>` 或 `event:<事件名>`，这样状态机可以通过 `app_dispatch_event(...)` 或 `app_sm_xxx_dispatch_event(...)` 响应事件。"
         if node_type == "project.module":
+            runtime_item = next((item for item in runtime_summary.get("project_modules", []) if item.get("module_id") == str(node.get("id"))), None) if isinstance(runtime_summary, dict) else None
+            if runtime_item:
+                return f"行动：把节点归属到该模块以整理页面；同时会生成可运行的模块壳。当前挂接：自动发布者 {len(runtime_item.get('publishers', []))} 个，状态机 {len(runtime_item.get('state_machines', []))} 个。"
             return "行动：把节点归属到该模块以整理页面；inputs/outputs 会进入 contract registry 校验，但当前仍不会生成独立 app_xxx_module.c/.h。"
         if node_type == "actuator.motor":
             return "行动：host mock 可编译验证；真实板卡需在板级适配中把 speed/dir 接到 PWM/GPIO。"
@@ -1138,13 +1161,16 @@ class WorkbenchMixin:
         if description:
             lines.append(description)
         if node_type == "event.publisher":
-            mode = "expr/size" if node.get("data_expr") and node.get("size_expr") else ("source-auto" if node.get("source") else "manual")
-            stage = "module.poll" if node.get("module") else "root app_update_1ms"
+            runtime_summary = getattr(self, "_runtime_summary_cache", {})
+            runtime_item = next((item for item in runtime_summary.get("publishers", []) if item.get("id") == node_id), None) if isinstance(runtime_summary, dict) else None
+            mode = runtime_item.get("mode") if runtime_item else ("expr/size" if node.get("data_expr") and node.get("size_expr") else ("source-auto" if node.get("source") else "manual"))
+            stage = runtime_item.get("stage") if runtime_item else ("module.poll" if node.get("module") else "root app_update_1ms")
             lines.append(f"自动发布模式：{mode}")
             lines.append(f"挂接阶段：{stage}")
-            lines.append(f"最小间隔：{int(node.get('interval_ms', 0) or 0)} ms")
-            if node.get("source"):
-                lines.append(f"来源：{node.get('source')}")
+            lines.append(f"最小间隔：{int((runtime_item or {}).get('interval_ms', node.get('interval_ms', 0)) or 0)} ms")
+            source_id = (runtime_item or {}).get("source_id") if runtime_item else node.get("source")
+            if source_id:
+                lines.append(f"来源：{source_id}")
             if node.get("topic"):
                 lines.append(f"Topic：{node.get('topic')}")
         lines.append("")
@@ -1176,7 +1202,8 @@ class WorkbenchMixin:
             if hasattr(self, "ports_label"):
                 self.ports_label.setText("端口：未选择")
             self.node_json_editor.clear()
-            self.property_table.setRowCount(0)
+            if hasattr(self, "clear_property_tables"):
+                self.clear_property_tables()
             if hasattr(self, "callback_preview_output"):
                 self.callback_preview_output.clear()
             if hasattr(self, "callback_select"):

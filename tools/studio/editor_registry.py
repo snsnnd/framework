@@ -278,11 +278,13 @@ def display_label(template_key: str) -> str:
 
 def build_node_categories() -> list[tuple[str, list[str]]]:
     categories = []
+    deferred_framework_scan: list[tuple[str, list[str]]] = []
     for name, types in VISUAL_NODE_CATEGORIES:
         if name == "框架库扫描":
-            categories.extend(framework_scan_categories())
+            deferred_framework_scan.extend(framework_scan_categories())
         else:
             categories.append((name, types))
+    categories.extend(deferred_framework_scan)
     return categories
 
 

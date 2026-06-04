@@ -17,8 +17,9 @@ if importlib.util.find_spec("PyQt6") is not None:
     from PyQt6.QtWidgets import (
         QCheckBox, QComboBox, QDockWidget, QFormLayout, QGraphicsScene, QHBoxLayout,
         QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox,
-        QMainWindow, QPlainTextEdit, QPushButton, QSplitter, QTabBar, QTabWidget,
+        QMainWindow, QPlainTextEdit, QPushButton, QSplitter, QStackedWidget, QTabBar, QTabWidget,
         QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout, QWidget,
+        QToolBox,
     )
     QT_LIB = "PyQt6"
 elif importlib.util.find_spec("PyQt5") is not None:
@@ -27,9 +28,9 @@ elif importlib.util.find_spec("PyQt5") is not None:
     from PyQt5.QtWidgets import (
         QCheckBox, QComboBox, QDockWidget, QFormLayout, QGraphicsScene, QHBoxLayout,
         QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox,
-        QMainWindow, QPlainTextEdit, QPushButton, QShortcut, QSplitter, QTabBar,
+        QMainWindow, QPlainTextEdit, QPushButton, QShortcut, QSplitter, QStackedWidget, QTabBar,
         QTabWidget, QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout,
-        QWidget,
+        QWidget, QToolBox,
     )
     QT_LIB = "PyQt5"
 else:
@@ -540,18 +541,60 @@ class UIBuilderMixin:
     def _build_properties_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
+        title_row = QHBoxLayout()
         self.selected_label = QLabel("未选择卡片")
-        layout.addWidget(self.selected_label)
+        title_row.addWidget(self.selected_label, 1)
+        self.dev_mode_btn = QPushButton("{ }")
+        self.dev_mode_btn.setCheckable(True)
+        self.dev_mode_btn.clicked.connect(self.toggle_property_dev_mode)
+        title_row.addWidget(self.dev_mode_btn)
+        layout.addLayout(title_row)
         self.ports_label = QLabel("端口：未选择")
         self.ports_label.setWordWrap(True)
         layout.addWidget(self.ports_label)
-        self.property_table = QTableWidget(0, 4)
-        self.property_table.setHorizontalHeaderLabels(["属性", "值", "控件类型", "契约"])
-        self.property_table.setMinimumHeight(120)
-        layout.addWidget(self.property_table)
+
+        self.property_stack = QStackedWidget()
+        form_page = QWidget()
+        form_layout = QVBoxLayout(form_page)
+        form_layout.setContentsMargins(0, 0, 0, 0)
+        self.property_sections = QToolBox()
+        self.property_tables_by_section = {}
+        section_defs = [
+            ("basic", "基础信息", True),
+            ("parameters", "核心参数", True),
+            ("contracts", "接口契约", False),
+            ("advanced", "高级设置", False),
+        ]
+        for key, title, _expanded in section_defs:
+            section = QWidget()
+            section_layout = QVBoxLayout(section)
+            section_layout.setContentsMargins(4, 4, 4, 4)
+            table = QTableWidget(0, 4)
+            table.setHorizontalHeaderLabels(["属性", "值", "控件类型", "契约"])
+            table.setMinimumHeight(120 if key in {"basic", "parameters"} else 90)
+            section_layout.addWidget(table)
+            self.property_tables_by_section[key] = table
+            self.property_sections.addItem(section, title)
+        self.property_sections.setCurrentIndex(0)
+        form_layout.addWidget(self.property_sections)
         apply_form_btn = QPushButton("应用表单")
         apply_form_btn.clicked.connect(self.apply_property_form)
-        layout.addWidget(apply_form_btn)
+        form_layout.addWidget(apply_form_btn)
+        self.property_stack.addWidget(form_page)
+
+        json_page = QWidget()
+        json_layout = QVBoxLayout(json_page)
+        json_layout.setContentsMargins(0, 0, 0, 0)
+        json_layout.addWidget(QLabel("开发者模式：原始 JSON（仅在需要调试复杂字段时使用）"))
+        self.node_json_editor = QPlainTextEdit()
+        self.node_json_editor.setMaximumHeight(220)
+        json_layout.addWidget(self.node_json_editor)
+        apply_btn = QPushButton("应用 JSON")
+        apply_btn.clicked.connect(self.apply_node_json)
+        json_layout.addWidget(apply_btn)
+        self.property_stack.addWidget(json_page)
+
+        layout.addWidget(self.property_stack)
         layout.addWidget(QLabel("当前卡片回调实现："))
         callback_row = QHBoxLayout()
         self.callback_select = QComboBox()
@@ -568,17 +611,15 @@ class UIBuilderMixin:
         self.callback_preview_output.setMaximumHeight(180)
         self.callback_preview_output.setFont(QFont("Consolas", 9))
         layout.addWidget(self.callback_preview_output)
-        layout.addWidget(QLabel("高级 JSON（复杂数组/对象可在这里编辑）"))
-        self.node_json_editor = QPlainTextEdit()
-        self.node_json_editor.setMaximumHeight(150)
-        layout.addWidget(self.node_json_editor)
-        apply_btn = QPushButton("应用 JSON")
-        apply_btn.clicked.connect(self.apply_node_json)
         delete_btn = QPushButton("删除卡片")
         delete_btn.clicked.connect(self.delete_selected_node)
-        layout.addWidget(apply_btn)
         layout.addWidget(delete_btn)
         return widget
+
+    def toggle_property_dev_mode(self) -> None:
+        if not hasattr(self, "property_stack"):
+            return
+        self.property_stack.setCurrentIndex(1 if self.dev_mode_btn.isChecked() else 0)
 
     def _build_pin_planner_tab(self) -> QWidget:
         widget = QWidget()

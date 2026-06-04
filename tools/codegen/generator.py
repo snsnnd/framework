@@ -11,7 +11,9 @@ flows from a 1 ms tick.
 import hashlib
 import json
 import re
+from string import Template
 from pathlib import Path
+from typing import Any
 
 from codegen.validate import BUILTIN_CONTRACTS, contract_name_for_output, validate_graph
 
@@ -180,8 +182,9 @@ def modules_of(ctx, type_name):
 
 def publishers_with_auto(ctx, module_id: str | None = None):
     items = []
-    for node in nodes_of(ctx, "event.publisher"):
-        if not ((node.get("data_expr") and node.get("size_expr")) or node.get("source")):
+    for item in build_publisher_runtime_model(ctx):
+        node = item["node"]
+        if item["mode"] == "manual":
             continue
         if module_id is not None and str(node.get("module", "")) != str(module_id):
             continue
@@ -192,7 +195,7 @@ def publishers_with_auto(ctx, module_id: str | None = None):
 
 
 def source_auto_publishers(ctx, source_id: str):
-    return [node for node in nodes_of(ctx, "event.publisher") if str(node.get("source", "")) == str(source_id) and not (node.get("data_expr") and node.get("size_expr"))]
+    return [item["node"] for item in build_publisher_runtime_model(ctx) if item["source_id"] == str(source_id) and item["mode"] == "source-auto"]
 
 
 def state_machines_for_module(ctx, module_id: str | None = None):
@@ -204,6 +207,380 @@ def state_machines_for_module(ctx, module_id: str | None = None):
             continue
         items.append(node)
     return items
+
+
+def build_state_runtime_model(ctx):
+    model = []
+    for machine in nodes_of(ctx, "state.machine"):
+        machine_id = str(machine["id"])
+        states = [node for node in nodes_of(ctx, "state.state") if node.get("machine") == machine_id]
+        transitions = [node for node in nodes_of(ctx, "state.transition") if node.get("machine") == machine_id]
+        model.append({
+            "machine": machine,
+            "machine_id": machine_id,
+            "ident": c_ident(machine_id),
+            "states": states,
+            "transitions": transitions,
+            "module": str(machine.get("module", "") or ""),
+        })
+    return model
+
+
+def build_project_module_runtime_model(ctx):
+    publisher_model = build_publisher_runtime_model(ctx)
+    state_model = build_state_runtime_model(ctx)
+    model = []
+    for node in nodes_of(ctx, "project.module"):
+        module_id = str(node.get("id", ""))
+        model.append({
+            "node": node,
+            "module_id": module_id,
+            "ident": c_ident(module_id),
+            "publishers": [item for item in publisher_model if item["stage"] == "module.poll" and str(item["node"].get("module", "")) == module_id and item["mode"] != "manual"],
+            "state_machines": [item for item in state_model if item["module"] == module_id],
+        })
+    return model
+
+
+def build_runtime_summary(ctx):
+    publisher_model = build_publisher_runtime_model(ctx)
+    state_runtime_model = build_state_runtime_model(ctx)
+    project_module_runtime_model = build_project_module_runtime_model(ctx)
+    hal_runtime_model = build_hal_runtime_model(ctx)
+    sensor_runtime_model = build_sensor_runtime_model(ctx)
+    actuator_runtime_model = build_actuator_runtime_model(ctx)
+    return {
+        "publishers": publisher_model,
+        "state_machines": state_runtime_model,
+        "project_modules": project_module_runtime_model,
+        "hal": hal_runtime_model,
+        "sensors": sensor_runtime_model,
+        "actuators": actuator_runtime_model,
+    }
+
+
+def render_project_module_shells(module_runtime_model):
+    parts = []
+    for module_runtime in module_runtime_model:
+        node = module_runtime["node"]
+        ident = module_runtime["ident"]
+        parts.append(f"static efw_status_t app_project_module_{ident}_poll(void *ctx) {{\n    efw_status_t s;\n    EFW_UNUSED(ctx);\n")
+        for publisher in module_runtime["publishers"]:
+            parts.append(f"    s = app_publish_{publisher['ident']}_auto();\n    if (s != EFW_OK) return s;\n")
+        for machine in module_runtime["state_machines"]:
+            parts.append(f"    s = app_sm_{machine['ident']}_tick();\n    if (s != EFW_OK) return s;\n")
+        parts.append("    return EFW_OK;\n}\n\n")
+        parts.append(f"""static efw_module_ops_t g_{ident}_project_module = {{
+    .name = {c_str(node['id'])},
+    .type = EFW_MODULE_APP,
+    .ctx = 0,
+    .poll = app_project_module_{ident}_poll,
+}};
+
+""")
+    return "".join(parts)
+
+
+def render_project_module_registrations(module_runtime_model):
+    return "".join(
+        f"    s = efw_module_register(&g_{item['ident']}_project_module);\n    if (s != EFW_OK) return s;\n"
+        for item in module_runtime_model
+    )
+
+
+def render_state_api_declarations(state_runtime_model):
+    lines = []
+    for machine_runtime in state_runtime_model:
+        ident = machine_runtime["ident"]
+        lines.append(f"efw_status_t app_sm_{ident}_tick(void);\n")
+        lines.append(f"efw_status_t app_sm_{ident}_dispatch_event(const char *event_name, uint16_t topic_id, const void *data, uint16_t size);\n")
+        lines.append(f"efw_status_t app_sm_{ident}_transition_to(const char *state_name);\n")
+        lines.append(f"const char *app_sm_{ident}_current_state(void);\n")
+    return "".join(lines)
+
+
+def render_state_machine_bundle(machine_runtime):
+    parts = []
+    mid = machine_runtime["machine_id"]
+    m_ident = machine_runtime["ident"]
+    states = machine_runtime["states"]
+    index = {state["id"]: i for i, state in enumerate(states)}
+    for state in states:
+        s_ident = c_ident(state["id"])
+        parts.append(f"static efw_state_machine_ops_t g_state_{s_ident} = {{\n")
+        parts.append(f"    .name = {c_str(state['id'])},\n    .ctx = 0,\n")
+        parts.append(f"    .on_enter = {c_ident(state['on_enter']) if state.get('on_enter') else '0'},\n")
+        parts.append(f"    .on_tick = {c_ident(state['on_update']) if state.get('on_update') else 'app_noop_status'},\n")
+        parts.append(f"    .on_exit = {c_ident(state['on_exit']) if state.get('on_exit') else '0'},\n}};\n")
+    parts.append(f"static efw_state_machine_ops_t *g_{m_ident}_states[] = {{ {', '.join('&g_state_' + c_ident(s['id']) for s in states)} }};\n")
+    parts.append(f"static const char *g_{m_ident}_state_names[] = {{ {', '.join(c_str(s['id']) for s in states)} }};\n")
+    initial = machine_runtime["machine"].get("initial") or (states[0]["id"] if states else "")
+    parts.append(f"static uint8_t g_{m_ident}_current = {index.get(initial, 0)}u;\n")
+    parts.append(f"static uint32_t g_{m_ident}_entered_ms;\n")
+    parts.append(f"static efw_status_t app_sm_{m_ident}_transition_index(uint8_t to_idx, efw_status_t (*action)(void)) {{\n    efw_status_t s;\n    if (to_idx >= {len(states)}u) return EFW_ERR_INVALID;\n")
+    if states:
+        parts.append(f"    if (g_{m_ident}_states[g_{m_ident}_current]->on_exit) {{ s = g_{m_ident}_states[g_{m_ident}_current]->on_exit(g_{m_ident}_states[g_{m_ident}_current]->ctx); if (s != EFW_OK) return s; }}\n")
+    parts.append("    if (action) { s = action(); if (s != EFW_OK) return s; }\n")
+    parts.append(f"    g_{m_ident}_current = to_idx;\n    g_{m_ident}_entered_ms = g_app_elapsed_ms;\n")
+    if states:
+        parts.append(f"    if (g_{m_ident}_states[g_{m_ident}_current]->on_enter) {{ s = g_{m_ident}_states[g_{m_ident}_current]->on_enter(g_{m_ident}_states[g_{m_ident}_current]->ctx); if (s != EFW_OK) return s; }}\n")
+    parts.append("    return EFW_OK;\n}\n")
+    parts.append(f"static efw_status_t app_{m_ident}_register(void) {{\n    efw_status_t s;\n")
+    for state in states:
+        parts.append(f"    s = efw_sm_register(&g_state_{c_ident(state['id'])});\n    if (s != EFW_OK) return s;\n")
+    if states:
+        parts.append(f"    if (g_{m_ident}_states[g_{m_ident}_current]->on_enter) {{ s = g_{m_ident}_states[g_{m_ident}_current]->on_enter(g_{m_ident}_states[g_{m_ident}_current]->ctx); if (s != EFW_OK) return s; }}\n")
+        parts.append(f"    g_{m_ident}_entered_ms = g_app_elapsed_ms;\n")
+    parts.append("    return EFW_OK;\n}\n")
+    parts.append(f"const char *app_sm_{m_ident}_current_state(void) {{\n    return g_{m_ident}_state_names[g_{m_ident}_current];\n}}\n")
+    parts.append(f"efw_status_t app_sm_{m_ident}_transition_to(const char *state_name) {{\n")
+    for state in states:
+        parts.append(f"    if (app_bootstrap_name_eq(state_name, {c_str(state['id'])})) return app_sm_{m_ident}_transition_index({index.get(state['id'], 0)}u, 0);\n")
+    parts.append("    return EFW_ERR_NOT_FOUND;\n}\n")
+    parts.append(f"efw_status_t app_sm_{m_ident}_dispatch_event(const char *event_name, uint16_t topic_id, const void *data, uint16_t size) {{\n    efw_status_t s;\n    EFW_UNUSED(data);\n    EFW_UNUSED(size);\n")
+    if states:
+        ordered_transitions = sorted(machine_runtime["transitions"], key=lambda item: int(item.get("priority", 0)))
+        eventful = [transition for transition in ordered_transitions if str(transition.get("event_trigger", "")).strip()]
+        for transition in eventful:
+            from_idx = index.get(transition.get("from"), 0)
+            to_idx = index.get(transition.get("to"), 0)
+            cond = c_ident(transition["condition"]) + "()"
+            action = c_ident(transition["action"]) if transition.get("action") else "0"
+            parts.append(f"    if (g_{m_ident}_current == {from_idx}u && app_bootstrap_event_matches({c_str(transition.get('event_trigger'))}, event_name, topic_id) && ({cond})) return app_sm_{m_ident}_transition_index({to_idx}u, {action});\n")
+    parts.append("    return EFW_ERR_NOT_FOUND;\n}\n")
+    parts.append(f"efw_status_t app_sm_{m_ident}_tick(void) {{\n    efw_status_t s;\n")
+    if states:
+        parts.append(f"    s = g_{m_ident}_states[g_{m_ident}_current]->on_tick(g_{m_ident}_states[g_{m_ident}_current]->ctx);\n    if (s != EFW_OK) return s;\n")
+        ordered_transitions = sorted(machine_runtime["transitions"], key=lambda item: int(item.get("priority", 0)))
+        for transition in ordered_transitions:
+            if str(transition.get("event_trigger", "")).strip():
+                continue
+            cond_parts = [c_ident(transition["condition"]) + "()"]
+            timeout_ms = int(transition.get("timeout_ms", 0))
+            if timeout_ms > 0:
+                cond_parts.append(f"((g_app_elapsed_ms - g_{m_ident}_entered_ms) >= {timeout_ms}u)")
+            cond = " && ".join(cond_parts)
+            from_idx = index.get(transition.get("from"), 0)
+            to_idx = index.get(transition.get("to"), 0)
+            action = c_ident(transition["action"]) if transition.get("action") else "0"
+            parts.append(f"    if (g_{m_ident}_current == {from_idx}u && ({cond})) {{\n")
+            parts.append(f"        return app_sm_{m_ident}_transition_index({to_idx}u, {action});\n    }}\n")
+    parts.append("    return EFW_OK;\n}\n\n")
+    return "".join(parts)
+
+
+def render_publisher_runtime(ctx, publisher_model):
+    parts = []
+    for source_id in sorted({item["source_id"] for item in publisher_model if item["source_id"]}):
+        ident = c_ident(source_id)
+        parts.append(f"static app_dataflow_buffer_t g_{ident}_pub_cache;\n")
+        parts.append(f"static uint16_t g_{ident}_pub_cache_size;\n")
+        parts.append(f"static uint8_t g_{ident}_pub_cache_valid;\n")
+        parts.append(f"static void app_cache_source_{ident}(const void *data, uint16_t size) {{\n")
+        parts.append("    if (!data || size == 0u) return;\n")
+        parts.append("    if (size > APP_DATAFLOW_BUFFER_SIZE) size = APP_DATAFLOW_BUFFER_SIZE;\n")
+        parts.append(f"    memcpy(g_{ident}_pub_cache.raw, data, size);\n")
+        parts.append(f"    g_{ident}_pub_cache_size = size;\n")
+        parts.append(f"    g_{ident}_pub_cache_valid = 1u;\n")
+        parts.append("}\n")
+    for item in publisher_model:
+        ident = item["ident"]
+        parts.append(f"static app_dataflow_buffer_t g_{ident}_last_pub;\n")
+        parts.append(f"static uint16_t g_{ident}_last_pub_size;\n")
+        parts.append(f"static uint8_t g_{ident}_last_pub_valid;\n")
+        parts.append(f"static uint32_t g_{ident}_last_pub_ms;\n")
+        parts.append(f"static efw_status_t app_publish_{ident}_auto_commit(uint16_t topic_id, const void *data, uint16_t size, uint32_t min_interval_ms) {{\n")
+        parts.append("    if (!data || size == 0u) return EFW_ERR_INVALID;\n")
+        parts.append(f"    if (min_interval_ms > 0u && (g_app_elapsed_ms - g_{ident}_last_pub_ms) < min_interval_ms) return EFW_OK;\n")
+        parts.append(f"    if (g_{ident}_last_pub_valid && g_{ident}_last_pub_size == size && size <= APP_DATAFLOW_BUFFER_SIZE && memcmp(g_{ident}_last_pub.raw, data, size) == 0) return EFW_OK;\n")
+        parts.append(f"    if (size <= APP_DATAFLOW_BUFFER_SIZE) memcpy(g_{ident}_last_pub.raw, data, size);\n")
+        parts.append(f"    g_{ident}_last_pub_size = size;\n")
+        parts.append(f"    g_{ident}_last_pub_valid = (uint8_t)(size <= APP_DATAFLOW_BUFFER_SIZE);\n")
+        parts.append(f"    g_{ident}_last_pub_ms = g_app_elapsed_ms;\n")
+        parts.append("    return efw_topic_publish(topic_id, data, size);\n}\n")
+    parts.append("\n")
+    for item in publisher_model:
+        node = item["node"]
+        ident = item["ident"]
+        topic_id = item["topic_id"]
+        interval_ms = item["interval_ms"]
+        parts.append(f"efw_status_t app_publish_{ident}(const void *data, uint16_t size) {{\n    return efw_topic_publish({topic_id}u, data, size);\n}}\n")
+        c_type = item["payload_c_type"]
+        if c_type not in {"", "custom"}:
+            parts.append(f"efw_status_t app_publish_{ident}_typed(const {c_type} *value) {{\n    return efw_topic_publish({topic_id}u, value, (uint16_t)sizeof({c_type}));\n}}\n")
+            parts.append(f"efw_status_t app_publish_{ident}_value({c_type} value) {{\n    return app_publish_{ident}_typed(&value);\n}}\n")
+        if node.get("data_expr") and node.get("size_expr"):
+            parts.append(f"efw_status_t app_publish_{ident}_auto(void) {{\n    return app_publish_{ident}_auto_commit({topic_id}u, {node.get('data_expr')}, {node.get('size_expr')}, {interval_ms}u);\n}}\n")
+        elif item["source_id"]:
+            source = ctx["nodes_by_id"].get(item["source_id"])
+            source_ident = c_ident(item["source_id"])
+            size_expr = item["payload_size_expr"]
+            if source and source.get("type") in {"sensor.custom", "sensor.line_tracking"}:
+                parts.append(f"efw_status_t app_publish_{ident}_auto(void) {{\n    efw_status_t s;\n    s = efw_sensor_read({c_str(source['id'])}, g_{source_ident}_pub_cache.raw);\n    if (s != EFW_OK) return s;\n    g_{source_ident}_pub_cache_size = {size_expr};\n    g_{source_ident}_pub_cache_valid = 1u;\n    return app_publish_{ident}_auto_commit({topic_id}u, g_{source_ident}_pub_cache.raw, g_{source_ident}_pub_cache_size, {interval_ms}u);\n}}\n")
+            elif source and source.get("type") in {"processor.custom", "module.custom"}:
+                parts.append(f"efw_status_t app_publish_{ident}_auto(void) {{\n    if (!g_{source_ident}_pub_cache_valid) return EFW_ERR_NOT_READY;\n    return app_publish_{ident}_auto_commit({topic_id}u, g_{source_ident}_pub_cache.raw, g_{source_ident}_pub_cache_size, {interval_ms}u);\n}}\n")
+    for source_id in sorted({item["source_id"] for item in publisher_model if item["source_id"] and ctx.get("nodes_by_id", {}).get(item["source_id"], {}).get("type") == "module.custom"}):
+        ident = c_ident(source_id)
+        c_type = source_cache_c_type(ctx, source_id)
+        parts.append(f"efw_status_t app_source_{ident}_store(const void *data, uint16_t size) {{\n    if (!data || size == 0u) return EFW_ERR_INVALID;\n    app_cache_source_{ident}(data, size);\n    return EFW_OK;\n}}\n")
+        if c_type not in {"", "custom"}:
+            parts.append(f"efw_status_t app_source_{ident}_store_typed(const {c_type} *value) {{\n    if (!value) return EFW_ERR_INVALID;\n    return app_source_{ident}_store(value, (uint16_t)sizeof({c_type}));\n}}\n")
+            parts.append(f"efw_status_t app_source_{ident}_store_value({c_type} value) {{\n    return app_source_{ident}_store_typed(&value);\n}}\n")
+    return "".join(parts)
+
+
+def render_event_queue_runtime(state_runtime):
+    parts = ["""
+efw_status_t app_post_event(const char *event_name, uint16_t topic_id, const void *data, uint16_t size) {
+    if (!event_name && topic_id == 0u) return EFW_ERR_INVALID;
+    if (g_app_event_count >= APP_EVENT_QUEUE_CAPACITY) return EFW_ERR_FULL;
+    g_app_event_queue[g_app_event_tail].event_name = event_name;
+    g_app_event_queue[g_app_event_tail].topic_id = topic_id;
+    g_app_event_queue[g_app_event_tail].data = data;
+    g_app_event_queue[g_app_event_tail].size = size;
+    g_app_event_tail = (uint8_t)((g_app_event_tail + 1u) % APP_EVENT_QUEUE_CAPACITY);
+    g_app_event_count++;
+    return EFW_OK;
+}
+
+const char *app_current_event_name(void) { return g_app_event_name; }
+uint16_t app_current_event_topic_id(void) { return g_app_event_topic_id; }
+const void *app_current_event_data(void) { return g_app_event_data; }
+uint16_t app_current_event_size(void) { return g_app_event_size; }
+
+efw_status_t app_dispatch_event(const char *event_name, uint16_t topic_id, const void *data, uint16_t size) {
+    efw_status_t s;
+    uint8_t handled = 0u;
+    if (!event_name && topic_id == 0u) return EFW_ERR_INVALID;
+    g_app_event_name = event_name;
+    g_app_event_topic_id = topic_id;
+    g_app_event_data = data;
+    g_app_event_size = size;
+    if (topic_id != 0u) {
+        s = efw_topic_publish(topic_id, data, size);
+        if (s != EFW_OK) return s;
+        handled = 1u;
+    }
+"""]
+    for machine_runtime in state_runtime:
+        ident = machine_runtime["ident"]
+        parts.append(f"    s = app_sm_{ident}_dispatch_event(event_name, topic_id, data, size);\n")
+        parts.append("    if (s == EFW_OK) { handled = 1u; continue; }\n")
+        parts.append("    if (s != EFW_ERR_NOT_FOUND) return s;\n")
+    parts.append("""
+    return handled ? EFW_OK : EFW_ERR_NOT_FOUND;
+}
+
+efw_status_t app_process_event_queue(void) {
+    while (g_app_event_count > 0u) {
+        app_pending_event_t item = g_app_event_queue[g_app_event_head];
+        efw_status_t s;
+        g_app_event_head = (uint8_t)((g_app_event_head + 1u) % APP_EVENT_QUEUE_CAPACITY);
+        g_app_event_count--;
+        s = app_dispatch_event(item.event_name, item.topic_id, item.data, item.size);
+        if (s != EFW_OK && s != EFW_ERR_NOT_FOUND) return s;
+    }
+    return EFW_OK;
+}
+""")
+    return "".join(parts)
+
+
+def render_scheduler_runtime(ctx, state_runtime, publisher_model):
+    parts = ["""
+static efw_status_t app_update_1ms(void) {
+    efw_status_t s;
+    g_app_elapsed_ms += APP_PROJECT_TICK_MS;
+    /* Scheduler order: generated dataflow pipelines -> line_follower flows -> tasks -> root auto-publish -> root state machines -> queued events -> module poll_all. */
+    /* Dataflow pipelines are independent leaf paths discovered from graph.edges; use tasks/modules for explicit cross-pipeline ordering. */
+"""]
+    if dataflow_paths(ctx):
+        parts.append("    /* 1. Generated runtime dataflow pipelines. */\n")
+    for index, path in enumerate(dataflow_paths(ctx), start=1):
+        names = [c_ident(node_id) for node_id in path]
+        fn = "app_dataflow_" + "_".join(names[:4])
+        if len(names) > 4:
+            fn += f"_{index}"
+        period = dataflow_period_ms(ctx, path)
+        condition = "1" if period <= int(ctx["project"].get("tick_ms", 1)) else f"(g_app_elapsed_ms % {period}u) == 0u"
+        parts.append(f"    if ({condition}) {{\n        s = {fn}();\n        if (s != EFW_OK) return s;\n    }}\n")
+    flow_tasks = {task.get("flow") for task in ctx["tasks"] if task.get("flow")}
+    if ctx["flows"]:
+        parts.append("    /* 2. control.line_follower flows not owned by task.periodic. */\n")
+    for flow in ctx["flows"]:
+        if flow["id"] in flow_tasks:
+            continue
+        ident = c_ident(flow["id"])
+        period = int(flow.get("period_ms", ctx["project"].get("tick_ms", 1)))
+        condition = "1" if period <= int(ctx["project"].get("tick_ms", 1)) else f"(g_app_elapsed_ms % {period}u) == 0u"
+        parts.append(f"    if ({condition}) {{\n        s = efw_line_follower_update(&g_{ident}, 0, 0);\n        if (s != EFW_OK) return s;\n    }}\n")
+    if ctx["tasks"]:
+        parts.append("    /* 3. Explicit task.periodic entries. */\n")
+    for task in ctx["tasks"]:
+        period = int(task.get("period_ms", ctx["project"].get("tick_ms", 1)))
+        condition = "1" if period <= int(ctx["project"].get("tick_ms", 1)) else f"(g_app_elapsed_ms % {period}u) == 0u"
+        if task.get("call"):
+            parts.append(f"    if ({condition}) {{\n        s = {c_ident(task['call'])}();\n        if (s != EFW_OK) return s;\n    }}\n")
+        elif task.get("flow"):
+            ident = c_ident(task["flow"])
+            parts.append(f"    if ({condition}) {{\n        s = efw_line_follower_update(&g_{ident}, 0, 0);\n        if (s != EFW_OK) return s;\n    }}\n")
+    root_publishers = [item for item in publisher_model if item["stage"] == "root app_update_1ms" and item["mode"] != "manual"]
+    if root_publishers:
+        parts.append("    /* 4. Root-scope auto publishers. */\n")
+        for item in root_publishers:
+            parts.append(f"    s = app_publish_{item['ident']}_auto();\n    if (s != EFW_OK) return s;\n")
+    root_machines = [item for item in state_runtime if not item["module"]]
+    if root_machines:
+        parts.append("    /* 5. Root-scope state-machine ticks. */\n")
+        for machine in root_machines:
+            parts.append(f"    s = app_sm_{machine['ident']}_tick();\n    if (s != EFW_OK) return s;\n")
+    parts.append("    /* 6. Deferred event queue dispatch. */\n")
+    parts.append("    s = app_process_event_queue();\n    if (s != EFW_OK) return s;\n")
+    if nodes_of(ctx, "module.custom") or nodes_of(ctx, "project.module"):
+        parts.append("    /* 7. Module lifecycle poll_all. */\n")
+        parts.append("    s = efw_module_poll_all();\n    if (s != EFW_OK) return s;\n")
+    parts.append("    return EFW_OK;\n}\n\n")
+    return "".join(parts)
+
+
+def publisher_mode(publisher: dict[str, Any]) -> str:
+    if publisher.get("data_expr") and publisher.get("size_expr"):
+        return "expr/size"
+    if publisher.get("source"):
+        return "source-auto"
+    return "manual"
+
+
+def publisher_stage(publisher: dict[str, Any]) -> str:
+    return "module.poll" if publisher.get("module") else "root app_update_1ms"
+
+
+def publisher_source_kind(ctx, publisher: dict[str, Any]) -> str | None:
+    source = publisher_source_node(ctx, publisher)
+    return str(source.get("type")) if source else None
+
+
+def publisher_interval_ms(publisher: dict[str, Any]) -> int:
+    return int(publisher.get("interval_ms", 0) or 0)
+
+
+def build_publisher_runtime_model(ctx):
+    model = []
+    for publisher in nodes_of(ctx, "event.publisher"):
+        model.append({
+            "node": publisher,
+            "id": str(publisher.get("id", "")),
+            "ident": c_ident(str(publisher.get("id", ""))),
+            "topic_id": event_topic_id(ctx, publisher.get("topic")),
+            "mode": publisher_mode(publisher),
+            "stage": publisher_stage(publisher),
+            "source_kind": publisher_source_kind(ctx, publisher),
+            "source_id": str(publisher.get("source", "") or ""),
+            "payload_c_type": publisher_payload_c_type(ctx, publisher),
+            "payload_size_expr": publisher_payload_size_expr(ctx, publisher),
+            "interval_ms": publisher_interval_ms(publisher),
+        })
+    return model
 
 
 def pin_expr(pin):
@@ -220,6 +597,12 @@ def write_file(out_dir: Path, name: str, content: str) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
     (out_dir / name).parent.mkdir(parents=True, exist_ok=True)
     (out_dir / name).write_text(content.rstrip() + "\n", encoding="utf-8")
+
+
+def render_text_template(template_name: str, **values: Any) -> str:
+    template_path = Path(__file__).resolve().parent / "templates" / template_name
+    template = Template(template_path.read_text(encoding="utf-8"))
+    return template.substitute(**values)
 
 
 def render_board_config(ctx):
@@ -288,47 +671,37 @@ def event_topic_id(ctx, topic_ref):
     return int(topic.get("topic_id", 0)) if topic else 0
 
 
+def manifest_template_values(ctx):
+    return {
+        "APP_USE_HAL": c_bool(len(nodes_of(ctx, 'hal.gpio_line_input') + nodes_of(ctx, 'hal.custom'))),
+        "APP_USE_SENSOR": c_bool(len(nodes_of(ctx, 'sensor.line_tracking') + nodes_of(ctx, 'sensor.custom'))),
+        "APP_USE_LINE_TRACKING": c_bool(len(nodes_of(ctx, 'sensor.line_tracking'))),
+        "APP_USE_ACTUATOR": c_bool(len(nodes_of(ctx, 'actuator.motor') + nodes_of(ctx, 'actuator.custom'))),
+        "APP_USE_MOTOR": c_bool(len(nodes_of(ctx, 'actuator.motor'))),
+        "APP_USE_ALGORITHM": c_bool(len(nodes_of(ctx, 'algorithm.pid') + nodes_of(ctx, 'algorithm.custom'))),
+        "APP_USE_PID": c_bool(len(nodes_of(ctx, 'algorithm.pid'))),
+        "APP_USE_PROCESSOR": c_bool(len(nodes_of(ctx, 'processor.custom'))),
+        "APP_USE_MODULE": c_bool(len(nodes_of(ctx, 'module.custom') + nodes_of(ctx, 'project.module'))),
+        "APP_USE_EVENT": c_bool(len(nodes_of(ctx, 'event.topic') + nodes_of(ctx, 'event.publisher') + nodes_of(ctx, 'event.subscriber'))),
+        "APP_USE_STATE_MACHINE": c_bool(len(nodes_of(ctx, 'state.machine') + nodes_of(ctx, 'state.state') + nodes_of(ctx, 'state.transition'))),
+        "APP_PROJECT_TICK_MS": f"{int(ctx['project'].get('tick_ms', 1))}u",
+        "APP_HAL_COUNT": len(nodes_of(ctx, 'hal.gpio_line_input') + nodes_of(ctx, 'hal.custom')),
+        "APP_SENSOR_COUNT": len(nodes_of(ctx, 'sensor.line_tracking') + nodes_of(ctx, 'sensor.custom')),
+        "APP_ACTUATOR_COUNT": len(nodes_of(ctx, 'actuator.motor') + nodes_of(ctx, 'actuator.custom')),
+        "APP_ALGO_COUNT": len(nodes_of(ctx, 'algorithm.pid') + nodes_of(ctx, 'algorithm.custom')),
+        "APP_PROCESSOR_COUNT": len(nodes_of(ctx, 'processor.custom')),
+        "APP_DATAFLOW_PIPELINE_COUNT": len(dataflow_paths(ctx)),
+        "APP_DATAFLOW_BUFFER_SIZE": f"{dataflow_buffer_size(ctx)}u",
+        "APP_MODULE_COUNT": len(nodes_of(ctx, 'module.custom') + nodes_of(ctx, 'project.module')),
+        "APP_TOPIC_COUNT": len(nodes_of(ctx, 'event.topic')),
+        "APP_CONTRACT_COUNT": len(ctx.get('contracts', {})),
+        "APP_STATE_COUNT": len(nodes_of(ctx, 'state.state')),
+        "TOPIC_MACROS": render_topic_macros(ctx),
+    }
+
+
 def render_manifest(ctx):
-    return f"""
-/**
- * @file    app_manifest.h
- * @brief   Generated feature switches and registry capacities.
- */
-
-#ifndef APP_MANIFEST_H
-#define APP_MANIFEST_H
-
-#include "app_board_config.h"
-
-#define APP_USE_HAL                 {c_bool(len(nodes_of(ctx, 'hal.gpio_line_input') + nodes_of(ctx, 'hal.custom')))}
-#define APP_USE_SENSOR              {c_bool(len(nodes_of(ctx, 'sensor.line_tracking') + nodes_of(ctx, 'sensor.custom')))}
-#define APP_USE_LINE_TRACKING       {c_bool(len(nodes_of(ctx, 'sensor.line_tracking')))}
-#define APP_USE_ACTUATOR            {c_bool(len(nodes_of(ctx, 'actuator.motor') + nodes_of(ctx, 'actuator.custom')))}
-#define APP_USE_MOTOR               {c_bool(len(nodes_of(ctx, 'actuator.motor')))}
-#define APP_USE_ALGORITHM           {c_bool(len(nodes_of(ctx, 'algorithm.pid') + nodes_of(ctx, 'algorithm.custom')))}
-#define APP_USE_PID                 {c_bool(len(nodes_of(ctx, 'algorithm.pid')))}
-#define APP_USE_PROCESSOR           {c_bool(len(nodes_of(ctx, 'processor.custom')))}
-#define APP_USE_MODULE              {c_bool(len(nodes_of(ctx, 'module.custom') + nodes_of(ctx, 'project.module')))}
-#define APP_USE_EVENT               {c_bool(len(nodes_of(ctx, 'event.topic') + nodes_of(ctx, 'event.publisher') + nodes_of(ctx, 'event.subscriber')))}
-#define APP_USE_STATE_MACHINE       {c_bool(len(nodes_of(ctx, 'state.machine') + nodes_of(ctx, 'state.state') + nodes_of(ctx, 'state.transition')))}
-
-#define APP_PROJECT_TICK_MS          {int(ctx["project"].get("tick_ms", 1))}u
-
-#define APP_HAL_COUNT               {len(nodes_of(ctx, 'hal.gpio_line_input') + nodes_of(ctx, 'hal.custom'))}
-#define APP_SENSOR_COUNT            {len(nodes_of(ctx, 'sensor.line_tracking') + nodes_of(ctx, 'sensor.custom'))}
-#define APP_ACTUATOR_COUNT          {len(nodes_of(ctx, 'actuator.motor') + nodes_of(ctx, 'actuator.custom'))}
-#define APP_ALGO_COUNT              {len(nodes_of(ctx, 'algorithm.pid') + nodes_of(ctx, 'algorithm.custom'))}
-#define APP_PROCESSOR_COUNT         {len(nodes_of(ctx, 'processor.custom'))}
-#define APP_DATAFLOW_PIPELINE_COUNT {len(dataflow_paths(ctx))}
-#define APP_DATAFLOW_BUFFER_SIZE    {dataflow_buffer_size(ctx)}u
-#define APP_MODULE_COUNT            {len(nodes_of(ctx, 'module.custom') + nodes_of(ctx, 'project.module'))}
-#define APP_TOPIC_COUNT             {len(nodes_of(ctx, 'event.topic'))}
-#define APP_CONTRACT_COUNT          {len(ctx.get("contracts", {}))}
-#define APP_STATE_COUNT             {len(nodes_of(ctx, 'state.state'))}
-
-{render_topic_macros(ctx)}
-#endif
-"""
+    return render_text_template("app_manifest.h.tpl", **manifest_template_values(ctx))
 
 
 def render_components_h():
@@ -349,18 +722,32 @@ efw_status_t app_components_register(void);
 """
 
 
-def render_components_c(ctx):
-    parts = ["""
-/**
- * @file    app_components.c
- * @brief   Generated algorithm and module registration.
- */
+def components_template_values(ctx):
+    module_runtime_model = build_project_module_runtime_model(ctx)
+    algo_defs = render_algorithm_runtime_defs(ctx)
+    custom_module_defs = render_custom_module_runtime_defs(ctx)
+    project_module_defs = render_project_module_shells(module_runtime_model)
+    algo_regs = "".join(
+        f"    s = efw_algo_register(&g_{c_ident(node['id'])}_algo);\n    if (s != EFW_OK) return s;\n"
+        for node in nodes_of(ctx, "algorithm.pid") + nodes_of(ctx, "algorithm.custom")
+    )
+    custom_module_regs = "".join(
+        f"    s = efw_module_register(&g_{c_ident(node['id'])}_module);\n    if (s != EFW_OK) return s;\n"
+        for node in nodes_of(ctx, "module.custom")
+    )
+    project_module_regs = render_project_module_registrations(module_runtime_model)
+    return {
+        "ALGORITHM_RUNTIME_DEFS": algo_defs,
+        "CUSTOM_MODULE_RUNTIME_DEFS": custom_module_defs,
+        "PROJECT_MODULE_RUNTIME_DEFS": project_module_defs,
+        "ALGORITHM_REGISTRATIONS": algo_regs,
+        "CUSTOM_MODULE_REGISTRATIONS": custom_module_regs,
+        "PROJECT_MODULE_REGISTRATIONS": project_module_regs,
+    }
 
-#include "app_components.h"
-#include "app_manifest.h"
-#include "app_bootstrap.h"
 
-"""]
+def render_algorithm_runtime_defs(ctx):
+    parts = []
     for node in nodes_of(ctx, "algorithm.pid"):
         ident = c_ident(node["id"])
         parts.append(f"""static efw_pid_t g_{ident}_ctx = {{
@@ -397,6 +784,11 @@ static efw_algo_ops_t g_{ident}_algo = {{
 }};
 
 """)
+    return "".join(parts)
+
+
+def render_custom_module_runtime_defs(ctx):
+    parts = []
     for node in nodes_of(ctx, "module.custom"):
         ident = c_ident(node["id"])
         module_type = node.get("module_type", "EFW_MODULE_CUSTOM")
@@ -417,34 +809,11 @@ static efw_algo_ops_t g_{ident}_algo = {{
 }};
 
 """)
-    module_machines = {str(node.get("id", "")): state_machines_for_module(ctx, str(node.get("id", ""))) for node in nodes_of(ctx, "project.module")}
-    module_publishers = {str(node.get("id", "")): publishers_with_auto(ctx, str(node.get("id", ""))) for node in nodes_of(ctx, "project.module")}
-    for node in nodes_of(ctx, "project.module"):
-        ident = c_ident(node["id"])
-        module_id = str(node.get("id"))
-        parts.append(f"static efw_status_t app_project_module_{ident}_poll(void *ctx) {{\n    efw_status_t s;\n    EFW_UNUSED(ctx);\n")
-        for publisher in module_publishers.get(module_id, []):
-            parts.append(f"    s = app_publish_{c_ident(publisher['id'])}_auto();\n    if (s != EFW_OK) return s;\n")
-        for machine in module_machines.get(module_id, []):
-            parts.append(f"    s = app_sm_{c_ident(machine['id'])}_tick();\n    if (s != EFW_OK) return s;\n")
-        parts.append("    return EFW_OK;\n}\n\n")
-        parts.append(f"""static efw_module_ops_t g_{ident}_project_module = {{
-    .name = {c_str(node['id'])},
-    .type = EFW_MODULE_APP,
-    .ctx = 0,
-    .poll = app_project_module_{ident}_poll,
-}};
-
-""")
-    parts.append("efw_status_t app_components_register(void) {\n    efw_status_t s;\n")
-    for node in nodes_of(ctx, "algorithm.pid") + nodes_of(ctx, "algorithm.custom"):
-        parts.append(f"    s = efw_algo_register(&g_{c_ident(node['id'])}_algo);\n    if (s != EFW_OK) return s;\n")
-    for node in nodes_of(ctx, "module.custom"):
-        parts.append(f"    s = efw_module_register(&g_{c_ident(node['id'])}_module);\n    if (s != EFW_OK) return s;\n")
-    for node in nodes_of(ctx, "project.module"):
-        parts.append(f"    s = efw_module_register(&g_{c_ident(node['id'])}_project_module);\n    if (s != EFW_OK) return s;\n")
-    parts.append("    return EFW_OK;\n}\n")
     return "".join(parts)
+
+
+def render_components_c(ctx):
+    return render_text_template("app_components.c.tpl", **components_template_values(ctx))
 
 
 def render_platform_h():
@@ -504,27 +873,35 @@ def sensor_type_expr(node):
     return mapping.get(str(node.get("sensor_type", "custom")), str(node.get("sensor_type", "EFW_SENSOR_CUSTOM")))
 
 
-def render_platform_c(ctx):
-    line_inputs = nodes_of(ctx, "hal.gpio_line_input")
-    custom_hals = nodes_of(ctx, "hal.custom")
-    line_sensors = nodes_of(ctx, "sensor.line_tracking")
-    custom_sensors = nodes_of(ctx, "sensor.custom")
-    motors = nodes_of(ctx, "actuator.motor")
-    custom_actuators = nodes_of(ctx, "actuator.custom")
-    parts = ["""
-/**
- * @file    app_platform.c
- * @brief   Generated platform layer. Replace mock read/write internals with BSP calls.
- */
+def build_hal_runtime_model(ctx):
+    model = []
+    for node in nodes_of(ctx, "hal.gpio_line_input"):
+        model.append({"node": node, "kind": "line_input", "ident": c_ident(node["id"]), "macro": macro_ident(node["id"])})
+    for node in nodes_of(ctx, "hal.custom"):
+        model.append({"node": node, "kind": "custom_hal", "ident": c_ident(node["id"])})
+    return model
 
-#include "app_platform.h"
-#include "app_manifest.h"
 
-#ifndef EFW_NULL_NAME
-#define EFW_NULL_NAME 0
-#endif
+def build_sensor_runtime_model(ctx):
+    model = []
+    for node in nodes_of(ctx, "sensor.line_tracking"):
+        model.append({"node": node, "kind": "line_sensor", "ident": c_ident(node["id"]), "input_node": ctx["nodes_by_id"][node["input"]]})
+    for node in nodes_of(ctx, "sensor.custom"):
+        model.append({"node": node, "kind": "custom_sensor", "ident": c_ident(node["id"])})
+    return model
 
-"""]
+
+def build_actuator_runtime_model(ctx):
+    model = []
+    for node in nodes_of(ctx, "actuator.motor"):
+        model.append({"node": node, "kind": "motor", "ident": c_ident(node["id"]), "macro": macro_ident(node["id"])})
+    for node in nodes_of(ctx, "actuator.custom"):
+        model.append({"node": node, "kind": "custom_actuator", "ident": c_ident(node["id"])})
+    return model
+
+
+def render_platform_type_helpers(line_inputs, line_sensors, motors):
+    parts = []
     if line_inputs:
         parts.append("""typedef struct {
     uint16_t channel[EFW_LINE_TRACKING_MAX_CHANNELS];
@@ -580,11 +957,16 @@ static efw_status_t motor_write(void *ctx, const void *cmd) {
 }
 
 """)
-    for node in custom_hals:
+    return "".join(parts)
+
+
+def render_platform_externs(ctx):
+    parts = []
+    for node in nodes_of(ctx, "hal.custom"):
         for cb, sig in [("init", "void *ctx"), ("read", "void *ctx, void *buf, uint16_t len, uint16_t *actual"), ("write", "void *ctx, const void *buf, uint16_t len, uint16_t *actual"), ("ioctl", "void *ctx, uint32_t cmd, void *arg")]:
             if node.get(cb):
                 parts.append(f"extern efw_status_t {c_ident(node[cb])}({sig});\n")
-    for node in custom_actuators:
+    for node in nodes_of(ctx, "actuator.custom"):
         parts.append(f"extern efw_status_t {c_ident(node['write'])}(void *ctx, const void *cmd);\n")
         if node.get("init"):
             parts.append(f"extern efw_status_t {c_ident(node['init'])}(void *ctx);\n")
@@ -592,14 +974,21 @@ static efw_status_t motor_write(void *ctx, const void *cmd) {
             parts.append(f"extern efw_status_t {c_ident(node['enable'])}(void *ctx);\n")
         if node.get("disable"):
             parts.append(f"extern efw_status_t {c_ident(node['disable'])}(void *ctx);\n")
-    for node in custom_sensors:
+    for node in nodes_of(ctx, "sensor.custom"):
         parts.append(f"extern efw_status_t {c_ident(node['read'])}(void *ctx, void *out);\n")
         if node.get("init"):
             parts.append(f"extern efw_status_t {c_ident(node['init'])}(void *ctx);\n")
-    for node in line_inputs:
-        ident = c_ident(node["id"])
-        macro = macro_ident(node["id"])
-        parts.append(f"""static app_line_input_ctx_t g_{ident}_ctx = {{
+    return "".join(parts)
+
+
+def render_hal_runtime_defs(hal_runtime_model):
+    parts = []
+    for item in hal_runtime_model:
+        node = item["node"]
+        ident = item["ident"]
+        if item["kind"] == "line_input":
+            macro = item["macro"]
+            parts.append(f"""static app_line_input_ctx_t g_{ident}_ctx = {{
     .channel_count = APP_{macro}_CHANNELS,
     .pins = APP_{macro}_PINS,
 }};
@@ -613,9 +1002,8 @@ static efw_hal_ops_t g_{ident}_hal = {{
 }};
 
 """)
-    for node in custom_hals:
-        ident = c_ident(node["id"])
-        parts.append(f"""static efw_hal_ops_t g_{ident}_hal = {{
+        else:
+            parts.append(f"""static efw_hal_ops_t g_{ident}_hal = {{
     .name = {c_str(node['id'])},
     .type = {hal_type_expr(node)},
     .bus_id = {int(node.get('bus_id', 0))},
@@ -627,10 +1015,17 @@ static efw_hal_ops_t g_{ident}_hal = {{
 }};
 
 """)
-    for node in line_sensors:
-        ident = c_ident(node["id"])
-        input_node = ctx["nodes_by_id"][node["input"]]
-        parts.append(f"""static efw_sensor_ops_t g_{ident}_sensor = {{
+    return "".join(parts)
+
+
+def render_sensor_runtime_defs(sensor_runtime_model):
+    parts = []
+    for item in sensor_runtime_model:
+        node = item["node"]
+        ident = item["ident"]
+        if item["kind"] == "line_sensor":
+            input_node = item["input_node"]
+            parts.append(f"""static efw_sensor_ops_t g_{ident}_sensor = {{
     .name = {c_str(node['id'])},
     .type = EFW_SENSOR_LINE_TRACKING,
     .channel_count = {int(input_node['channels'])}u,
@@ -640,9 +1035,8 @@ static efw_hal_ops_t g_{ident}_hal = {{
 }};
 
 """)
-    for node in custom_sensors:
-        ident = c_ident(node["id"])
-        parts.append(f"""static efw_sensor_ops_t g_{ident}_sensor = {{
+        else:
+            parts.append(f"""static efw_sensor_ops_t g_{ident}_sensor = {{
     .name = {c_str(node['id'])},
     .type = {sensor_type_expr(node)},
     .channel_count = {int(node.get('channel_count', 1))}u,
@@ -654,10 +1048,17 @@ static efw_hal_ops_t g_{ident}_hal = {{
 }};
 
 """)
-    for node in motors:
-        ident = c_ident(node["id"])
-        macro = macro_ident(node["id"])
-        parts.append(f"""static app_motor_ctx_t g_{ident}_ctx = {{
+    return "".join(parts)
+
+
+def render_actuator_runtime_defs(actuator_runtime_model):
+    parts = []
+    for item in actuator_runtime_model:
+        node = item["node"]
+        ident = item["ident"]
+        if item["kind"] == "motor":
+            macro = item["macro"]
+            parts.append(f"""static app_motor_ctx_t g_{ident}_ctx = {{
     .pwm = APP_{macro}_PWM,
     .dir_pin = APP_{macro}_DIR,
 }};
@@ -670,9 +1071,8 @@ static efw_actuator_ops_t g_{ident}_motor = {{
 }};
 
 """)
-    for node in custom_actuators:
-        ident = c_ident(node["id"])
-        parts.append(f"""static efw_actuator_ops_t g_{ident}_actuator = {{
+        else:
+            parts.append(f"""static efw_actuator_ops_t g_{ident}_actuator = {{
     .name = {c_str(node['id'])},
     .type = {actuator_type_expr(node)},
     .hal_name = {c_str(node.get('hal_name'))},
@@ -685,27 +1085,52 @@ static efw_actuator_ops_t g_{ident}_motor = {{
 }};
 
 """)
-    parts.append("efw_status_t app_platform_register(void) {\n    efw_status_t s;\n")
-    for node in line_inputs + custom_hals:
-        parts.append(f"    s = efw_hal_register(&g_{c_ident(node['id'])}_hal);\n    if (s != EFW_OK) return s;\n")
-    for node in line_sensors + custom_sensors:
-        parts.append(f"    s = efw_sensor_register(&g_{c_ident(node['id'])}_sensor);\n    if (s != EFW_OK) return s;\n")
-    for node in motors:
-        parts.append(f"    s = efw_actuator_register(&g_{c_ident(node['id'])}_motor);\n    if (s != EFW_OK) return s;\n")
-    for node in custom_actuators:
-        parts.append(f"    s = efw_actuator_register(&g_{c_ident(node['id'])}_actuator);\n    if (s != EFW_OK) return s;\n")
-    parts.append("    return EFW_OK;\n}\n\n")
-    parts.append("void app_platform_set_line_state(const char *input_name, const uint16_t *values, uint8_t count) {\n    if (!input_name || !values) return;\n")
-    if not line_inputs:
-        parts.append("    (void)count;\n")
-    for node in line_inputs:
-        ident = c_ident(node["id"])
-        parts.append(f"    if (app_name_eq(input_name, {c_str(node['id'])})) {{\n        uint8_t n = (count < g_{ident}_ctx.channel_count) ? count : g_{ident}_ctx.channel_count;\n        for (uint8_t i = 0; i < n; ++i) g_{ident}_ctx.channel[i] = values[i];\n        return;\n    }}\n")
-    parts.append("}\n")
     return "".join(parts)
 
 
+def render_platform_registrations(hal_runtime_model, sensor_runtime_model, actuator_runtime_model):
+    parts = ["efw_status_t app_platform_register(void) {\n    efw_status_t s;\n"]
+    for item in hal_runtime_model:
+        parts.append(f"    s = efw_hal_register(&g_{item['ident']}_hal);\n    if (s != EFW_OK) return s;\n")
+    for item in sensor_runtime_model:
+        parts.append(f"    s = efw_sensor_register(&g_{item['ident']}_sensor);\n    if (s != EFW_OK) return s;\n")
+    for item in actuator_runtime_model:
+        suffix = 'motor' if item['kind'] == 'motor' else 'actuator'
+        parts.append(f"    s = efw_actuator_register(&g_{item['ident']}_{suffix});\n    if (s != EFW_OK) return s;\n")
+    parts.append("    return EFW_OK;\n}\n\n")
+    return "".join(parts)
+
+
+def platform_template_values(ctx):
+    line_inputs = nodes_of(ctx, "hal.gpio_line_input")
+    line_sensors = nodes_of(ctx, "sensor.line_tracking")
+    motors = nodes_of(ctx, "actuator.motor")
+    hal_runtime_model = build_hal_runtime_model(ctx)
+    sensor_runtime_model = build_sensor_runtime_model(ctx)
+    actuator_runtime_model = build_actuator_runtime_model(ctx)
+    line_state_body = []
+    if not line_inputs:
+        line_state_body.append("    (void)count;\n")
+    for node in line_inputs:
+        ident = c_ident(node["id"])
+        line_state_body.append(f"    if (app_name_eq(input_name, {c_str(node['id'])})) {{\n        uint8_t n = (count < g_{ident}_ctx.channel_count) ? count : g_{ident}_ctx.channel_count;\n        for (uint8_t i = 0; i < n; ++i) g_{ident}_ctx.channel[i] = values[i];\n        return;\n    }}\n")
+    return {
+        "TYPE_HELPERS": render_platform_type_helpers(line_inputs, line_sensors, motors),
+        "EXTERNS": render_platform_externs(ctx),
+        "HAL_DEFS": render_hal_runtime_defs(hal_runtime_model),
+        "SENSOR_DEFS": render_sensor_runtime_defs(sensor_runtime_model),
+        "ACTUATOR_DEFS": render_actuator_runtime_defs(actuator_runtime_model),
+        "REGISTRATIONS": render_platform_registrations(hal_runtime_model, sensor_runtime_model, actuator_runtime_model),
+        "LINE_STATE_BODY": "".join(line_state_body),
+    }
+
+
+def render_platform_c(ctx):
+    return render_text_template("app_platform.c.tpl", **platform_template_values(ctx))
+
+
 def render_bootstrap_h(ctx):
+    state_runtime_model = build_state_runtime_model(ctx)
     lines = ["""
 /**
  * @file    app_bootstrap.h
@@ -751,30 +1176,14 @@ uint16_t app_current_event_size(void);
             lines.append(f"efw_status_t app_source_{ident}_store_value({c_type} value);\n")
     if nodes_of(ctx, "event.publisher"):
         lines.append("\n")
-    for machine_id in states_by_machine(ctx):
-        ident = c_ident(machine_id)
-        lines.append(f"efw_status_t app_sm_{ident}_tick(void);\n")
-        lines.append(f"efw_status_t app_sm_{ident}_dispatch_event(const char *event_name, uint16_t topic_id, const void *data, uint16_t size);\n")
-        lines.append(f"efw_status_t app_sm_{ident}_transition_to(const char *state_name);\n")
-        lines.append(f"const char *app_sm_{ident}_current_state(void);\n")
+    lines.append(render_state_api_declarations(state_runtime_model))
     lines.append("\n#endif\n")
     return "".join(lines)
 
-
-
-def states_by_machine(ctx):
-    result = {}
-    for machine in nodes_of(ctx, "state.machine"):
-        states = [node for node in nodes_of(ctx, "state.state") if node.get("machine") == machine["id"]]
-        transitions = [node for node in nodes_of(ctx, "state.transition") if node.get("machine") == machine["id"]]
-        result[machine["id"]] = {"machine": machine, "states": states, "transitions": transitions}
-    return result
-
-
 def render_state_logic_blocks(ctx):
     parts = []
-    machines = states_by_machine(ctx)
-    if machines:
+    state_runtime = build_state_runtime_model(ctx)
+    if state_runtime:
         parts.append("static efw_status_t app_noop_status(void *ctx) { EFW_UNUSED(ctx); return EFW_OK; }\n")
         parts.append("static uint8_t app_bootstrap_name_eq(const char *a, const char *b) { if (!a || !b) return 0u; while (*a && *b) { if (*a != *b) return 0u; ++a; ++b; } return (*a == *b) ? 1u : 0u; }\n")
         parts.append("static uint8_t app_bootstrap_event_matches(const char *trigger, const char *event_name, uint16_t topic_id) {\n")
@@ -793,71 +1202,8 @@ def render_state_logic_blocks(ctx):
             parts.append(f"extern efw_status_t {c_ident(node['action'])}(void);\n")
     if parts:
         parts.append("\n")
-    for mid, bundle in machines.items():
-        m_ident = c_ident(mid)
-        states = bundle["states"]
-        index = {state["id"]: i for i, state in enumerate(states)}
-        for state in states:
-            s_ident = c_ident(state["id"])
-            parts.append(f"static efw_state_machine_ops_t g_state_{s_ident} = {{\n")
-            parts.append(f"    .name = {c_str(state['id'])},\n    .ctx = 0,\n")
-            parts.append(f"    .on_enter = {c_ident(state['on_enter']) if state.get('on_enter') else '0'},\n")
-            parts.append(f"    .on_tick = {c_ident(state['on_update']) if state.get('on_update') else 'app_noop_status'},\n")
-            parts.append(f"    .on_exit = {c_ident(state['on_exit']) if state.get('on_exit') else '0'},\n}};\n")
-        parts.append(f"static efw_state_machine_ops_t *g_{m_ident}_states[] = {{ {', '.join('&g_state_' + c_ident(s['id']) for s in states)} }};\n")
-        parts.append(f"static const char *g_{m_ident}_state_names[] = {{ {', '.join(c_str(s['id']) for s in states)} }};\n")
-        initial = bundle["machine"].get("initial") or (states[0]["id"] if states else "")
-        parts.append(f"static uint8_t g_{m_ident}_current = {index.get(initial, 0)}u;\n")
-        parts.append(f"static uint32_t g_{m_ident}_entered_ms;\n")
-        parts.append(f"static efw_status_t app_sm_{m_ident}_transition_index(uint8_t to_idx, efw_status_t (*action)(void)) {{\n    efw_status_t s;\n    if (to_idx >= {len(states)}u) return EFW_ERR_INVALID;\n")
-        if states:
-            parts.append(f"    if (g_{m_ident}_states[g_{m_ident}_current]->on_exit) {{ s = g_{m_ident}_states[g_{m_ident}_current]->on_exit(g_{m_ident}_states[g_{m_ident}_current]->ctx); if (s != EFW_OK) return s; }}\n")
-        parts.append("    if (action) { s = action(); if (s != EFW_OK) return s; }\n")
-        parts.append(f"    g_{m_ident}_current = to_idx;\n    g_{m_ident}_entered_ms = g_app_elapsed_ms;\n")
-        if states:
-            parts.append(f"    if (g_{m_ident}_states[g_{m_ident}_current]->on_enter) {{ s = g_{m_ident}_states[g_{m_ident}_current]->on_enter(g_{m_ident}_states[g_{m_ident}_current]->ctx); if (s != EFW_OK) return s; }}\n")
-        parts.append("    return EFW_OK;\n}\n")
-        parts.append(f"static efw_status_t app_{m_ident}_register(void) {{\n    efw_status_t s;\n")
-        for state in states:
-            parts.append(f"    s = efw_sm_register(&g_state_{c_ident(state['id'])});\n    if (s != EFW_OK) return s;\n")
-        if states:
-            parts.append(f"    if (g_{m_ident}_states[g_{m_ident}_current]->on_enter) {{ s = g_{m_ident}_states[g_{m_ident}_current]->on_enter(g_{m_ident}_states[g_{m_ident}_current]->ctx); if (s != EFW_OK) return s; }}\n")
-            parts.append(f"    g_{m_ident}_entered_ms = g_app_elapsed_ms;\n")
-        parts.append("    return EFW_OK;\n}\n")
-        parts.append(f"const char *app_sm_{m_ident}_current_state(void) {{\n    return g_{m_ident}_state_names[g_{m_ident}_current];\n}}\n")
-        parts.append(f"efw_status_t app_sm_{m_ident}_transition_to(const char *state_name) {{\n")
-        for state in states:
-            parts.append(f"    if (app_bootstrap_name_eq(state_name, {c_str(state['id'])})) return app_sm_{m_ident}_transition_index({index.get(state['id'], 0)}u, 0);\n")
-        parts.append("    return EFW_ERR_NOT_FOUND;\n}\n")
-        parts.append(f"efw_status_t app_sm_{m_ident}_dispatch_event(const char *event_name, uint16_t topic_id, const void *data, uint16_t size) {{\n    efw_status_t s;\n    EFW_UNUSED(data);\n    EFW_UNUSED(size);\n")
-        if states:
-            ordered_transitions = sorted(bundle["transitions"], key=lambda item: int(item.get("priority", 0)))
-            eventful = [transition for transition in ordered_transitions if str(transition.get("event_trigger", "")).strip()]
-            for transition in eventful:
-                from_idx = index.get(transition.get("from"), 0)
-                to_idx = index.get(transition.get("to"), 0)
-                cond = c_ident(transition["condition"]) + "()"
-                action = c_ident(transition["action"]) if transition.get("action") else "0"
-                parts.append(f"    if (g_{m_ident}_current == {from_idx}u && app_bootstrap_event_matches({c_str(transition.get('event_trigger'))}, event_name, topic_id) && ({cond})) return app_sm_{m_ident}_transition_index({to_idx}u, {action});\n")
-        parts.append("    return EFW_ERR_NOT_FOUND;\n}\n")
-        parts.append(f"efw_status_t app_sm_{m_ident}_tick(void) {{\n    efw_status_t s;\n")
-        if states:
-            parts.append(f"    s = g_{m_ident}_states[g_{m_ident}_current]->on_tick(g_{m_ident}_states[g_{m_ident}_current]->ctx);\n    if (s != EFW_OK) return s;\n")
-            ordered_transitions = sorted(bundle["transitions"], key=lambda item: int(item.get("priority", 0)))
-            for transition in ordered_transitions:
-                if str(transition.get("event_trigger", "")).strip():
-                    continue
-                cond_parts = [c_ident(transition["condition"]) + "()"]
-                timeout_ms = int(transition.get("timeout_ms", 0))
-                if timeout_ms > 0:
-                    cond_parts.append(f"((g_app_elapsed_ms - g_{m_ident}_entered_ms) >= {timeout_ms}u)")
-                cond = " && ".join(cond_parts)
-                from_idx = index.get(transition.get("from"), 0)
-                to_idx = index.get(transition.get("to"), 0)
-                action = c_ident(transition["action"]) if transition.get("action") else "0"
-                parts.append(f"    if (g_{m_ident}_current == {from_idx}u && ({cond})) {{\n")
-                parts.append(f"        return app_sm_{m_ident}_transition_index({to_idx}u, {action});\n    }}\n")
-        parts.append("    return EFW_OK;\n}\n\n")
+    for machine_runtime in state_runtime:
+        parts.append(render_state_machine_bundle(machine_runtime))
     for node in nodes_of(ctx, "processor.custom"):
         if node.get("process"):
             process = c_ident(node["process"])
@@ -925,170 +1271,25 @@ def render_contract_size_checks(ctx):
     return "\n".join(lines) + "\n\n"
 
 
-def render_bootstrap_c(ctx):
-    parts = ["""
-/**
- * @file    app_bootstrap.c
- * @brief   Generated runtime glue, flow bind, and 1 ms scheduler.
- */
-
-#include "app_bootstrap.h"
-
-#include "app_components.h"
-#include "app_manifest.h"
-#include "app_platform.h"
-#include "efw/app/runtime.h"
-#include <string.h>
-
-#if APP_USE_HAL
-static const efw_hal_ops_t *g_hal_pool[APP_HAL_COUNT];
-#endif
-#if APP_USE_SENSOR
-static const efw_sensor_ops_t *g_sensor_pool[APP_SENSOR_COUNT];
-#endif
-#if APP_USE_ACTUATOR
-static const efw_actuator_ops_t *g_actuator_pool[APP_ACTUATOR_COUNT];
-#endif
-#if APP_USE_ALGORITHM
-static const efw_algo_ops_t *g_algo_pool[APP_ALGO_COUNT];
-#endif
-#if APP_USE_MODULE
-static const efw_module_ops_t *g_module_pool[APP_MODULE_COUNT];
-#endif
-
-static uint32_t g_app_elapsed_ms;
-static const char *g_app_event_name;
-static uint16_t g_app_event_topic_id;
-static const void *g_app_event_data;
-static uint16_t g_app_event_size;
-
-#define APP_EVENT_QUEUE_CAPACITY 8u
-typedef struct {
-    const char *event_name;
-    uint16_t topic_id;
-    const void *data;
-    uint16_t size;
-} app_pending_event_t;
-
-static app_pending_event_t g_app_event_queue[APP_EVENT_QUEUE_CAPACITY];
-static uint8_t g_app_event_head;
-static uint8_t g_app_event_tail;
-static uint8_t g_app_event_count;
-
-typedef union {
-    uint8_t raw[APP_DATAFLOW_BUFFER_SIZE];
-    float align_f;
-    uint32_t align_u32;
-    void *align_ptr;
-} app_dataflow_buffer_t;
-
-"""]
-    parts.append(render_contract_size_checks(ctx))
-    parts.append(render_state_logic_blocks(ctx))
-    parts.append(render_dataflow_pipelines(ctx))
+def bootstrap_template_values(ctx):
+    publisher_model = build_publisher_runtime_model(ctx)
+    state_runtime = build_state_runtime_model(ctx)
+    line_follower_defs = []
     for flow in ctx["flows"]:
         ident = c_ident(flow["id"])
         weights = ", ".join(c_float(value) for value in flow["weights"])
-        parts.append(f"static efw_line_follower_t g_{ident};\n")
-        parts.append(f"static const float g_{ident}_weights[] = {{ {weights} }};\n")
-    for source_id in sorted({str(node.get("source")) for node in nodes_of(ctx, "event.publisher") if node.get("source")}):
-        ident = c_ident(source_id)
-        parts.append(f"static app_dataflow_buffer_t g_{ident}_pub_cache;\n")
-        parts.append(f"static uint16_t g_{ident}_pub_cache_size;\n")
-        parts.append(f"static uint8_t g_{ident}_pub_cache_valid;\n")
-        parts.append(f"static void app_cache_source_{ident}(const void *data, uint16_t size) {{\n")
-        parts.append(f"    if (!data || size == 0u) return;\n")
-        parts.append(f"    if (size > APP_DATAFLOW_BUFFER_SIZE) size = APP_DATAFLOW_BUFFER_SIZE;\n")
-        parts.append(f"    memcpy(g_{ident}_pub_cache.raw, data, size);\n")
-        parts.append(f"    g_{ident}_pub_cache_size = size;\n")
-        parts.append(f"    g_{ident}_pub_cache_valid = 1u;\n")
-        parts.append("}\n")
-    for node in nodes_of(ctx, "event.publisher"):
-        ident = c_ident(node["id"])
-        parts.append(f"static app_dataflow_buffer_t g_{ident}_last_pub;\n")
-        parts.append(f"static uint16_t g_{ident}_last_pub_size;\n")
-        parts.append(f"static uint8_t g_{ident}_last_pub_valid;\n")
-        parts.append(f"static uint32_t g_{ident}_last_pub_ms;\n")
-        parts.append(f"static efw_status_t app_publish_{ident}_auto_commit(uint16_t topic_id, const void *data, uint16_t size, uint32_t min_interval_ms) {{\n")
-        parts.append("    if (!data || size == 0u) return EFW_ERR_INVALID;\n")
-        parts.append("    if (min_interval_ms > 0u && (g_app_elapsed_ms - g_")
-        parts.append(f"{ident}_last_pub_ms) < min_interval_ms) return EFW_OK;\n")
-        parts.append(f"    if (g_{ident}_last_pub_valid && g_{ident}_last_pub_size == size && size <= APP_DATAFLOW_BUFFER_SIZE && memcmp(g_{ident}_last_pub.raw, data, size) == 0) return EFW_OK;\n")
-        parts.append(f"    if (size <= APP_DATAFLOW_BUFFER_SIZE) memcpy(g_{ident}_last_pub.raw, data, size);\n")
-        parts.append(f"    g_{ident}_last_pub_size = size;\n")
-        parts.append(f"    g_{ident}_last_pub_valid = (uint8_t)(size <= APP_DATAFLOW_BUFFER_SIZE);\n")
-        parts.append(f"    g_{ident}_last_pub_ms = g_app_elapsed_ms;\n")
-        parts.append("    return efw_topic_publish(topic_id, data, size);\n}\n")
-    parts.append("\n")
+        line_follower_defs.append(f"static efw_line_follower_t g_{ident};\n")
+        line_follower_defs.append(f"static const float g_{ident}_weights[] = {{ {weights} }};\n")
+    subscriber_externs = []
     for task in ctx["tasks"]:
         if task.get("call"):
-            parts.append(f"extern efw_status_t {c_ident(task['call'])}(void);\n")
+            subscriber_externs.append(f"extern efw_status_t {c_ident(task['call'])}(void);\n")
     for node in nodes_of(ctx, "event.subscriber"):
-        parts.append(f"extern void {c_ident(node['callback'])}(uint16_t topic_id, const void *data, uint16_t size, void *user);\n")
-    if nodes_of(ctx, "event.publisher"):
-        parts.append("\n")
-    for node in nodes_of(ctx, "event.publisher"):
-        ident = c_ident(node["id"])
-        topic_id = event_topic_id(ctx, node["topic"])
-        interval_ms = int(node.get("interval_ms", 0) or 0)
-        parts.append(f"efw_status_t app_publish_{ident}(const void *data, uint16_t size) {{\n    return efw_topic_publish({topic_id}u, data, size);\n}}\n")
-        c_type = publisher_payload_c_type(ctx, node)
-        if c_type not in {"", "custom"}:
-            parts.append(f"efw_status_t app_publish_{ident}_typed(const {c_type} *value) {{\n    return efw_topic_publish({topic_id}u, value, (uint16_t)sizeof({c_type}));\n}}\n")
-            parts.append(f"efw_status_t app_publish_{ident}_value({c_type} value) {{\n    return app_publish_{ident}_typed(&value);\n}}\n")
-        if node.get("data_expr") and node.get("size_expr"):
-            parts.append(f"efw_status_t app_publish_{ident}_auto(void) {{\n    return app_publish_{ident}_auto_commit({topic_id}u, {node.get('data_expr')}, {node.get('size_expr')}, {interval_ms}u);\n}}\n")
-        elif node.get("source"):
-            source = ctx["nodes_by_id"].get(node.get("source"))
-            source_ident = c_ident(str(node.get("source")))
-            size_expr = publisher_payload_size_expr(ctx, node)
-            if source and source.get("type") in {"sensor.custom", "sensor.line_tracking"}:
-                parts.append(f"efw_status_t app_publish_{ident}_auto(void) {{\n    efw_status_t s;\n    s = efw_sensor_read({c_str(source['id'])}, g_{source_ident}_pub_cache.raw);\n    if (s != EFW_OK) return s;\n    g_{source_ident}_pub_cache_size = {size_expr};\n    g_{source_ident}_pub_cache_valid = 1u;\n    return app_publish_{ident}_auto_commit({topic_id}u, g_{source_ident}_pub_cache.raw, g_{source_ident}_pub_cache_size, {interval_ms}u);\n}}\n")
-            elif source and source.get("type") == "processor.custom":
-                parts.append(f"efw_status_t app_publish_{ident}_auto(void) {{\n    if (!g_{source_ident}_pub_cache_valid) return EFW_ERR_NOT_READY;\n    return app_publish_{ident}_auto_commit({topic_id}u, g_{source_ident}_pub_cache.raw, g_{source_ident}_pub_cache_size, {interval_ms}u);\n}}\n")
-            elif source and source.get("type") == "module.custom":
-                parts.append(f"efw_status_t app_publish_{ident}_auto(void) {{\n    if (!g_{source_ident}_pub_cache_valid) return EFW_ERR_NOT_READY;\n    return app_publish_{ident}_auto_commit({topic_id}u, g_{source_ident}_pub_cache.raw, g_{source_ident}_pub_cache_size, {interval_ms}u);\n}}\n")
-    for source_id in sorted({str(node.get("source")) for node in nodes_of(ctx, "event.publisher") if node.get("source") and ctx.get("nodes_by_id", {}).get(node.get("source"), {}).get("type") == "module.custom"}):
-        ident = c_ident(source_id)
-        c_type = source_cache_c_type(ctx, source_id)
-        parts.append(f"efw_status_t app_source_{ident}_store(const void *data, uint16_t size) {{\n    if (!data || size == 0u) return EFW_ERR_INVALID;\n    app_cache_source_{ident}(data, size);\n    return EFW_OK;\n}}\n")
-        if c_type not in {"", "custom"}:
-            parts.append(f"efw_status_t app_source_{ident}_store_typed(const {c_type} *value) {{\n    if (!value) return EFW_ERR_INVALID;\n    return app_source_{ident}_store(value, (uint16_t)sizeof({c_type}));\n}}\n")
-            parts.append(f"efw_status_t app_source_{ident}_store_value({c_type} value) {{\n    return app_source_{ident}_store_typed(&value);\n}}\n")
-    if nodes_of(ctx, "event.publisher"):
-        parts.append("\n")
-    parts.append("""
-static efw_status_t app_init_pools(void) {
-    efw_status_t s;
-#if APP_USE_HAL
-    s = efw_hal_registry_init_pool(g_hal_pool, APP_HAL_COUNT);
-    if (s != EFW_OK) return s;
-#endif
-#if APP_USE_SENSOR
-    s = efw_sensor_registry_init_pool(g_sensor_pool, APP_SENSOR_COUNT);
-    if (s != EFW_OK) return s;
-#endif
-#if APP_USE_ACTUATOR
-    s = efw_actuator_registry_init_pool(g_actuator_pool, APP_ACTUATOR_COUNT);
-    if (s != EFW_OK) return s;
-#endif
-#if APP_USE_ALGORITHM
-    s = efw_algo_registry_init_pool(g_algo_pool, APP_ALGO_COUNT);
-    if (s != EFW_OK) return s;
-#endif
-#if APP_USE_MODULE
-    s = efw_module_registry_init_pool(g_module_pool, APP_MODULE_COUNT);
-    if (s != EFW_OK) return s;
-#endif
-    return EFW_OK;
-}
-
-static efw_status_t app_bind_handles(void) {
-    efw_status_t s;
-""")
+        subscriber_externs.append(f"extern void {c_ident(node['callback'])}(uint16_t topic_id, const void *data, uint16_t size, void *user);\n")
+    bind_lines = ["static efw_status_t app_bind_handles(void) {\n    efw_status_t s;\n"]
     for flow in ctx["flows"]:
         ident = c_ident(flow["id"])
-        parts.append(f"""    const efw_line_follower_config_t {ident}_config = {{
+        bind_lines.append(f"""    const efw_line_follower_config_t {ident}_config = {{
         .sensor_name = {c_str(flow['sensor'])},
         .pid_name = {c_str(flow['pid'])},
         .left_motor = {c_str(flow['left_motor'])},
@@ -1105,151 +1306,25 @@ static efw_status_t app_bind_handles(void) {
     if (s != EFW_OK) return s;
 """)
     for node in nodes_of(ctx, "event.subscriber"):
-        parts.append(f"    s = efw_topic_subscribe({event_topic_id(ctx, node['topic'])}u, {c_ident(node['callback'])}, {node.get('user', '0')});\n    if (s != EFW_OK) return s;\n")
-    for machine_id in states_by_machine(ctx):
-        parts.append(f"    s = app_{c_ident(machine_id)}_register();\n    if (s != EFW_OK) return s;\n")
-    parts.append("    return EFW_OK;\n}\n\n")
-    parts.append("static efw_status_t app_update_1ms(void) {\n    efw_status_t s;\n    g_app_elapsed_ms += APP_PROJECT_TICK_MS;\n    /* Scheduler order: generated dataflow pipelines -> line_follower flows -> tasks -> root auto-publish -> root state machines -> queued events -> module poll_all. */\n    /* Dataflow pipelines are independent leaf paths discovered from graph.edges; use tasks/modules for explicit cross-pipeline ordering. */\n")
-    if dataflow_paths(ctx):
-        parts.append("    /* 1. Generated runtime dataflow pipelines. */\n")
-    for index, path in enumerate(dataflow_paths(ctx), start=1):
-        names = [c_ident(node_id) for node_id in path]
-        fn = "app_dataflow_" + "_".join(names[:4])
-        if len(names) > 4:
-            fn += f"_{index}"
-        period = dataflow_period_ms(ctx, path)
-        condition = "1" if period <= int(ctx["project"].get("tick_ms", 1)) else f"(g_app_elapsed_ms % {period}u) == 0u"
-        parts.append(f"    if ({condition}) {{\n        s = {fn}();\n        if (s != EFW_OK) return s;\n    }}\n")
-    flow_tasks = {task.get("flow") for task in ctx["tasks"] if task.get("flow")}
-    if ctx["flows"]:
-        parts.append("    /* 2. control.line_follower flows not owned by task.periodic. */\n")
-    for flow in ctx["flows"]:
-        if flow["id"] in flow_tasks:
-            continue
-        ident = c_ident(flow["id"])
-        period = int(flow.get("period_ms", ctx["project"].get("tick_ms", 1)))
-        condition = "1" if period <= int(ctx["project"].get("tick_ms", 1)) else f"(g_app_elapsed_ms % {period}u) == 0u"
-        parts.append(f"    if ({condition}) {{\n        s = efw_line_follower_update(&g_{ident}, 0, 0);\n        if (s != EFW_OK) return s;\n    }}\n")
-    if ctx["tasks"]:
-        parts.append("    /* 3. Explicit task.periodic entries. */\n")
-    for task in ctx["tasks"]:
-        period = int(task.get("period_ms", ctx["project"].get("tick_ms", 1)))
-        condition = "1" if period <= int(ctx["project"].get("tick_ms", 1)) else f"(g_app_elapsed_ms % {period}u) == 0u"
-        if task.get("call"):
-            parts.append(f"    if ({condition}) {{\n        s = {c_ident(task['call'])}();\n        if (s != EFW_OK) return s;\n    }}\n")
-        elif task.get("flow"):
-            ident = c_ident(task["flow"])
-            parts.append(f"    if ({condition}) {{\n        s = efw_line_follower_update(&g_{ident}, 0, 0);\n        if (s != EFW_OK) return s;\n    }}\n")
-    root_publishers = publishers_with_auto(ctx, None)
-    if root_publishers:
-        parts.append("    /* 4. Root-scope auto publishers. */\n")
-        for node in root_publishers:
-            parts.append(f"    s = app_publish_{c_ident(node['id'])}_auto();\n    if (s != EFW_OK) return s;\n")
-    root_machines = state_machines_for_module(ctx, None)
-    if root_machines:
-        parts.append("    /* 5. Root-scope state-machine ticks. */\n")
-        for machine in root_machines:
-            parts.append(f"    s = app_sm_{c_ident(machine['id'])}_tick();\n    if (s != EFW_OK) return s;\n")
-    parts.append("    /* 6. Deferred event queue dispatch. */\n")
-    parts.append("    s = app_process_event_queue();\n    if (s != EFW_OK) return s;\n")
-    if nodes_of(ctx, "module.custom") or nodes_of(ctx, "project.module"):
-        parts.append("    /* 7. Module lifecycle poll_all. */\n")
-        parts.append("    s = efw_module_poll_all();\n    if (s != EFW_OK) return s;\n")
-    parts.append("    return EFW_OK;\n}\n\n")
-    parts.append("""static const efw_app_manifest_t g_app_manifest = {
-    .init_pools = app_init_pools,
-    .register_platform = app_platform_register,
-    .register_components = app_components_register,
-    .bind_handles = app_bind_handles,
-    .update_1ms = app_update_1ms,
-};
-
-efw_status_t app_init(void) {
-    efw_status_t s = efw_app_init(&g_app_manifest);
-    if (s != EFW_OK) return s;
-#if APP_USE_MODULE
-    s = efw_module_init_all();
-    if (s != EFW_OK) return s;
-    s = efw_module_start_all();
-    if (s != EFW_OK) return s;
-#endif
-    return EFW_OK;
-}
-
-efw_status_t app_loop_tick(void) {
-    return efw_app_update_1ms(&g_app_manifest);
-}
-
-efw_status_t app_loop_1ms(void) {
-    return app_loop_tick();
-}
-
-efw_status_t app_post_event(const char *event_name, uint16_t topic_id, const void *data, uint16_t size) {
-    if (!event_name && topic_id == 0u) return EFW_ERR_INVALID;
-    if (g_app_event_count >= APP_EVENT_QUEUE_CAPACITY) return EFW_ERR_FULL;
-    g_app_event_queue[g_app_event_tail].event_name = event_name;
-    g_app_event_queue[g_app_event_tail].topic_id = topic_id;
-    g_app_event_queue[g_app_event_tail].data = data;
-    g_app_event_queue[g_app_event_tail].size = size;
-    g_app_event_tail = (uint8_t)((g_app_event_tail + 1u) % APP_EVENT_QUEUE_CAPACITY);
-    g_app_event_count++;
-    return EFW_OK;
-}
-
-const char *app_current_event_name(void) { return g_app_event_name; }
-uint16_t app_current_event_topic_id(void) { return g_app_event_topic_id; }
-const void *app_current_event_data(void) { return g_app_event_data; }
-uint16_t app_current_event_size(void) { return g_app_event_size; }
-
-efw_status_t app_dispatch_event(const char *event_name, uint16_t topic_id, const void *data, uint16_t size) {
-    efw_status_t s;
-    uint8_t handled = 0u;
-    if (!event_name && topic_id == 0u) return EFW_ERR_INVALID;
-    g_app_event_name = event_name;
-    g_app_event_topic_id = topic_id;
-    g_app_event_data = data;
-    g_app_event_size = size;
-    if (topic_id != 0u) {
-        s = efw_topic_publish(topic_id, data, size);
-        if (s != EFW_OK) return s;
-        handled = 1u;
+        bind_lines.append(f"    s = efw_topic_subscribe({event_topic_id(ctx, node['topic'])}u, {c_ident(node['callback'])}, {node.get('user', '0')});\n    if (s != EFW_OK) return s;\n")
+    for machine_runtime in state_runtime:
+        bind_lines.append(f"    s = app_{machine_runtime['ident']}_register();\n    if (s != EFW_OK) return s;\n")
+    bind_lines.append("    return EFW_OK;\n}\n\n")
+    return {
+        "CONTRACT_SIZE_CHECKS": render_contract_size_checks(ctx),
+        "STATE_LOGIC_BLOCKS": render_state_logic_blocks(ctx),
+        "DATAFLOW_PIPELINES": render_dataflow_pipelines(ctx),
+        "LINE_FOLLOWER_DEFS": "".join(line_follower_defs),
+        "PUBLISHER_RUNTIME": render_publisher_runtime(ctx, publisher_model),
+        "EXTERNS": "".join(subscriber_externs),
+        "BIND_HANDLES": "".join(bind_lines),
+        "SCHEDULER_RUNTIME": render_scheduler_runtime(ctx, state_runtime, publisher_model),
+        "EVENT_QUEUE_RUNTIME": render_event_queue_runtime(state_runtime),
     }
-""")
-    for machine_id in states_by_machine(ctx):
-        ident = c_ident(machine_id)
-        parts.append(f"    s = app_sm_{ident}_dispatch_event(event_name, topic_id, data, size);\n")
-        parts.append("    if (s == EFW_OK) { handled = 1u; continue; }\n")
-        parts.append("    if (s != EFW_ERR_NOT_FOUND) return s;\n")
-    parts.append("""
-    return handled ? EFW_OK : EFW_ERR_NOT_FOUND;
-}
 
-efw_status_t app_process_event_queue(void) {
-    while (g_app_event_count > 0u) {
-        app_pending_event_t item = g_app_event_queue[g_app_event_head];
-        efw_status_t s;
-        g_app_event_head = (uint8_t)((g_app_event_head + 1u) % APP_EVENT_QUEUE_CAPACITY);
-        g_app_event_count--;
-        s = app_dispatch_event(item.event_name, item.topic_id, item.data, item.size);
-        if (s != EFW_OK && s != EFW_ERR_NOT_FOUND) return s;
-    }
-    return EFW_OK;
-}
 
-efw_status_t app_poll_forever(void) {
-    for (;;) {
-        efw_status_t s = app_loop_tick();
-        if (s != EFW_OK) return s;
-    }
-}
-
-efw_status_t app_main(void) {
-    efw_status_t s = app_init();
-    if (s != EFW_OK) return s;
-    return app_poll_forever();
-}
-""")
-    return "".join(parts)
+def render_bootstrap_c(ctx):
+    return render_text_template("app_bootstrap.c.tpl", **bootstrap_template_values(ctx))
 
 
 def first_line_input(ctx):
@@ -1257,31 +1332,20 @@ def first_line_input(ctx):
     return line_inputs[0] if line_inputs else None
 
 
-def render_main_c(ctx):
+def main_template_values(ctx):
     line_input = first_line_input(ctx)
     if line_input:
         channels = int(line_input["channels"])
         centered = ["0"] * channels
         centered[channels // 2] = "1"
-        setup = f"""    const uint16_t centered_line[{channels}] = {{ {', '.join(centered)} }};
-    app_platform_set_line_state({c_str(line_input['id'])}, centered_line, {channels}u);
-"""
+        setup = f"    const uint16_t centered_line[{channels}] = {{ {', '.join(centered)} }};\n    app_platform_set_line_state({c_str(line_input['id'])}, centered_line, {channels}u);\n"
     else:
         setup = ""
-    return f"""
-/**
- * @file    main.c
- * @brief   Generated host-checkable entry point.
- */
+    return {"SETUP": setup}
 
-#include "app_bootstrap.h"
-#include "app_platform.h"
 
-int main(void) {{
-    if (app_init() != EFW_OK) return 1;
-{setup}    return (app_poll_forever() == EFW_OK) ? 0 : 1;
-}}
-"""
+def render_main_c(ctx):
+    return render_text_template("main.c.tpl", **main_template_values(ctx))
 
 
 def render_cmake(ctx):
