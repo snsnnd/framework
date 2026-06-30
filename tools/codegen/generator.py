@@ -15,46 +15,8 @@ from string import Template
 from pathlib import Path
 from typing import Any
 
+from codegen.utils import c_ident, macro_ident, c_str, c_float, c_bool, require, nodes_of, number_or_default
 from codegen.validate import BUILTIN_CONTRACTS, contract_name_for_output, validate_graph
-
-
-def c_ident(value: str, fallback: str = "app") -> str:
-    ident = re.sub(r"[^0-9A-Za-z_]", "_", value or fallback)
-    ident = re.sub(r"_+", "_", ident).strip("_") or fallback
-    if ident[0].isdigit():
-        ident = f"_{ident}"
-    return ident
-
-
-def macro_ident(value: str) -> str:
-    return c_ident(value).upper()
-
-
-def c_str(value: str | None) -> str:
-    if value is None or value == "":
-        return "0"
-    return json.dumps(str(value))
-
-
-def c_float(value) -> str:
-    number = float(value)
-    text = f"{number:.9g}"
-    if "e" not in text and "." not in text:
-        text += ".0"
-    return f"{text}f"
-
-
-def c_bool(value) -> str:
-    return "1" if bool(value) else "0"
-
-
-def require(condition: bool, message: str) -> None:
-    if not condition:
-        raise ValueError(message)
-
-
-def nodes_of(ctx, type_name):
-    return [node for node in ctx["nodes"] if node.get("type") == type_name]
 
 
 def graph_edges_of(ctx, kinds=None):
@@ -416,7 +378,7 @@ def render_publisher_runtime(ctx, publisher_model):
             source_ident = c_ident(item["source_id"])
             size_expr = item["payload_size_expr"]
             if source and source.get("type") in {"sensor.custom", "sensor.line_tracking"}:
-                parts.append(f"efw_status_t app_publish_{ident}_auto(void) {{\n    efw_status_t s;\n    s = efw_sensor_read({c_str(source['id'])}, g_{source_ident}_pub_cache.raw);\n    if (s != EFW_OK) return s;\n    g_{source_ident}_pub_cache_size = {size_expr};\n    g_{source_ident}_pub_cache_valid = 1u;\n    return app_publish_{ident}_auto_commit({topic_id}u, g_{source_ident}_pub_cache.raw, g_{source_ident}_pub_cache_size, {interval_ms}u);\n}}\n")
+                parts.append(f"efw_status_t app_publish_{ident}_auto(void) {{\n    efw_status_t s;\n    s = efw_sensor_read({c_str(source['id'])}, g_{source_ident}_pub_cache.raw, (uint16_t)APP_DATAFLOW_BUFFER_SIZE);\n    if (s != EFW_OK) return s;\n    g_{source_ident}_pub_cache_size = {size_expr};\n    g_{source_ident}_pub_cache_valid = 1u;\n    return app_publish_{ident}_auto_commit({topic_id}u, g_{source_ident}_pub_cache.raw, g_{source_ident}_pub_cache_size, {interval_ms}u);\n}}\n")
             elif source and source.get("type") in {"processor.custom", "module.custom"}:
                 parts.append(f"efw_status_t app_publish_{ident}_auto(void) {{\n    if (!g_{source_ident}_pub_cache_valid) return EFW_ERR_NOT_READY;\n    return app_publish_{ident}_auto_commit({topic_id}u, g_{source_ident}_pub_cache.raw, g_{source_ident}_pub_cache_size, {interval_ms}u);\n}}\n")
     for source_id in sorted({item["source_id"] for item in publisher_model if item["source_id"] and ctx.get("nodes_by_id", {}).get(item["source_id"], {}).get("type") == "module.custom"}):
@@ -429,61 +391,30 @@ def render_publisher_runtime(ctx, publisher_model):
     return "".join(parts)
 
 
-def render_event_queue_runtime(state_runtime):
-    parts = ["""
-efw_status_t app_post_event(const char *event_name, uint16_t topic_id, const void *data, uint16_t size) {
-    if (!event_name && topic_id == 0u) return EFW_ERR_INVALID;
-    if (g_app_event_count >= APP_EVENT_QUEUE_CAPACITY) return EFW_ERR_FULL;
-    g_app_event_queue[g_app_event_tail].event_name = event_name;
-    g_app_event_queue[g_app_event_tail].topic_id = topic_id;
-    g_app_event_queue[g_app_event_tail].data = data;
-    g_app_event_queue[g_app_event_tail].size = size;
-    g_app_event_tail = (uint8_t)((g_app_event_tail + 1u) % APP_EVENT_QUEUE_CAPACITY);
-    g_app_event_count++;
-    return EFW_OK;
-}
-
-const char *app_current_event_name(void) { return g_app_event_name; }
-uint16_t app_current_event_topic_id(void) { return g_app_event_topic_id; }
-const void *app_current_event_data(void) { return g_app_event_data; }
-uint16_t app_current_event_size(void) { return g_app_event_size; }
-
-efw_status_t app_dispatch_event(const char *event_name, uint16_t topic_id, const void *data, uint16_t size) {
+def render_event_dispatch_fn(state_runtime):
+    """Generate the dispatch callback used by efw_event_queue_process_ex."""
+    parts = ["""static void app_dispatch_event_fn(const char *event_name, uint16_t topic_id,
+                           const void *data, uint16_t size) {
     efw_status_t s;
-    uint8_t handled = 0u;
-    if (!event_name && topic_id == 0u) return EFW_ERR_INVALID;
     g_app_event_name = event_name;
     g_app_event_topic_id = topic_id;
     g_app_event_data = data;
     g_app_event_size = size;
     if (topic_id != 0u) {
-        s = efw_topic_publish(topic_id, data, size);
-        if (s != EFW_OK) return s;
-        handled = 1u;
+        efw_topic_publish(topic_id, data, size);
     }
 """]
     for machine_runtime in state_runtime:
         ident = machine_runtime["ident"]
         parts.append(f"    s = app_sm_{ident}_dispatch_event(event_name, topic_id, data, size);\n")
-        parts.append("    if (s == EFW_OK) { handled = 1u; continue; }\n")
-        parts.append("    if (s != EFW_ERR_NOT_FOUND) return s;\n")
-    parts.append("""
-    return handled ? EFW_OK : EFW_ERR_NOT_FOUND;
-}
-
-efw_status_t app_process_event_queue(void) {
-    while (g_app_event_count > 0u) {
-        app_pending_event_t item = g_app_event_queue[g_app_event_head];
-        efw_status_t s;
-        g_app_event_head = (uint8_t)((g_app_event_head + 1u) % APP_EVENT_QUEUE_CAPACITY);
-        g_app_event_count--;
-        s = app_dispatch_event(item.event_name, item.topic_id, item.data, item.size);
-        if (s != EFW_OK && s != EFW_ERR_NOT_FOUND) return s;
-    }
-    return EFW_OK;
-}
-""")
+        parts.append("    if (s == EFW_OK) return;\n")
+    parts.append("}\n")
     return "".join(parts)
+
+
+def render_event_queue_runtime(state_runtime):
+    """Legacy wrapper: generates the dispatch fn for the events template."""
+    return render_event_dispatch_fn(state_runtime)
 
 
 def render_scheduler_runtime(ctx, state_runtime, publisher_model):
@@ -602,6 +533,8 @@ def write_file(out_dir: Path, name: str, content: str) -> None:
 def render_text_template(template_name: str, **values: Any) -> str:
     template_path = Path(__file__).resolve().parent / "templates" / template_name
     template = Template(template_path.read_text(encoding="utf-8"))
+    if "AUTO_HEADER" not in values:
+        values["AUTO_HEADER"] = ""
     return template.substitute(**values)
 
 
@@ -923,6 +856,28 @@ static efw_status_t line_input_read(void *ctx, void *buf, uint16_t len, uint16_t
     app_line_input_ctx_t *input = (app_line_input_ctx_t *)ctx;
     efw_line_tracking_data_t *out = (efw_line_tracking_data_t *)buf;
     if (!input || !out || len < sizeof(efw_line_tracking_data_t)) return EFW_ERR_INVALID;
+
+    /* Hardware implementation:
+     * Read GPIO pins for each channel and store in out->value[]
+     *
+     * Example for STM32 HAL:
+     *   for (uint8_t i = 0; i < input->channel_count; ++i) {
+     *       GPIO_PinState state = HAL_GPIO_ReadPin(input->pins[i].port, 1 << input->pins[i].pin);
+     *       out->value[i] = (state == GPIO_PIN_SET) ? 1 : 0;
+     *   }
+     *
+     * Example for ESP-IDF:
+     *   for (uint8_t i = 0; i < input->channel_count; ++i) {
+     *       out->value[i] = gpio_get_level(input->pins[i].pin);
+     *   }
+     *
+     * Example for analog sensors (ADC):
+     *   for (uint8_t i = 0; i < input->channel_count; ++i) {
+     *       out->value[i] = (uint16_t)adc_read(input->pins[i].pin);
+     *   }
+     */
+
+    /* TODO: Replace with real hardware calls */
     out->count = input->channel_count;
     for (uint8_t i = 0; i < input->channel_count; ++i) {
         out->value[i] = input->channel[i];
@@ -950,7 +905,31 @@ static efw_status_t motor_write(void *ctx, const void *cmd) {
     app_motor_ctx_t *motor = (app_motor_ctx_t *)ctx;
     const efw_motor_cmd_t *motor_cmd = (const efw_motor_cmd_t *)cmd;
     if (!motor || !motor_cmd) return EFW_ERR_INVALID;
-    /* TODO(real board): speed -> PWM duty, direction -> GPIO level. */
+
+    /* Hardware implementation:
+     * 1. Set direction GPIO based on motor_cmd->direction
+     *    - direction > 0: forward (set dir_pin HIGH)
+     *    - direction < 0: reverse (set dir_pin LOW)
+     *    - direction == 0: stop
+     *
+     * 2. Set PWM duty cycle based on motor_cmd->speed
+     *    - speed range: [min_speed, max_speed]
+     *    - Convert to PWM duty: duty = |speed| / max_speed * 100%
+     *
+     * Example for STM32 HAL:
+     *   HAL_GPIO_WritePin(motor->dir_pin.port, 1 << motor->dir_pin.pin,
+     *                     motor_cmd->direction > 0 ? GPIO_PIN_SET : GPIO_PIN_RESET);
+     *   __HAL_TIM_SET_COMPARE(&htim[motor->pwm.timer_id], motor->pwm.channel,
+     *                         (uint32_t)(fabsf(motor_cmd->speed) * htim[motor->pwm.timer_id].Init.Period));
+     *
+     * Example for ESP-IDF:
+     *   gpio_set_level(motor->dir_pin.pin, motor_cmd->direction > 0 ? 1 : 0);
+     *   ledc_set_duty(LEDC_HIGH_SPEED_MODE, motor->pwm.channel,
+     *                 (uint32_t)(fabsf(motor_cmd->speed) / 100.0f * 8191));
+     *   ledc_update_duty(LEDC_HIGH_SPEED_MODE, motor->pwm.channel);
+     */
+
+    /* TODO: Replace with real hardware calls */
     motor->last_speed = motor_cmd->speed;
     motor->last_direction = motor_cmd->direction;
     return EFW_OK;
@@ -1145,7 +1124,6 @@ def render_bootstrap_h(ctx):
 efw_status_t app_init(void);
 efw_status_t app_loop_tick(void);
 efw_status_t app_loop_1ms(void);
-efw_status_t app_dispatch_event(const char *event_name, uint16_t topic_id, const void *data, uint16_t size);
 efw_status_t app_post_event(const char *event_name, uint16_t topic_id, const void *data, uint16_t size);
 efw_status_t app_process_event_queue(void);
 efw_status_t app_poll_forever(void);
@@ -1180,17 +1158,25 @@ uint16_t app_current_event_size(void);
     lines.append("\n#endif\n")
     return "".join(lines)
 
-def render_state_logic_blocks(ctx):
+def render_state_helpers(ctx):
+    """Generate helper functions needed by state machines and processors."""
     parts = []
     state_runtime = build_state_runtime_model(ctx)
-    if state_runtime:
+    has_processors = bool(nodes_of(ctx, "processor.custom"))
+    if state_runtime or has_processors:
         parts.append("static efw_status_t app_noop_status(void *ctx) { EFW_UNUSED(ctx); return EFW_OK; }\n")
         parts.append("static uint8_t app_bootstrap_name_eq(const char *a, const char *b) { if (!a || !b) return 0u; while (*a && *b) { if (*a != *b) return 0u; ++a; ++b; } return (*a == *b) ? 1u : 0u; }\n")
+    if state_runtime:
         parts.append("static uint8_t app_bootstrap_event_matches(const char *trigger, const char *event_name, uint16_t topic_id) {\n")
         parts.append("    if (trigger && event_name && trigger[0] == 'e' && trigger[1] == 'v' && trigger[2] == 'e' && trigger[3] == 'n' && trigger[4] == 't' && trigger[5] == ':' && app_bootstrap_name_eq(trigger + 6, event_name)) return 1u;\n")
         for topic in nodes_of(ctx, "event.topic"):
             parts.append(f"    if (topic_id == {event_topic_id(ctx, topic['id'])}u && app_bootstrap_name_eq(trigger, {c_str(publisher_event_trigger_match(topic['id']))})) return 1u;\n")
         parts.append("    return 0u;\n}\n")
+    return "".join(parts)
+
+def render_state_logic_blocks(ctx):
+    parts = []
+    state_runtime = build_state_runtime_model(ctx)
     for node in nodes_of(ctx, "state.state"):
         for cb, sig in [("on_enter", "void *ctx"), ("on_update", "void *ctx"), ("on_exit", "void *ctx")]:
             if node.get(cb):
@@ -1231,7 +1217,7 @@ def render_dataflow_pipelines(ctx):
         current = "buf_a.raw"
         scratch = "buf_b.raw"
         first = ctx["nodes_by_id"][path[0]]
-        parts.append(f"    s = efw_sensor_read({c_str(first['id'])}, {current});\n")
+        parts.append(f"    s = efw_sensor_read({c_str(first['id'])}, {current}, (uint16_t)APP_DATAFLOW_BUFFER_SIZE);\n")
         parts.append("    if (s != EFW_OK) return s;\n")
         if source_auto_publishers(ctx, first["id"]):
             parts.append(f"    app_cache_source_{c_ident(first['id'])}({current}, {publisher_payload_size_expr(ctx, source_auto_publishers(ctx, first['id'])[0])});\n")
@@ -1245,11 +1231,11 @@ def render_dataflow_pipelines(ctx):
                     parts.append(f"    app_cache_source_{c_ident(node['id'])}({scratch}, {publisher_payload_size_expr(ctx, source_auto_publishers(ctx, node['id'])[0])});\n")
                 current, scratch = scratch, current
             elif node_type in {"algorithm.pid", "algorithm.custom"}:
-                parts.append(f"    s = efw_algo_run({c_str(node['id'])}, {current}, {scratch});\n")
+                parts.append(f"    s = efw_algo_run({c_str(node['id'])}, {current}, (uint16_t)sizeof(efw_pid_input_t), {scratch}, (uint16_t)sizeof(efw_pid_output_t));\n")
                 parts.append("    if (s != EFW_OK) return s;\n")
                 current, scratch = scratch, current
             elif node_type in {"actuator.motor", "actuator.custom"}:
-                parts.append(f"    s = efw_actuator_write({c_str(node['id'])}, {current});\n")
+                parts.append(f"    s = efw_actuator_write({c_str(node['id'])}, {current}, (uint16_t)sizeof(efw_motor_cmd_t));\n")
                 parts.append("    if (s != EFW_OK) return s;\n")
         parts.append("    return EFW_OK;\n")
         parts.append("}\n\n")
@@ -1312,6 +1298,7 @@ def bootstrap_template_values(ctx):
     bind_lines.append("    return EFW_OK;\n}\n\n")
     return {
         "CONTRACT_SIZE_CHECKS": render_contract_size_checks(ctx),
+        "STATE_HELPERS": render_state_helpers(ctx),
         "STATE_LOGIC_BLOCKS": render_state_logic_blocks(ctx),
         "DATAFLOW_PIPELINES": render_dataflow_pipelines(ctx),
         "LINE_FOLLOWER_DEFS": "".join(line_follower_defs),
@@ -1319,12 +1306,27 @@ def bootstrap_template_values(ctx):
         "EXTERNS": "".join(subscriber_externs),
         "BIND_HANDLES": "".join(bind_lines),
         "SCHEDULER_RUNTIME": render_scheduler_runtime(ctx, state_runtime, publisher_model),
-        "EVENT_QUEUE_RUNTIME": render_event_queue_runtime(state_runtime),
+        "EVENT_DISPATCH_FN": render_event_dispatch_fn(state_runtime),
     }
 
 
 def render_bootstrap_c(ctx):
     return render_text_template("app_bootstrap.c.tpl", **bootstrap_template_values(ctx))
+
+
+def render_publishers_c(ctx):
+    values = bootstrap_template_values(ctx)
+    return render_text_template("app_publishers.c.tpl", **values)
+
+
+def render_events_c(ctx):
+    values = bootstrap_template_values(ctx)
+    return render_text_template("app_events.c.tpl", **values)
+
+
+def render_state_machines_c(ctx):
+    values = bootstrap_template_values(ctx)
+    return render_text_template("app_state_machines.c.tpl", **values)
 
 
 def first_line_input(ctx):
@@ -1352,6 +1354,17 @@ def render_cmake(ctx):
     target = c_ident(ctx["project"].get("name", "generated_app"))
     custom_c_files = [item["path"] for item in ctx["custom_files"] + ctx["board_adapters"] if item["path"].endswith(".c")]
     custom_sources = "".join(f"    {path}\n" for path in custom_c_files)
+    # Add split source files if they exist
+    state_runtime = build_state_runtime_model(ctx)
+    publisher_model = build_publisher_runtime_model(ctx)
+    extra_sources = []
+    if publisher_model or ctx.get("flows") or dataflow_paths(ctx):
+        extra_sources.append("app_publishers.c")
+    if nodes_of(ctx, "event.topic") or nodes_of(ctx, "event.publisher"):
+        extra_sources.append("app_events.c")
+    if state_runtime or nodes_of(ctx, "processor.custom"):
+        extra_sources.append("app_state_machines.c")
+    extra = "".join(f"    {src}\n" for src in extra_sources)
     return f"""
 # Optional generated-app CMake snippet.
 add_executable(efw_app_{target}
@@ -1359,7 +1372,7 @@ add_executable(efw_app_{target}
     app_bootstrap.c
     app_components.c
     app_platform.c
-{custom_sources})
+{extra}{custom_sources})
 target_include_directories(efw_app_{target} PRIVATE ${{CMAKE_CURRENT_LIST_DIR}})
 target_link_libraries(efw_app_{target} PRIVATE efw)
 """
@@ -1378,6 +1391,18 @@ def render_application_files(ctx):
         "main.c": render_main_c(ctx),
         "CMakeLists.generated.txt": render_cmake(ctx),
     }
+    # Add split files if they have content
+    state_runtime = build_state_runtime_model(ctx)
+    publisher_model = build_publisher_runtime_model(ctx)
+    has_publishers = bool(publisher_model or ctx.get("flows") or dataflow_paths(ctx))
+    has_events = bool(nodes_of(ctx, "event.topic") or nodes_of(ctx, "event.publisher"))
+    has_state_content = bool(state_runtime or nodes_of(ctx, "processor.custom"))
+    if has_publishers:
+        files["app_publishers.c"] = render_publishers_c(ctx)
+    if has_events:
+        files["app_events.c"] = render_events_c(ctx)
+    if has_state_content:
+        files["app_state_machines.c"] = render_state_machines_c(ctx)
     for item in ctx["custom_files"] + ctx["board_adapters"]:
         files[item["path"]] = item["content"]
     return files
@@ -1415,7 +1440,7 @@ def preview_application_files(graph_path: Path, out_dir: Path):
 
 def generate(graph_path: Path, out_dir: Path, force: bool) -> None:
     graph = json.loads(graph_path.read_text(encoding="utf-8"))
-    ctx = validate_graph(graph)
+    ctx = validate_graph(graph, print_warnings=True)
     if out_dir.exists() and any(out_dir.iterdir()):
         require(force, f"output directory already exists: {out_dir} (pass --force to overwrite generated files; non-generated files are preserved)")
     for rel_path, content in render_application_files(ctx).items():

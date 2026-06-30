@@ -9,16 +9,13 @@ from typing import Any
 
 import importlib.util
 
-if importlib.util.find_spec("PyQt6") is not None:
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtGui import QBrush, QColor
-    from PyQt6.QtWidgets import QCheckBox, QComboBox, QMessageBox, QPushButton, QPlainTextEdit, QTableWidgetItem, QVBoxLayout, QWidget, QLabel, QHBoxLayout
-elif importlib.util.find_spec("PyQt5") is not None:
-    from PyQt5.QtCore import Qt
-    from PyQt5.QtGui import QBrush, QColor
-    from PyQt5.QtWidgets import QCheckBox, QComboBox, QMessageBox, QPushButton, QPlainTextEdit, QTableWidgetItem, QVBoxLayout, QWidget, QLabel, QHBoxLayout
-else:
-    Qt = QBrush = QColor = QCheckBox = QComboBox = QMessageBox = QPushButton = QPlainTextEdit = QTableWidgetItem = QVBoxLayout = QWidget = QLabel = QHBoxLayout = object
+from studio.qt_compat import (
+    Qt,
+    QBrush, QColor,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
+    QMessageBox, QPushButton, QPlainTextEdit, QSpinBox, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget, QLabel, QHBoxLayout,
+)
 
 from codegen import c_ident
 from codegen.graph import NODE_CONTRACTS, callback_signature

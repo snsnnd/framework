@@ -11,31 +11,16 @@ from typing import Any
 
 import importlib.util
 
-if importlib.util.find_spec("PyQt6") is not None:
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtGui import QBrush, QColor, QFont, QFontMetrics, QKeySequence, QShortcut
-    from PyQt6.QtWidgets import (
-        QCheckBox, QComboBox, QDockWidget, QFormLayout, QGraphicsScene, QHBoxLayout,
-        QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox,
-        QMainWindow, QPlainTextEdit, QPushButton, QSplitter, QStackedWidget, QTabBar, QTabWidget,
-        QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout, QWidget,
-        QToolBox,
-    )
-    QT_LIB = "PyQt6"
-elif importlib.util.find_spec("PyQt5") is not None:
-    from PyQt5.QtCore import Qt
-    from PyQt5.QtGui import QBrush, QColor, QFont, QFontMetrics, QKeySequence
-    from PyQt5.QtWidgets import (
-        QCheckBox, QComboBox, QDockWidget, QFormLayout, QGraphicsScene, QHBoxLayout,
-        QLabel, QLineEdit, QListWidget, QListWidgetItem, QMenu, QMessageBox,
-        QMainWindow, QPlainTextEdit, QPushButton, QShortcut, QSplitter, QStackedWidget, QTabBar,
-        QTabWidget, QTableWidget, QTableWidgetItem, QToolBar, QVBoxLayout,
-        QWidget, QToolBox,
-    )
-    QT_LIB = "PyQt5"
-else:
-    QWidget = QTabWidget = QTableWidget = QDockWidget = QMainWindow = QMenu = object
-    QT_LIB = "missing"
+from studio.qt_compat import (
+    QT_LIB,
+    Qt,
+    QBrush, QColor, QFont, QFontMetrics, QKeySequence, QShortcut,
+    QCheckBox, QComboBox, QDockWidget, QFormLayout, QGraphicsScene,
+    QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
+    QMenu, QMessageBox, QMainWindow, QPlainTextEdit, QPushButton,
+    QSplitter, QStackedWidget, QTabBar, QTabWidget, QTableWidget,
+    QTableWidgetItem, QToolBar, QVBoxLayout, QWidget, QToolBox,
+)
 
 from studio.editor_canvas import (
     BlueprintView, TemplatePalette, node_theme,
@@ -217,7 +202,7 @@ class UIBuilderMixin:
         backdrop_btn = QPushButton("创建分组区域")
         backdrop_btn.clicked.connect(self.create_backdrop_from_selection)
         left_layout.addWidget(backdrop_btn)
-        left_layout.addWidget(QLabel("提示：双击画布空白处或按 Tab，可在鼠标位置快速搜索并插入节点。"))
+        # Hint: double-click canvas or press Tab to quick-add node
 
         self.left_dock = QDockWidget("资源管理器", self)
         self.left_dock.setObjectName("LeftDock")
@@ -485,7 +470,7 @@ class UIBuilderMixin:
     def _build_dashboard_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.addWidget(QLabel("项目总览：先看项目状态，再进入模块装配或生成发布。"))
+        # Dashboard
         self.dashboard_output = QPlainTextEdit()
         self.dashboard_output.setReadOnly(True)
         layout.addWidget(self.dashboard_output)
@@ -504,7 +489,7 @@ class UIBuilderMixin:
     def _build_assembly_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.addWidget(QLabel("模块装配：以模块为单位组织 HAL / Sensor / Actuator / Algorithm / Task / Event / State。"))
+        # Assembly
         self.module_list = QListWidget()
         self.module_list.itemClicked.connect(self.open_module_item)
         layout.addWidget(self.module_list)
@@ -524,7 +509,7 @@ class UIBuilderMixin:
     def _build_release_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.addWidget(QLabel("生成发布：把校验、缺失回调、资源冲突和生成预览汇总成清单。"))
+        # Release
         self.release_output = QPlainTextEdit()
         self.release_output.setReadOnly(True)
         layout.addWidget(self.release_output)
@@ -585,7 +570,7 @@ class UIBuilderMixin:
         json_page = QWidget()
         json_layout = QVBoxLayout(json_page)
         json_layout.setContentsMargins(0, 0, 0, 0)
-        json_layout.addWidget(QLabel("开发者模式：原始 JSON（仅在需要调试复杂字段时使用）"))
+        json_layout.addWidget(QLabel("JSON 编辑"))
         self.node_json_editor = QPlainTextEdit()
         self.node_json_editor.setMaximumHeight(220)
         json_layout.addWidget(self.node_json_editor)
@@ -595,7 +580,7 @@ class UIBuilderMixin:
         self.property_stack.addWidget(json_page)
 
         layout.addWidget(self.property_stack)
-        layout.addWidget(QLabel("当前卡片回调实现："))
+        # Callback preview
         callback_row = QHBoxLayout()
         self.callback_select = QComboBox()
         self.callback_select.currentTextChanged.connect(self.load_selected_callback_implementation)
@@ -624,28 +609,69 @@ class UIBuilderMixin:
     def _build_pin_planner_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.addWidget(QLabel("Board Profile 与 Pin Planner：只做资源规划和冲突检查，会写回 Graph/app_board_config.h；不会自动生成 STM32 HAL、ESP-IDF 或 DriverLib 调用。真实硬件代码请放入 board_adapters。"))
+        
+        # Board profile selection with auto-apply
+        profile_row = QHBoxLayout()
+        profile_row.addWidget(QLabel("Board Profile:"))
         self.board_profile_edit = QComboBox()
         self.board_profile_edit.addItems(list(BOARD_PROFILES))
-        layout.addWidget(self.board_profile_edit)
-        profile_btn = QPushButton("套用 Board Profile 默认资源")
-        profile_btn.clicked.connect(self.apply_board_profile_defaults)
-        layout.addWidget(profile_btn)
-        edit_profile_btn = QPushButton("编辑 Board Profile…")
-        edit_profile_btn.clicked.connect(self.edit_board_profile)
-        layout.addWidget(edit_profile_btn)
-        self.pin_table = QTableWidget(0, 5)
-        self.pin_table.setHorizontalHeaderLabels(["节点", "用途", "端口/定时器", "引脚/通道", "备注"])
-        layout.addWidget(self.pin_table)
+        self.board_profile_edit.currentTextChanged.connect(self._on_board_profile_changed)
+        profile_row.addWidget(self.board_profile_edit)
+        layout.addLayout(profile_row)
+        
+        # Resource summary
+        self.resource_summary = QLabel()
+        self.resource_summary.setWordWrap(True)
+        self.resource_summary.setStyleSheet("background: #1a2332; border: 1px solid #2a3848; border-radius: 6px; padding: 8px; color: #b8c3d8;")
+        layout.addWidget(self.resource_summary)
+        
+        # Pin tables by category
+        self.pin_tabs = QTabWidget()
+        self.pin_tabs.setTabPosition(QTabWidget.TabPosition.North if hasattr(QTabWidget, "TabPosition") else QTabWidget.North)
+        
+        # GPIO tab
+        self.gpio_table = QTableWidget(0, 5)
+        self.gpio_table.setHorizontalHeaderLabels(["节点", "引脚", "端口", "引脚号", "功能/备注"])
+        self.gpio_table.horizontalHeader().setStretchLastSection(True)
+        self.pin_tabs.addTab(self.gpio_table, "GPIO")
+        
+        # PWM tab
+        self.pwm_table = QTableWidget(0, 5)
+        self.pwm_table.setHorizontalHeaderLabels(["节点", "定时器", "通道", "频率", "功能/备注"])
+        self.pwm_table.horizontalHeader().setStretchLastSection(True)
+        self.pin_tabs.addTab(self.pwm_table, "PWM")
+        
+        # Communication tab
+        self.comm_table = QTableWidget(0, 5)
+        self.comm_table.setHorizontalHeaderLabels(["节点", "类型", "总线ID", "引脚", "功能/备注"])
+        self.comm_table.horizontalHeader().setStretchLastSection(True)
+        self.pin_tabs.addTab(self.comm_table, "通信")
+        
+        # ADC tab
+        self.adc_table = QTableWidget(0, 5)
+        self.adc_table.setHorizontalHeaderLabels(["节点", "ADC", "通道", "分辨率", "功能/备注"])
+        self.adc_table.horizontalHeader().setStretchLastSection(True)
+        self.pin_tabs.addTab(self.adc_table, "ADC")
+        
+        layout.addWidget(self.pin_tabs)
+        
+        # Apply button
         apply_btn = QPushButton("应用 Pin Planner")
         apply_btn.clicked.connect(self.apply_pin_planner)
+        apply_btn.setStyleSheet("QPushButton { background-color: #1a6b3c; } QPushButton:hover { background-color: #1f7d45; }")
         layout.addWidget(apply_btn)
+        
         return widget
+
+    def _on_board_profile_changed(self, profile_name: str) -> None:
+        """Auto-apply board profile when changed."""
+        if profile_name and hasattr(self, 'graph'):
+            self.apply_board_profile_defaults()
 
     def _build_validation_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.addWidget(QLabel("校验错误列表（点击可定位到相关卡片）："))
+        # Validation
         self.validation_list = QListWidget()
         self.validation_list.itemClicked.connect(self.open_validation_item)
         layout.addWidget(self.validation_list)
@@ -668,7 +694,7 @@ class UIBuilderMixin:
     def _build_structure_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.addWidget(QLabel("项目结构：帮助你理解模块里已有的输入、处理、输出节点。"))
+        # Structure
         self.structure_output = QPlainTextEdit()
         self.structure_output.setReadOnly(True)
         layout.addWidget(self.structure_output)
@@ -677,7 +703,7 @@ class UIBuilderMixin:
     def _build_file_tree_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.addWidget(QLabel("高级视图：预览生成后的文件结构，确认自定义代码会落到哪里。"))
+        # File tree
         self.file_tree_output = QPlainTextEdit()
         self.file_tree_output.setReadOnly(True)
         layout.addWidget(self.file_tree_output)
@@ -686,7 +712,7 @@ class UIBuilderMixin:
     def _build_schedule_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        layout.addWidget(QLabel("高级视图：查看运行调度预估，适合排查 task / flow / 状态机顺序。"))
+        # Schedule
         self.schedule_output = QPlainTextEdit()
         self.schedule_output.setReadOnly(True)
         layout.addWidget(self.schedule_output)
@@ -792,11 +818,11 @@ event.subscriber 仍会生成 `efw_topic_subscribe(...)` 绑定和回调声明�
         controls.addWidget(stub_btn)
         controls.addWidget(cond_btn)
         layout.addLayout(controls)
-        layout.addWidget(QLabel("回调补齐清单（来自 codegen 契约）："))
+        # Callback list
         self.callback_gap_output = QPlainTextEdit()
         self.callback_gap_output.setReadOnly(True)
         layout.addWidget(self.callback_gap_output)
-        layout.addWidget(QLabel("Custom code is saved in graph.custom_files and emitted beside generated application files."))
+
         return widget
 
     def _build_json_tab(self) -> QWidget:

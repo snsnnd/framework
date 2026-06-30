@@ -10,7 +10,14 @@ import re
 from pathlib import Path
 from typing import Any
 
-from codegen.graph import CALLBACK_RETURNS, CALLBACK_SIGNATURES, GENERATED_FILES, NODE_CONTRACTS, SUPPORTED_FLOW_TYPES, SUPPORTED_NODE_TYPES, VALID_EDGE_KINDS, apply_pair_semantics, node_generation_label
+from codegen.utils import c_ident, require, nodes_of, BUILTIN_CONTRACTS
+from codegen.graph import CALLBACK_RETURNS, CALLBACK_SIGNATURES, GENERATED_FILES, NODE_CONTRACTS, SUPPORTED_FLOW_TYPES, SUPPORTED_NODE_TYPES, VALID_EDGE_KINDS, MULTI_INPUT_NODE_PORTS, TRIGGER_POLICY_CHOICES, OUTPUT_MODE_CHOICES, PROCESS_MODE_CHOICES, FIELD_MAPPING_SOURCE_CHOICES, FIELD_MAPPING_TRANSFORM_CHOICES, BUILTIN_STRUCT_FIELD_TYPES, apply_pair_semantics, node_generation_label
+
+
+def node_type(nodes: dict[str, dict[str, Any]], node_id: str | None) -> str | None:
+    node = nodes.get(node_id)
+    return node.get("type") if node else None
+
 
 SINGLE_INPUT_PORT_RULES: dict[str, set[str]] = {
     "event.publisher": {"topic", "event_source"},
@@ -19,45 +26,49 @@ SINGLE_INPUT_PORT_RULES: dict[str, set[str]] = {
     "sensor.custom": {"hal"},
     "actuator.custom": {"hal", "control"},
     "algorithm.pid": {"sensor", "processor"},
-    "algorithm.custom": {"sensor", "processor"},
+    "algorithm.custom": {"sensor", "processor", "event"},
     "processor.custom": {"sensor", "algorithm", "event", "module_input"},
     "state.machine": {"state_machine"},
     "state.transition": {"state_machine", "transition_from"},
 }
 
 
-def c_ident(value: str, fallback: str = "app") -> str:
-    ident = re.sub(r"[^0-9A-Za-z_]", "_", value or fallback)
-    ident = re.sub(r"_+", "_", ident).strip("_") or fallback
-    if ident[0].isdigit():
-        ident = f"_{ident}"
-    return ident
+BUILTIN_STRUCT_FIELDS: dict[str, set[str]] = {name: set(fields.keys()) for name, fields in BUILTIN_STRUCT_FIELD_TYPES.items()}
+
+PROCESSOR_INPUT_PORTS: tuple[str, ...] = tuple(MULTI_INPUT_NODE_PORTS["processor.custom"])
+ALGORITHM_INPUT_PORTS: tuple[str, ...] = tuple(MULTI_INPUT_NODE_PORTS["algorithm.custom"])
+MULTI_INPUT_PORTS: dict[str, tuple[str, ...]] = {key: tuple(value) for key, value in MULTI_INPUT_NODE_PORTS.items()}
 
 
-def require(condition: bool, message: str) -> None:
-    if not condition:
-        raise ValueError(message)
-
-
-def node_type(nodes: dict[str, dict[str, Any]], node_id: str | None) -> str | None:
-    node = nodes.get(node_id)
-    return node.get("type") if node else None
-
-
-def nodes_of(ctx: dict[str, Any], type_name: str) -> list[dict[str, Any]]:
-    return [node for node in ctx["nodes"] if node.get("type") == type_name]
-
-
-BUILTIN_CONTRACTS: dict[str, dict[str, Any]] = {
-    "efw_pid_input_t": {"type": "efw_pid_input_t", "c_type": "efw_pid_input_t", "size": 16, "align": 4},
-    "efw_pid_output_t": {"type": "efw_pid_output_t", "c_type": "efw_pid_output_t", "size": 12, "align": 4},
-    "efw_motor_cmd_t": {"type": "efw_motor_cmd_t", "c_type": "efw_motor_cmd_t", "size": 8, "align": 4},
-    "efw_line_tracking_data_t": {"type": "efw_line_tracking_data_t", "c_type": "efw_line_tracking_data_t", "size": 18, "align": 2},
-    "float": {"type": "float", "c_type": "float", "size": 4, "align": 4},
-    "uint8_t": {"type": "uint8_t", "c_type": "uint8_t", "size": 1, "align": 1},
-    "uint16_t": {"type": "uint16_t", "c_type": "uint16_t", "size": 2, "align": 2},
-    "uint32_t": {"type": "uint32_t", "c_type": "uint32_t", "size": 4, "align": 4},
-}
+def node_input_spec(node: dict[str, Any], port: str | None = None) -> dict[str, Any]:
+    default_spec = {
+        "contract": str(node.get("input_contract") or node.get("input_type") or "custom"),
+        "type": str(node.get("input_type") or node.get("input_contract") or "custom"),
+        "size": node.get("input_size"),
+        "align": node.get("input_align"),
+    }
+    node_type_name = str(node.get("type", ""))
+    if node_type_name not in MULTI_INPUT_PORTS:
+        return default_spec
+    input_ports = node.get("input_ports")
+    if port is None:
+        return default_spec
+    if not isinstance(input_ports, dict):
+        input_ports = {}
+    port_spec = input_ports.get(port)
+    primary_port = str(node.get("primary_input_port") or "")
+    if not isinstance(port_spec, dict):
+        return default_spec if primary_port == port else {"contract": "custom", "type": "custom", "size": None, "align": None}
+    spec = dict(default_spec)
+    if port_spec.get("contract") not in (None, ""):
+        spec["contract"] = str(port_spec.get("contract"))
+    if port_spec.get("type") not in (None, ""):
+        spec["type"] = str(port_spec.get("type"))
+    if port_spec.get("size") not in (None, ""):
+        spec["size"] = port_spec.get("size")
+    if port_spec.get("align") not in (None, ""):
+        spec["align"] = port_spec.get("align")
+    return spec
 
 
 def contract_name_for_output(node: dict[str, Any]) -> str:
@@ -68,6 +79,8 @@ def contract_name_for_output(node: dict[str, Any]) -> str:
         return "efw_pid_output_t"
     if node_type_name == "algorithm.custom":
         return str(node.get("output_contract") or node.get("output_type") or node.get("io_contract") or "custom")
+    if node_type_name == "event.subscriber":
+        return str(node.get("output_contract") or node.get("payload_type") or node.get("topic") or "custom")
     if node_type_name == "sensor.line_tracking":
         return str(node.get("output_contract") or "efw_line_tracking_data_t")
     if node_type_name.startswith("sensor."):
@@ -75,14 +88,19 @@ def contract_name_for_output(node: dict[str, Any]) -> str:
     return str(node.get("output_contract") or node.get("output_type") or "custom")
 
 
-def contract_name_for_input(node: dict[str, Any]) -> str:
+def contract_name_for_input(node: dict[str, Any], port: str | None = None) -> str:
     node_type_name = str(node.get("type", ""))
     if node_type_name == "processor.custom":
-        return str(node.get("input_contract") or node.get("input_type") or "custom")
+        spec = node_input_spec(node, port)
+        return str(spec.get("contract") or spec.get("type") or "custom")
     if node_type_name == "algorithm.pid":
         return "efw_pid_input_t"
     if node_type_name == "algorithm.custom":
-        return str(node.get("input_contract") or node.get("input_type") or node.get("io_contract") or "custom")
+        spec = node_input_spec(node, port)
+        return str(spec.get("contract") or spec.get("type") or node.get("io_contract") or "custom")
+    if node_type_name == "module.custom":
+        spec = node_input_spec(node, port)
+        return str(spec.get("contract") or spec.get("type") or node.get("input_contract") or node.get("input_type") or "custom")
     if node_type_name == "actuator.motor":
         return str(node.get("input_contract") or "efw_motor_cmd_t")
     if node_type_name == "actuator.custom":
@@ -99,7 +117,7 @@ def line_follower_node_ids(flows: list[dict[str, Any]]) -> set[str]:
 
 
 def runtime_dataflow_paths(raw_nodes: list[dict[str, Any]], raw_edges: list[dict[str, Any]], nodes_by_id: dict[str, dict[str, Any]], raw_flows: list[dict[str, Any]], project: dict[str, Any]) -> list[list[str]]:
-    runtime_types = {"sensor.custom", "sensor.line_tracking", "processor.custom", "algorithm.pid", "algorithm.custom", "actuator.motor", "actuator.custom"}
+    runtime_types = {"sensor.custom", "sensor.line_tracking", "processor.custom", "algorithm.pid", "algorithm.custom", "actuator.motor", "actuator.custom", "module.custom"}
     flow_owned = line_follower_node_ids(raw_flows)
     include_flow_owned = bool(project.get("auto_dataflow_include_line_follower", False))
     adjacency: dict[str, list[str]] = {}
@@ -146,6 +164,209 @@ def validate_contract_fields(node: dict[str, Any]) -> None:
     required_any = contract.get("required_any", [])
     if required_any:
         require(any(node.get(field) not in (None, "", []) for field in required_any), f"{node['id']} needs at least one of {', '.join(required_any)} by {node['type']} ({node_generation_label(node['type'])})")
+
+
+def validate_contract_spec(owner: str, spec: dict[str, Any]) -> None:
+    contract_name = str(spec.get("contract") or spec.get("type") or "custom")
+    c_type = str(spec.get("type") or contract_name or "custom")
+    size = spec.get("size")
+    align = spec.get("align")
+    require(isinstance(contract_name, str), f"{owner}.contract 必须是字符串")
+    require(isinstance(c_type, str), f"{owner}.type 必须是字符串")
+    if size not in (None, ""):
+        require(int(size) >= 0, f"{owner}.size 必须 >= 0")
+    if align not in (None, ""):
+        require(int(align) > 0, f"{owner}.align 必须 > 0")
+    builtin = BUILTIN_CONTRACTS.get(contract_name)
+    if not builtin:
+        return
+    if c_type not in {"", "custom", str(builtin.get("c_type") or builtin.get("type") or contract_name)}:
+        require(False, f"{owner} 与内建契约 {contract_name} 不一致：type 应为 {builtin.get('c_type')}")
+    if size not in (None, "") and int(size) != int(builtin.get("size", 0) or 0):
+        require(False, f"{owner} 与内建契约 {contract_name} 不一致：size 应为 {builtin.get('size')}")
+    if align not in (None, "") and int(align) != int(builtin.get("align", 1) or 1):
+        require(False, f"{owner} 与内建契约 {contract_name} 不一致：align 应为 {builtin.get('align')}")
+
+
+def output_fields_for_contract(graph: dict[str, Any], contracts: dict[str, dict[str, Any]], contract_name: str) -> set[str]:
+    c_type = resolve_contract_c_type(contracts, contract_name)
+    builtin = BUILTIN_STRUCT_FIELDS.get(str(c_type))
+    if builtin:
+        return set(builtin)
+    struct_node = next((item for item in graph.get("nodes", []) if item.get("type") == "data.struct" and item.get("name") == c_type), None)
+    if not struct_node:
+        return set()
+    return {str(field.get("name", "")).strip() for field in struct_node.get("fields", []) if isinstance(field, dict) and str(field.get("name", "")).strip()}
+
+
+def type_fields_for_contract(graph: dict[str, Any], contracts: dict[str, dict[str, Any]], contract_name: str) -> dict[str, str]:
+    c_type = resolve_contract_c_type(contracts, contract_name)
+    builtin = BUILTIN_STRUCT_FIELD_TYPES.get(str(c_type))
+    if builtin:
+        return dict(builtin)
+    struct_node = next((item for item in graph.get("nodes", []) if item.get("type") == "data.struct" and item.get("name") == c_type), None)
+    if not struct_node:
+        return {}
+    return {
+        str(field.get("name", "")).strip(): str(field.get("type", "")).strip()
+        for field in struct_node.get("fields", [])
+        if isinstance(field, dict) and str(field.get("name", "")).strip()
+    }
+
+
+def resolve_nested_path_type(graph: dict[str, Any], root_type: str, path: str) -> str | None:
+    current_type = str(root_type or "")
+    if not path:
+        return current_type or None
+    segments = [segment.strip() for segment in str(path).split(".") if segment.strip()]
+    if not segments:
+        return current_type or None
+    for segment in segments:
+        builtin = BUILTIN_STRUCT_FIELD_TYPES.get(current_type)
+        if builtin and segment in builtin:
+            current_type = str(builtin[segment])
+            continue
+        struct_node = next((item for item in graph.get("nodes", []) if item.get("type") == "data.struct" and item.get("name") == current_type), None)
+        if not struct_node:
+            return None
+        field = next((field for field in struct_node.get("fields", []) if isinstance(field, dict) and str(field.get("name", "")).strip() == segment), None)
+        if not field:
+            return None
+        current_type = str(field.get("type", "")).strip()
+    return current_type or None
+
+
+def is_numeric_c_type(c_type: str) -> bool:
+    return str(c_type) in {"float", "double", "int", "uint8_t", "uint16_t", "uint32_t", "int8_t", "int16_t", "int32_t"}
+
+
+def validate_expr_text(owner: str, expr: str) -> None:
+    text = str(expr or "").strip()
+    require(text, f"{owner} expr 不能为空")
+    require(re.fullmatch(r"[A-Za-z0-9_+\-*/%().<>=!&| \t]+", text) is not None, f"{owner} expr 只支持基础标识符/数字/运算符，不能包含分号、花括号或字符串")
+
+
+def validate_processor_trigger_policy(node: dict[str, Any]) -> None:
+    trigger_policy = str(node.get("trigger_policy") or "primary_only")
+    allowed = set(TRIGGER_POLICY_CHOICES)
+    require(trigger_policy in allowed, f"{node['id']}.trigger_policy 只支持 {', '.join(sorted(allowed))}")
+
+
+def validate_processor_output_mode(node: dict[str, Any]) -> None:
+    output_mode = str(node.get("output_mode") or "custom_code")
+    allowed = set(OUTPUT_MODE_CHOICES)
+    require(output_mode in allowed, f"{node['id']}.output_mode 只支持 {', '.join(sorted(allowed))}")
+    if output_mode != "custom_code":
+        require(str(node.get("output_contract") or "").strip(), f"{node['id']}.output_contract 不能为空")
+        require(str(node.get("output_type") or "").strip(), f"{node['id']}.output_type 不能为空")
+
+
+def validate_processor_mapping_mode(node: dict[str, Any]) -> None:
+    mode = str(node.get("process_mode") or "full_custom")
+    allowed = set(PROCESS_MODE_CHOICES)
+    require(mode in allowed, f"{node['id']}.process_mode 只支持 {', '.join(sorted(allowed))}")
+    process = str(node.get("process") or "").strip()
+    if mode in {"full_custom", "mapping_then_custom"}:
+        require(process and process == c_ident(process), f"{node['id']}.process 必须是有效的 C 标识符")
+    if mode == "mapping_only":
+        mappings = node.get("field_mappings", [])
+        require(isinstance(mappings, list) and len(mappings) > 0, f"{node['id']}.field_mappings 不能为空，因为 process_mode=mapping_only")
+
+
+def validate_field_mappings(node: dict[str, Any], graph: dict[str, Any], contracts: dict[str, dict[str, Any]]) -> None:
+    mappings = node.get("field_mappings", [])
+    require(isinstance(mappings, list), f"{node['id']}.field_mappings 必须是数组")
+    output_contract = str(node.get("output_contract") or node.get("output_type") or "custom")
+    valid_fields = output_fields_for_contract(graph, contracts, output_contract)
+    scalar_output = not valid_fields
+    output_field_types = type_fields_for_contract(graph, contracts, output_contract)
+    seen_fields: set[str] = set()
+    allowed_sources = set(FIELD_MAPPING_SOURCE_CHOICES)
+    allowed_transforms = set(FIELD_MAPPING_TRANSFORM_CHOICES)
+    input_ports = node.get("input_ports", {}) if isinstance(node.get("input_ports"), dict) else {}
+    primary_port = str(node.get("primary_input_port") or "")
+    connected_ports = {str(edge.get("to_port", "")) for edge in graph.get("edges", []) if isinstance(edge, dict) and str(edge.get("to", "")) == str(node.get("id", ""))}
+    for index, item in enumerate(mappings):
+        require(isinstance(item, dict), f"{node['id']}.field_mappings[{index}] 必须是对象")
+        field = str(item.get("field") or "").strip()
+        source = str(item.get("source") or "").strip()
+        transform = str(item.get("transform") or "identity").strip()
+        if scalar_output:
+            require(field in {"", "value"}, f"{node['id']}.field_mappings[{index}].field 在标量输出模式下只能为空或 value")
+        else:
+            require(field, f"{node['id']}.field_mappings[{index}].field 不能为空")
+        require(field not in seen_fields, f"{node['id']}.field_mappings 中字段 {field} 重复")
+        seen_fields.add(field)
+        if valid_fields:
+            require(field in valid_fields, f"{node['id']}.field_mappings[{index}].field={field} 不是输出类型 {output_contract} 的合法字段")
+        require(source in allowed_sources, f"{node['id']}.field_mappings[{index}].source 不支持: {source}")
+        require(transform in allowed_transforms, f"{node['id']}.field_mappings[{index}].transform 不支持: {transform}")
+        target_type = output_field_types.get(field, resolve_contract_c_type(contracts, output_contract))
+        if source == "const":
+            require(item.get("value") not in (None, ""), f"{node['id']}.field_mappings[{index}] source=const 时必须填写 value")
+        if source == "expr":
+            validate_expr_text(f"{node['id']}.field_mappings[{index}]", str(item.get("expr") or ""))
+        if source in {"sensor", "processor", "algorithm", "event", "module_input"}:
+            require(source in input_ports or source == primary_port or source in connected_ports, f"{node['id']}.field_mappings[{index}] 引用了未声明输入端口 {source}")
+            path = str(item.get("path") or "").strip()
+            if path:
+                port_contract = str(node_input_spec(node, source).get("contract") or node_input_spec(node, source).get("type") or "custom")
+                port_root_type = resolve_contract_c_type(contracts, port_contract)
+                require(resolve_nested_path_type(graph, port_root_type, path) is not None, f"{node['id']}.field_mappings[{index}].path={path} 不是输入 {source} 的合法字段路径")
+        if transform in {"scale", "offset"}:
+            require(is_numeric_c_type(target_type), f"{node['id']}.field_mappings[{index}] 使用 {transform} 时，目标字段 {field} 必须是数值类型")
+        if transform == "to_uint16":
+            require(str(target_type) == "uint16_t", f"{node['id']}.field_mappings[{index}] 使用 to_uint16 时，目标字段 {field} 必须是 uint16_t")
+        if transform == "to_float":
+            require(str(target_type) in {"float", "double"}, f"{node['id']}.field_mappings[{index}] 使用 to_float 时，目标字段 {field} 必须是 float/double")
+
+
+def validate_algorithm_trigger_policy(node: dict[str, Any]) -> None:
+    validate_processor_trigger_policy(node)
+
+
+def validate_algorithm_output_mode(node: dict[str, Any]) -> None:
+    validate_processor_output_mode(node)
+
+
+def validate_algorithm_mapping_mode(node: dict[str, Any]) -> None:
+    mode = str(node.get("process_mode") or "full_custom")
+    allowed = set(PROCESS_MODE_CHOICES)
+    require(mode in allowed, f"{node['id']}.process_mode 只支持 {', '.join(sorted(allowed))}")
+    run = str(node.get("run") or "").strip()
+    if mode in {"full_custom", "mapping_then_custom"}:
+        require(run and run == c_ident(run), f"{node['id']}.run 必须是有效的 C 标识符")
+    if mode == "mapping_only":
+        mappings = node.get("field_mappings", [])
+        require(isinstance(mappings, list) and len(mappings) > 0, f"{node['id']}.field_mappings 不能为空，因为 process_mode=mapping_only")
+
+
+def validate_algorithm_field_mappings(node: dict[str, Any], graph: dict[str, Any], contracts: dict[str, dict[str, Any]]) -> None:
+    validate_field_mappings(node, graph, contracts)
+
+
+def validate_module_trigger_policy(node: dict[str, Any]) -> None:
+    validate_processor_trigger_policy(node)
+
+
+def validate_module_output_mode(node: dict[str, Any]) -> None:
+    validate_processor_output_mode(node)
+
+
+def validate_module_mapping_mode(node: dict[str, Any]) -> None:
+    mode = str(node.get("process_mode") or "full_custom")
+    allowed = set(PROCESS_MODE_CHOICES)
+    require(mode in allowed, f"{node['id']}.process_mode 只支持 {', '.join(sorted(allowed))}")
+    poll = str(node.get("poll") or "").strip()
+    if mode in {"full_custom", "mapping_then_custom"}:
+        require(poll and poll == c_ident(poll), f"{node['id']}.poll 必须是有效的 C 标识符")
+    if mode == "mapping_only":
+        mappings = node.get("field_mappings", [])
+        require(isinstance(mappings, list) and len(mappings) > 0, f"{node['id']}.field_mappings 不能为空，因为 process_mode=mapping_only")
+
+
+def validate_module_field_mappings(node: dict[str, Any], graph: dict[str, Any], contracts: dict[str, dict[str, Any]]) -> None:
+    validate_field_mappings(node, graph, contracts)
 
 
 def normalize_c_params(params: str) -> str:
@@ -234,21 +455,34 @@ def validate_custom_files(graph: dict[str, Any]) -> tuple[list[dict[str, str]], 
 def expected_callbacks(ctx: dict[str, Any]) -> dict[str, dict[str, str]]:
     callbacks = {}
 
+    def module_poll_signature_key(node: dict[str, Any]) -> str:
+        if str(node.get("type", "")) != "module.custom":
+            return "module.lifecycle"
+        input_ports = {str(edge.get("to_port", "")) for edge in ctx.get("edges", []) if isinstance(edge, dict) and str(edge.get("to", "")) == str(node.get("id", ""))}
+        if input_ports & {"module_input", "event"}:
+            return "module.poll"
+        if isinstance(node.get("input_ports"), dict) and node.get("input_ports"):
+            return "module.poll"
+        return "module.lifecycle"
+
     def add(name: str | None, signature_key: str, owner: str) -> None:
         if not name:
             return
         params = CALLBACK_SIGNATURES[signature_key]
+        normalized_params = normalize_c_params(params)
         cname = c_ident(name)
         require(name == cname, f"{owner} callback must be a valid C identifier: {name}")
         existing = callbacks.get(cname)
-        require(not existing or existing["params"] == params, f"callback {cname} is declared with incompatible signatures")
-        callbacks[cname] = {"params": normalize_c_params(params), "owner": owner, "return": CALLBACK_RETURNS.get(signature_key, "efw_status_t")}
+        require(not existing or existing["params"] == normalized_params, f"callback {cname} is declared with incompatible signatures")
+        callbacks[cname] = {"params": normalized_params, "owner": owner, "return": CALLBACK_RETURNS.get(signature_key, "efw_status_t")}
 
     for node in ctx["nodes"]:
         contract = NODE_CONTRACTS.get(str(node.get("type")), {})
         for field, signature_key in contract.get("callbacks", {}).items():
             if signature_key in {"topic.callback", "condition"}:
                 continue
+            if str(node.get("type", "")) == "module.custom" and field == "poll":
+                signature_key = module_poll_signature_key(node)
             add(node.get(field), signature_key, f"{node['id']}.{field}")
     for task in ctx["tasks"]:
         add(task.get("call"), "task.call", f"task {task.get('id')}.call")
@@ -295,7 +529,7 @@ def apply_edge_semantics(raw_edges: list[dict[str, Any]], nodes_by_id: dict[str,
         dst = nodes_by_id.get(edge.get("to"))
         if not src or not dst:
             continue
-        apply_pair_semantics(src, dst, graph_view, c_ident_func=c_ident, overwrite=True)
+        apply_pair_semantics(src, dst, graph_view, c_ident_func=c_ident, overwrite=False, from_port=str(edge.get("from_port", "")), to_port=str(edge.get("to_port", "")))
 
 
 def build_contract_registry(graph: dict[str, Any], nodes_by_id: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -348,8 +582,36 @@ def build_contract_registry(graph: dict[str, Any], nodes_by_id: dict[str, dict[s
     for node in nodes_by_id.values():
         node_type_name = node.get("type")
         if node_type_name == "processor.custom":
-            add_contract(node.get("input_contract"), node.get("input_type", "custom"), consumer=node.get("id"), size=node.get("input_size"), align=node.get("input_align"))
+            seen_inputs: set[str] = set()
+            for port_name in MULTI_INPUT_PORTS["processor.custom"]:
+                spec = node_input_spec(node, port_name)
+                contract_name = str(spec.get("contract") or spec.get("type") or "custom")
+                if contract_name in seen_inputs:
+                    continue
+                seen_inputs.add(contract_name)
+                add_contract(contract_name, spec.get("type", "custom"), consumer=f"{node.get('id')}:{port_name}", size=spec.get("size"), align=spec.get("align"))
             add_contract(node.get("output_contract"), node.get("output_type", "custom"), producer=node.get("id"), size=node.get("output_size"), align=node.get("output_align"))
+        elif node_type_name == "algorithm.custom":
+            seen_inputs: set[str] = set()
+            for port_name in MULTI_INPUT_PORTS["algorithm.custom"]:
+                spec = node_input_spec(node, port_name)
+                contract_name = str(spec.get("contract") or spec.get("type") or "custom")
+                if contract_name in seen_inputs:
+                    continue
+                seen_inputs.add(contract_name)
+                add_contract(contract_name, spec.get("type", "custom"), consumer=f"{node.get('id')}:{port_name}", size=spec.get("size"), align=spec.get("align"))
+            add_contract(contract_name_for_output(node), node.get("output_type") or contract_name_for_output(node), producer=node.get("id"), size=node.get("output_size"), align=node.get("output_align"))
+        elif node_type_name == "module.custom":
+            seen_inputs: set[str] = set()
+            for port_name in MULTI_INPUT_PORTS["module.custom"]:
+                spec = node_input_spec(node, port_name)
+                contract_name = str(spec.get("contract") or spec.get("type") or "custom")
+                if contract_name in seen_inputs:
+                    continue
+                seen_inputs.add(contract_name)
+                add_contract(contract_name, spec.get("type", "custom"), consumer=f"{node.get('id')}:{port_name}", size=spec.get("size"), align=spec.get("align"))
+            if node.get("output_type") or node.get("output_contract"):
+                add_contract(contract_name_for_output(node), node.get("output_type") or contract_name_for_output(node), producer=node.get("id"), size=node.get("output_size"), align=node.get("output_align"))
         elif node_type_name == "sensor.line_tracking":
             add_contract(contract_name_for_output(node), "efw_line_tracking_data_t", producer=node.get("id"))
         elif node_type_name == "actuator.motor":
@@ -372,7 +634,12 @@ def build_contract_registry(graph: dict[str, Any], nodes_by_id: dict[str, dict[s
     return registry
 
 
-def validate_runtime_dataflows(paths: list[list[str]], nodes_by_id: dict[str, dict[str, Any]], contracts: dict[str, dict[str, Any]], project: dict[str, Any], tick_ms: int) -> None:
+def validate_runtime_dataflows(paths: list[list[str]], raw_edges: list[dict[str, Any]], nodes_by_id: dict[str, dict[str, Any]], contracts: dict[str, dict[str, Any]], project: dict[str, Any], tick_ms: int) -> None:
+    edge_ports = {
+        (str(edge.get("from", "")), str(edge.get("to", ""))): str(edge.get("to_port", ""))
+        for edge in raw_edges
+        if isinstance(edge, dict)
+    }
     for path in paths:
         for node_id in path:
             period = int(nodes_by_id[node_id].get("period_ms", tick_ms))
@@ -382,7 +649,7 @@ def validate_runtime_dataflows(paths: list[list[str]], nodes_by_id: dict[str, di
             src = nodes_by_id[src_id]
             dst = nodes_by_id[dst_id]
             out_contract = contract_name_for_output(src)
-            in_contract = contract_name_for_input(dst)
+            in_contract = contract_name_for_input(dst, edge_ports.get((src_id, dst_id)))
             require(out_contract == in_contract, f"dataflow contract mismatch: {src_id} outputs {out_contract}, but {dst_id} expects {in_contract}")
             if dst.get("type") == "algorithm.pid":
                 require(in_contract == "efw_pid_input_t", f"{dst_id} is algorithm.pid and must receive efw_pid_input_t; add a processor.custom adapter before PID")
@@ -392,6 +659,30 @@ def validate_runtime_dataflows(paths: list[list[str]], nodes_by_id: dict[str, di
                 contract = resolve_contract(contracts, contract_name)
                 require(contract is not None, f"dataflow references unknown contract: {contract_name}")
                 require(resolve_contract_size(contracts, contract_name) > 0, f"contract {contract_name} needs size for automatic dataflow; add contracts[].size or node input/output_size")
+
+
+def validate_event_contract_edges(raw_edges: list[dict[str, Any]], nodes_by_id: dict[str, dict[str, Any]], contracts: dict[str, dict[str, Any]]) -> None:
+    for edge in raw_edges:
+        if not isinstance(edge, dict):
+            continue
+        src = nodes_by_id.get(edge.get("from"))
+        dst = nodes_by_id.get(edge.get("to"))
+        if not src or not dst:
+            continue
+        src_type = str(src.get("type", ""))
+        dst_type = str(dst.get("type", ""))
+        from_port = str(edge.get("from_port", ""))
+        to_port = str(edge.get("to_port", ""))
+        if src_type == "event.subscriber" and dst_type in {"processor.custom", "algorithm.custom", "module.custom"}:
+            out_contract = contract_name_for_output(src)
+            in_contract = contract_name_for_input(dst, to_port)
+            require(resolve_contract_c_type(contracts, out_contract) == resolve_contract_c_type(contracts, in_contract), f"event contract mismatch: {src.get('id')} outputs {out_contract}, but {dst.get('id')}({to_port}) expects {in_contract}")
+        if dst_type == "event.publisher" and src_type in {"sensor.custom", "sensor.line_tracking", "processor.custom", "module.custom"} and from_port in {"sensor", "event_source", "processor", "module_output"}:
+            topic = nodes_by_id.get(dst.get("topic"))
+            if topic and topic.get("type") == "event.topic":
+                out_contract = contract_name_for_output(src)
+                topic_contract = str(topic.get("id"))
+                require(resolve_contract_c_type(contracts, out_contract) == resolve_contract_c_type(contracts, topic_contract), f"publisher contract mismatch: {src.get('id')} outputs {out_contract}, but topic {topic.get('id')} expects payload {topic.get('payload_type')}")
 
 
 def parse_event_trigger(value: str) -> tuple[str, str] | None:
@@ -460,7 +751,7 @@ def resolve_contract_align(registry: dict[str, dict[str, Any]], name: str) -> in
     return int(contract.get("align", 1) or 1) if contract else 1
 
 
-def validate_node_fields_by_type(node: dict[str, Any], raw_nodes: list[dict[str, Any]], nodes_by_id: dict[str, dict[str, Any]]) -> None:
+def validate_node_fields_by_type(node: dict[str, Any], raw_nodes: list[dict[str, Any]], nodes_by_id: dict[str, dict[str, Any]], graph: dict[str, Any] | None = None, contracts: dict[str, dict[str, Any]] | None = None) -> None:
     node_type_name = node["type"]
     if node_type_name == "hal.gpio_line_input":
         channels = int(node.get("channels", 0))
@@ -530,10 +821,65 @@ def validate_node_fields_by_type(node: dict[str, Any], raw_nodes: list[dict[str,
         validate_event_trigger(node, nodes_by_id)
         return
     if node_type_name == "processor.custom":
-        process = node.get("process")
-        require(isinstance(process, str) and process == c_ident(process), f"{node['id']}.process 必须是有效的 C 标识符（处理函数名）")
+        process = str(node.get("process") or "")
+        if process:
+            require(process == c_ident(process), f"{node['id']}.process 必须是有效的 C 标识符（处理函数名）")
         require(isinstance(node.get("input_contract", "custom"), str), f"{node['id']}.input_contract 必须是字符串，指定输入数据契约名称")
         require(isinstance(node.get("output_contract", "custom"), str), f"{node['id']}.output_contract 必须是字符串，指定输出数据契约名称")
+        validate_contract_spec(f"{node['id']}.input", node_input_spec(node))
+        input_ports = node.get("input_ports")
+        if input_ports not in (None, ""):
+            require(isinstance(input_ports, dict), f"{node['id']}.input_ports 必须是对象，按端口描述输入契约")
+            for port_name, port_spec in input_ports.items():
+                require(port_name in MULTI_INPUT_PORTS["processor.custom"], f"{node['id']}.input_ports 包含未知端口 {port_name}，只支持 {', '.join(MULTI_INPUT_PORTS['processor.custom'])}")
+                require(isinstance(port_spec, dict), f"{node['id']}.input_ports.{port_name} 必须是对象")
+                validate_contract_spec(f"{node['id']}.input_ports.{port_name}", node_input_spec(node, port_name))
+        primary_input_port = str(node.get("primary_input_port") or "")
+        if primary_input_port:
+            require(primary_input_port in MULTI_INPUT_PORTS["processor.custom"], f"{node['id']}.primary_input_port 只支持 {', '.join(MULTI_INPUT_PORTS['processor.custom'])}")
+        validate_contract_spec(f"{node['id']}.output", {"contract": node.get("output_contract") or node.get("output_type"), "type": node.get("output_type") or node.get("output_contract"), "size": node.get("output_size"), "align": node.get("output_align")})
+        require(graph is not None and contracts is not None, "internal: graph/contracts missing for processor.custom validation")
+        validate_processor_trigger_policy(node)
+        validate_processor_output_mode(node)
+        validate_processor_mapping_mode(node)
+        validate_field_mappings(node, graph, contracts)
+        return
+    if node_type_name == "algorithm.custom":
+        input_ports = node.get("input_ports")
+        if input_ports not in (None, ""):
+            require(isinstance(input_ports, dict), f"{node['id']}.input_ports 必须是对象，按端口描述输入契约")
+            for port_name, port_spec in input_ports.items():
+                require(port_name in MULTI_INPUT_PORTS["algorithm.custom"], f"{node['id']}.input_ports 包含未知端口 {port_name}，只支持 {', '.join(MULTI_INPUT_PORTS['algorithm.custom'])}")
+                require(isinstance(port_spec, dict), f"{node['id']}.input_ports.{port_name} 必须是对象")
+                validate_contract_spec(f"{node['id']}.input_ports.{port_name}", node_input_spec(node, port_name))
+        primary_input_port = str(node.get("primary_input_port") or "")
+        if primary_input_port:
+            require(primary_input_port in MULTI_INPUT_PORTS["algorithm.custom"], f"{node['id']}.primary_input_port 只支持 {', '.join(MULTI_INPUT_PORTS['algorithm.custom'])}")
+        validate_contract_spec(f"{node['id']}.output", {"contract": node.get("output_contract") or node.get("output_type"), "type": node.get("output_type") or node.get("output_contract"), "size": node.get("output_size"), "align": node.get("output_align")})
+        require(graph is not None and contracts is not None, "internal: graph/contracts missing for algorithm.custom validation")
+        validate_algorithm_trigger_policy(node)
+        validate_algorithm_output_mode(node)
+        validate_algorithm_mapping_mode(node)
+        validate_algorithm_field_mappings(node, graph, contracts)
+        return
+    if node_type_name == "module.custom":
+        input_ports = node.get("input_ports")
+        if input_ports not in (None, ""):
+            require(isinstance(input_ports, dict), f"{node['id']}.input_ports 必须是对象，按端口描述输入契约")
+            for port_name, port_spec in input_ports.items():
+                require(port_name in MULTI_INPUT_PORTS["module.custom"], f"{node['id']}.input_ports 包含未知端口 {port_name}，只支持 {', '.join(MULTI_INPUT_PORTS['module.custom'])}")
+                require(isinstance(port_spec, dict), f"{node['id']}.input_ports.{port_name} 必须是对象")
+                validate_contract_spec(f"{node['id']}.input_ports.{port_name}", node_input_spec(node, port_name))
+        primary_input_port = str(node.get("primary_input_port") or "")
+        if primary_input_port:
+            require(primary_input_port in MULTI_INPUT_PORTS["module.custom"], f"{node['id']}.primary_input_port 只支持 {', '.join(MULTI_INPUT_PORTS['module.custom'])}")
+        if node.get("output_contract") or node.get("output_type"):
+            validate_contract_spec(f"{node['id']}.output", {"contract": node.get("output_contract") or node.get("output_type"), "type": node.get("output_type") or node.get("output_contract"), "size": node.get("output_size"), "align": node.get("output_align")})
+        require(graph is not None and contracts is not None, "internal: graph/contracts missing for module.custom validation")
+        validate_module_trigger_policy(node)
+        validate_module_output_mode(node)
+        validate_module_mapping_mode(node)
+        validate_module_field_mappings(node, graph, contracts)
 
 
 def validate_module_references(raw_nodes: list[dict[str, Any]], module_ids: set[str], contracts: dict[str, dict[str, Any]]) -> None:
@@ -665,7 +1011,33 @@ def validate_edge_identity(raw_edges: list[dict[str, Any]], nodes_by_id: dict[st
         require(kind in VALID_EDGE_KINDS, f"连线 {edge_id} 的 kind \"{kind}\" 不受支持，可用类型：{', '.join(sorted(VALID_EDGE_KINDS))}")
 
 
-def validate_graph(graph: dict[str, Any]) -> dict[str, Any]:
+# Runtime node types that should be connected to be useful
+RUNTIME_NODE_TYPES = {
+    "sensor.custom", "sensor.line_tracking",
+    "actuator.motor", "actuator.custom",
+    "algorithm.pid", "algorithm.custom",
+    "processor.custom", "module.custom",
+}
+
+
+def validate_orphan_nodes(nodes: list[dict], edges: list[dict]) -> list[str]:
+    """Warn about runtime nodes that have no data-flow connections."""
+    connected_ids = set()
+    for edge in edges:
+        kind = edge.get("kind", "generic")
+        if kind in {"data_flow", "control_flow", "hardware_dependency"}:
+            connected_ids.add(edge.get("from"))
+            connected_ids.add(edge.get("to"))
+    warnings = []
+    for node in nodes:
+        nid = node.get("id")
+        ntype = node.get("type", "")
+        if ntype in RUNTIME_NODE_TYPES and nid not in connected_ids:
+            warnings.append(f"节点 \"{nid}\" ({ntype}) 没有数据流连线，可能生成死代码")
+    return warnings
+
+
+def validate_graph(graph: dict[str, Any], print_warnings: bool = False) -> dict[str, Any]:
     project, tick_ms, _contracts_decl = validate_graph_header(graph)
     board = validate_board_config(graph)
     raw_nodes, raw_flows, raw_tasks, raw_edges = collect_raw_sections(graph)
@@ -674,16 +1046,23 @@ def validate_graph(graph: dict[str, Any]) -> dict[str, Any]:
     validate_single_input_edges(raw_edges, nodes_by_id)
     apply_edge_semantics(raw_edges, nodes_by_id)
 
-    for node in raw_nodes:
-        validate_contract_fields(node)
-        validate_node_fields_by_type(node, raw_nodes, nodes_by_id)
+    # Warn about orphan runtime nodes
+    orphan_warnings = validate_orphan_nodes(raw_nodes, raw_edges)
+    if print_warnings and orphan_warnings:
+        import sys
+        for w in orphan_warnings:
+            print(f"efw-codegen: 警告: {w}", file=sys.stderr)
 
     module_ids = {node["id"] for node in raw_nodes if node.get("type") == "project.module"}
     contracts = build_contract_registry(graph, nodes_by_id)
+    for node in raw_nodes:
+        validate_contract_fields(node)
+        validate_node_fields_by_type(node, raw_nodes, nodes_by_id, graph, contracts)
     validate_module_references(raw_nodes, module_ids, contracts)
+    validate_event_contract_edges(raw_edges, nodes_by_id, contracts)
 
     runtime_paths = runtime_dataflow_paths(raw_nodes, raw_edges, nodes_by_id, raw_flows, project)
-    validate_runtime_dataflows(runtime_paths, nodes_by_id, contracts, project, tick_ms)
+    validate_runtime_dataflows(runtime_paths, raw_edges, nodes_by_id, contracts, project, tick_ms)
 
     flows = validate_flows(raw_flows, nodes_by_id, tick_ms)
     flow_ids_known = {flow["id"] for flow in flows}
@@ -702,6 +1081,7 @@ def validate_graph(graph: dict[str, Any]) -> dict[str, Any]:
         "runtime_dataflows": runtime_paths,
         "custom_files": custom_files,
         "board_adapters": board_adapters,
+        "warnings": orphan_warnings,
     }
     validate_callback_implementations(ctx)
     return ctx

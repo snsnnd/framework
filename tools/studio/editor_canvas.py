@@ -8,46 +8,13 @@ from typing import Any, TYPE_CHECKING
 
 import importlib.util
 
-if importlib.util.find_spec("PyQt6") is not None:
-    from PyQt6.QtCore import QLineF, QMimeData, QPointF, QRectF, Qt
-    from PyQt6.QtGui import QBrush, QColor, QDrag, QFont, QFontMetrics, QPainter, QPainterPath, QPen
-    from PyQt6.QtWidgets import (
-        QGraphicsDropShadowEffect,
-        QGraphicsEllipseItem,
-        QGraphicsItem,
-        QGraphicsLineItem,
-        QGraphicsObject,
-        QGraphicsPathItem,
-        QGraphicsRectItem,
-        QGraphicsScene,
-        QGraphicsSimpleTextItem,
-        QGraphicsTextItem,
-        QGraphicsView,
-        QListWidget,
-        QListWidgetItem,
-    )
-elif importlib.util.find_spec("PyQt5") is not None:
-    from PyQt5.QtCore import QLineF, QMimeData, QPointF, QRectF, Qt
-    from PyQt5.QtGui import QBrush, QColor, QDrag, QFont, QFontMetrics, QPainter, QPainterPath, QPen
-    from PyQt5.QtWidgets import (
-        QGraphicsDropShadowEffect,
-        QGraphicsEllipseItem,
-        QGraphicsItem,
-        QGraphicsLineItem,
-        QGraphicsObject,
-        QGraphicsPathItem,
-        QGraphicsRectItem,
-        QGraphicsScene,
-        QGraphicsSimpleTextItem,
-        QGraphicsTextItem,
-        QGraphicsView,
-        QListWidget,
-        QListWidgetItem,
-    )
-else:
-    QGraphicsDropShadowEffect = QGraphicsEllipseItem = QGraphicsLineItem = QGraphicsObject = QGraphicsPathItem = object
-    QGraphicsItem = QGraphicsRectItem = QGraphicsView = object
-    QListWidget = object
+from studio.qt_compat import (
+    Qt, QTimer, QRectF, QPointF, QSizeF, QMimeData,
+    QBrush, QColor, QFont, QFontMetrics, QPen, QPainter, QPixmap, QIcon,
+    QGraphicsEllipseItem, QGraphicsItem, QGraphicsLineItem, QGraphicsPathItem,
+    QGraphicsRectItem, QGraphicsScene, QGraphicsSimpleTextItem, QGraphicsTextItem,
+    QGraphicsView, QLineEdit, QMenu, QPushButton, QWidget,
+)
 
 from codegen.graph import NODE_CONTRACTS, PORT_COLORS, PORT_LABELS, PORT_RULES
 from studio.core import page_for_node

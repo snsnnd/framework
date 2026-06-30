@@ -10,16 +10,11 @@ from typing import Any
 
 import importlib.util
 
-if importlib.util.find_spec("PyQt6") is not None:
-    from PyQt6.QtCore import QPointF, QRectF, Qt
-    from PyQt6.QtGui import QColor, QPen
-    from PyQt6.QtWidgets import QGraphicsLineItem, QListWidgetItem, QMessageBox, QInputDialog
-elif importlib.util.find_spec("PyQt5") is not None:
-    from PyQt5.QtCore import QPointF, QRectF, Qt
-    from PyQt5.QtGui import QColor, QPen
-    from PyQt5.QtWidgets import QGraphicsLineItem, QListWidgetItem, QMessageBox, QInputDialog
-else:
-    QPointF = QRectF = Qt = QColor = QPen = QGraphicsLineItem = QListWidgetItem = QMessageBox = QInputDialog = object
+from studio.qt_compat import (
+    QPointF, QRectF, Qt,
+    QColor, QPen,
+    QGraphicsLineItem, QListWidgetItem, QMessageBox, QInputDialog,
+)
 
 from codegen.graph import (
     EDGE_KIND_LABELS,

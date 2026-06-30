@@ -18,93 +18,18 @@ from typing import Any
 
 import importlib.util
 
-if importlib.util.find_spec("PyQt6") is not None:
-    from PyQt6.QtCore import QMimeData, QPointF, QTimer, Qt
-    from PyQt6.QtGui import QBrush, QColor, QDrag, QFont, QFontMetrics, QKeySequence, QPen, QShortcut
-    from PyQt6.QtWidgets import (
-        QApplication,
-        QFileDialog,
-        QFormLayout,
-        QGraphicsEllipseItem,
-        QGraphicsItem,
-        QGraphicsLineItem,
-        QGraphicsRectItem,
-        QGraphicsScene,
-        QGraphicsSimpleTextItem,
-        QGraphicsTextItem,
-        QGraphicsView,
-        QHBoxLayout,
-        QInputDialog,
-        QLabel,
-        QListWidget,
-        QListWidgetItem,
-        QMainWindow,
-        QMessageBox,
-        QLineEdit,
-        QComboBox,
-        QCheckBox,
-        QPushButton,
-        QPlainTextEdit,
-        QSplitter,
-        QTableWidget,
-        QTableWidgetItem,
-        QTabBar,
-        QTabWidget,
-        QToolBar,
-        QVBoxLayout,
-        QWidget,
-    )
-    QT_LIB = "PyQt6"
-elif importlib.util.find_spec("PyQt5") is not None:
-    from PyQt5.QtCore import QMimeData, QPointF, QTimer, Qt
-    from PyQt5.QtGui import QBrush, QColor, QDrag, QFont, QFontMetrics, QKeySequence, QPen
-    from PyQt5.QtWidgets import (
-        QApplication,
-        QFileDialog,
-        QFormLayout,
-        QGraphicsEllipseItem,
-        QGraphicsItem,
-        QGraphicsLineItem,
-        QGraphicsRectItem,
-        QGraphicsScene,
-        QGraphicsSimpleTextItem,
-        QGraphicsTextItem,
-        QGraphicsView,
-        QHBoxLayout,
-        QInputDialog,
-        QLabel,
-        QListWidget,
-        QListWidgetItem,
-        QMainWindow,
-        QMessageBox,
-        QLineEdit,
-        QComboBox,
-        QCheckBox,
-        QPushButton,
-        QPlainTextEdit,
-        QShortcut,
-        QSplitter,
-        QTableWidget,
-        QTableWidgetItem,
-        QTabBar,
-        QTabWidget,
-        QToolBar,
-        QVBoxLayout,
-        QWidget,
-    )
-    QT_LIB = "PyQt5"
-else:
-    QApplication = None
-    QFileDialog = QInputDialog = QMessageBox = None
-    QBrush = QColor = QDrag = QFont = QFontMetrics = QKeySequence = QMimeData = QPen = QShortcut = QPointF = Qt = object
-    QComboBox = QFormLayout = QGraphicsEllipseItem = QGraphicsItem = object
-    QGraphicsLineItem = QGraphicsRectItem = QGraphicsScene = QGraphicsSimpleTextItem = QGraphicsTextItem = QGraphicsView = object
-    QHBoxLayout = QLabel = QListWidget = QListWidgetItem = QMainWindow = object
-    QLineEdit = QPushButton = QPlainTextEdit = QSplitter = QTableWidget = QTableWidgetItem = QCheckBox = object
-    QTabBar = QTabWidget = QToolBar = QVBoxLayout = QWidget = object
-    QT_LIB = "missing"
-
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from studio.qt_compat import (
+    QT_LIB,
+    Qt, QTimer, QRectF, QPointF,
+    QBrush, QColor, QDrag, QFont, QFontMetrics, QKeySequence, QPen, QShortcut,
+    QApplication, QFileDialog, QFormLayout, QGraphicsEllipseItem, QGraphicsItem,
+    QGraphicsLineItem, QGraphicsRectItem, QGraphicsScene, QGraphicsSimpleTextItem,
+    QGraphicsTextItem, QGraphicsView, QHBoxLayout, QInputDialog, QLabel,
+    QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QLineEdit,
+    QComboBox, QCheckBox, QPushButton, QPlainTextEdit, QSplitter,
+    QTableWidget, QTableWidgetItem, QTabBar, QTabWidget, QToolBar,
+    QVBoxLayout, QWidget,
+)
 
 from codegen import c_ident, generate, preview_application_files
 from codegen.validate import validate_graph

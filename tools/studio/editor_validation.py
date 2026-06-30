@@ -7,16 +7,11 @@ from typing import Any
 
 import importlib.util
 
-if importlib.util.find_spec("PyQt6") is not None:
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtGui import QBrush, QColor
-    from PyQt6.QtWidgets import QListWidgetItem, QMessageBox
-elif importlib.util.find_spec("PyQt5") is not None:
-    from PyQt5.QtCore import Qt
-    from PyQt5.QtGui import QBrush, QColor
-    from PyQt5.QtWidgets import QListWidgetItem, QMessageBox
-else:
-    Qt = QBrush = QColor = QListWidgetItem = QMessageBox = object
+from studio.qt_compat import (
+    Qt,
+    QBrush, QColor,
+    QListWidgetItem, QMessageBox,
+)
 
 from codegen import c_ident
 from codegen.generator import build_runtime_summary

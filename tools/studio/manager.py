@@ -9,7 +9,6 @@ small embedded project without repeatedly typing paths.
 
 from __future__ import annotations
 
-import importlib.util
 import json
 import copy
 import re
@@ -18,69 +17,16 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-if importlib.util.find_spec("PyQt6") is not None:
-    from PyQt6.QtGui import QFont, QKeySequence, QShortcut
-    from PyQt6.QtWidgets import (
-        QApplication,
-        QFileDialog,
-        QFormLayout,
-        QHBoxLayout,
-        QInputDialog,
-        QLabel,
-        QLineEdit,
-        QComboBox,
-        QListWidget,
-        QListWidgetItem,
-        QMainWindow,
-        QMessageBox,
-        QPushButton,
-        QPlainTextEdit,
-        QSplitter,
-        QTabWidget,
-        QToolBar,
-        QVBoxLayout,
-        QWidget,
-    )
-    QT_LIB = "PyQt6"
-elif importlib.util.find_spec("PyQt5") is not None:
-    from PyQt5.QtGui import QFont, QKeySequence
-    from PyQt5.QtWidgets import (
-        QApplication,
-        QFileDialog,
-        QFormLayout,
-        QHBoxLayout,
-        QInputDialog,
-        QLabel,
-        QLineEdit,
-        QComboBox,
-        QListWidget,
-        QListWidgetItem,
-        QMainWindow,
-        QMessageBox,
-        QPushButton,
-        QPlainTextEdit,
-        QShortcut,
-        QSplitter,
-        QTabWidget,
-        QToolBar,
-        QVBoxLayout,
-        QWidget,
-    )
-    QT_LIB = "PyQt5"
-else:
-    QApplication = None
-    QFileDialog = QInputDialog = QMessageBox = None
-    QFont = QKeySequence = QShortcut = object
-    QComboBox = QFormLayout = QHBoxLayout = QLabel = QLineEdit = QListWidget = QListWidgetItem = object
-    QMainWindow = QPushButton = QPlainTextEdit = QSplitter = QTabWidget = QToolBar = QVBoxLayout = QWidget = object
-    QT_LIB = "missing"
+from studio.qt_compat import (
+    QT_LIB, is_qt_available,
+    QApplication, QDialog, QFileDialog, QFormLayout, QHBoxLayout,
+    QInputDialog, QLabel, QLineEdit, QComboBox, QListWidget, QListWidgetItem,
+    QMainWindow, QMessageBox, QPushButton, QPlainTextEdit, QShortcut,
+    QSplitter, QTabWidget, QToolBar, QVBoxLayout, QWidget,
+    QFont, QKeySequence,
+)
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-
-from codegen import generate, preview_application_files
-from codegen.validate import validate_graph
-from studio.editor import VisualEditorWindow
-from studio.model import BOARD_PROFILES
 
 WORKBENCH_STYLESHEET = """
 QMainWindow, QWidget { background: #0f1117; color: #e6e9ef; font-family: "Noto Sans CJK SC", "Microsoft YaHei", "SF Pro Display", "Segoe UI", "DejaVu Sans"; font-size: 10pt; }
@@ -105,6 +51,65 @@ QListWidget, QPlainTextEdit, QLineEdit, QComboBox {
     padding: 4px;
 }
 QLabel { color: #dce3f0; }
+
+/* Scrollbar Styles */
+QScrollBar:vertical {
+    background-color: #111722;
+    width: 10px;
+    margin: 0;
+    border-radius: 5px;
+}
+QScrollBar::handle:vertical {
+    background-color: #2a3548;
+    min-height: 30px;
+    border-radius: 5px;
+    margin: 2px;
+}
+QScrollBar::handle:vertical:hover {
+    background-color: #3a4a60;
+}
+QScrollBar::handle:vertical:pressed {
+    background-color: #4a5a70;
+}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0;
+    background: none;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
+    background: none;
+}
+QScrollBar::up-arrow:vertical, QScrollBar::down-arrow:vertical {
+    background: none;
+}
+
+QScrollBar:horizontal {
+    background-color: #111722;
+    height: 10px;
+    margin: 0;
+    border-radius: 5px;
+}
+QScrollBar::handle:horizontal {
+    background-color: #2a3548;
+    min-width: 30px;
+    border-radius: 5px;
+    margin: 2px;
+}
+QScrollBar::handle:horizontal:hover {
+    background-color: #3a4a60;
+}
+QScrollBar::handle:horizontal:pressed {
+    background-color: #4a5a70;
+}
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
+    width: 0;
+    background: none;
+}
+QScrollBar::add-page:horizontal, QScrollBar::sub-page:horizontal {
+    background: none;
+}
+QScrollBar::left-arrow:horizontal, QScrollBar::right-arrow:horizontal {
+    background: none;
+}
 """
 
 PROJECT_SCHEMA_VERSION = 1
@@ -237,17 +242,54 @@ class ProjectManagerWindow(QMainWindow):
         toolbar.addAction("打开上次项目", self.open_last_project)
         toolbar.addAction("保存全部", self.save_project)
         toolbar.addAction("项目另存为", self.save_project_as)
-        toolbar.addAction("实时校验", self.validate_current_graph)
-        toolbar.addAction("生成", self.generate_application)
-        toolbar.addAction("打开当前项目", self.open_graph_editor)
-        self.view_menu = self.menuBar().addMenu("视图")
+        
+        # Add separator before generation actions
+        toolbar.addSeparator()
+        toolbar.addAction("一键生成", self.quick_generate).setToolTip("校验并生成 Application（Ctrl+Shift+G）")
+        toolbar.addAction("运行分析", self.show_debug_analysis)
+        
+        # Add shortcut for quick generate
+        self.quick_generate_shortcut = QShortcut(QKeySequence("Ctrl+Shift+G"), self)
+        self.quick_generate_shortcut.activated.connect(self.quick_generate)
+        
+        # Menu bar
+        menubar = self.menuBar()
+        
+        # File menu
+        file_menu = menubar.addMenu("文件")
+        file_menu.addAction("新建项目", self.new_project)
+        file_menu.addAction("项目创建向导", self.project_wizard)
+        file_menu.addSeparator()
+        file_menu.addAction("打开项目", self.open_project)
+        file_menu.addAction("打开上次项目", self.open_last_project)
+        file_menu.addSeparator()
+        file_menu.addAction("保存全部", self.save_project)
+        file_menu.addAction("项目另存为", self.save_project_as)
+        file_menu.addSeparator()
+        file_menu.addAction("退出", self.close)
+        
+        # Import menu
+        import_menu = menubar.addMenu("导入")
+        import_menu.addAction("芯片选择向导...", self.open_chip_wizard)
+        import_menu.addAction("导入芯片配置文件...", self.import_board_profile)
+        import_menu.addAction("导入硬件配置文件...", self.import_hardware_config)
+        import_menu.addSeparator()
+        import_menu.addAction("导出当前 Board Profile", self.export_board_profile)
+        
+        # View menu
+        self.view_menu = menubar.addMenu("视图")
         self.view_menu.addAction("资源", self.toggle_resource_dock)
         self.view_menu.addAction("属性", self.toggle_inspector_dock)
         self.view_menu.addAction("输出", self.toggle_output_dock)
         self.view_menu.addSeparator()
         self.view_menu.addAction("重置布局", self.reset_editor_layout)
-        help_menu = self.menuBar().addMenu("帮助")
+        
+        # Help menu
+        help_menu = menubar.addMenu("帮助")
         help_menu.addAction("快捷键", self.show_shortcuts_dialog)
+        help_menu.addSeparator()
+        help_menu.addAction("关于", self.show_about_dialog)
+        
         self.toggle_output_shortcut = QShortcut(QKeySequence("Ctrl+`"), self)
         self.toggle_output_shortcut.activated.connect(self.toggle_output_dock)
 
@@ -298,13 +340,16 @@ class ProjectManagerWindow(QMainWindow):
 
         buttons = QHBoxLayout()
         for text, callback in [
-            ("实时校验", self.validate_current_graph),
-            ("生成 application", self.generate_application),
-            ("打开当前项目", self.open_graph_editor),
+            ("一键生成", self.quick_generate),
+            ("打开装配", self.open_graph_editor),
         ]:
             button = QPushButton(text)
             button.clicked.connect(callback)
             buttons.addWidget(button)
+        
+        # Style the quick generate button
+        buttons.itemAt(0).widget().setStyleSheet("QPushButton { background-color: #1a6b3c; } QPushButton:hover { background-color: #1f7d45; }")
+        
         root.addLayout(buttons)
         splitter.addWidget(editor)
         splitter.setChildrenCollapsible(True)
@@ -447,36 +492,68 @@ class ProjectManagerWindow(QMainWindow):
 
     def create_project_files(self, name: str, graph: dict[str, Any], output_dir: str, board: str) -> None:
         slug = project_slug(name)
-        default_path = REPO_ROOT / ".efw_projects" / slug / f"{slug}{PROJECT_SUFFIX}"
-        path, _ = QFileDialog.getSaveFileName(self, "创建 EFW 项目", str(default_path), f"EFW Project (*{PROJECT_SUFFIX});;JSON (*.json)")
-        if not path:
-            return
-        project_path = Path(path)
-        project_dir = project_path.parent
+        default_dir = REPO_ROOT / ".efw_projects" / slug
+        
+        # Ask for project directory
+        project_dir_str = QFileDialog.getExistingDirectory(
+            self,
+            "选择项目目录",
+            str(default_dir),
+            QFileDialog.Option.ShowDirsOnly if hasattr(QFileDialog, "Option") else QFileDialog.ShowDirsOnly
+        )
+        
+        if not project_dir_str:
+            # If user cancels, use default directory
+            project_dir = default_dir
+        else:
+            project_dir = Path(project_dir_str) / slug
+        
+        # Create project directory
+        project_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Project file paths
+        project_path = project_dir / f"{slug}{PROJECT_SUFFIX}"
         graph_path = project_dir / "graph.json"
+        
+        # Check if files exist
         if graph_path.exists() or project_path.exists():
-            answer = QMessageBox.question(self, "覆盖确认", f"项目文件或 graph.json 已存在：\n{display_path(project_dir)}\n\n是否覆盖？")
+            answer = QMessageBox.question(
+                self,
+                "覆盖确认",
+                f"项目目录已存在文件：\n{display_path(project_dir)}\n\n是否覆盖？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No if hasattr(QMessageBox, "StandardButton") else QMessageBox.Yes | QMessageBox.No
+            )
             yes = QMessageBox.StandardButton.Yes if hasattr(QMessageBox, "StandardButton") else QMessageBox.Yes
             if answer != yes:
                 return
-        project_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Write graph file
         graph.setdefault("project", {})["name"] = name
         graph.setdefault("board", {})["profile"] = board
         graph_path.write_text(json.dumps(graph, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        
+        # Set project data
         self.project_path = project_path
         self.project = {
             "kind": "efw.project",
             "schema_version": PROJECT_SCHEMA_VERSION,
             "name": name,
             "description": f"{name} 的 EFW Studio 项目描述文件。",
-            "graph_path": display_path(graph_path),
+            "graph_path": "graph.json",
             "output_dir": output_dir,
             "board_profile": board,
             "notes": "由项目创建向导生成。建议先打开项目装配检查卡片、Board Profile 和 Pin Planner，再生成 application/。",
             "workflow": default_project()["workflow"],
         }
+        
+        # Save project file
         self.save_project()
         self.load_project_to_form()
+        
+        # Auto-open graph editor after project creation
+        self.open_graph_editor()
+        
+        self.statusBar().showMessage(f"项目已创建并打开：{display_path(project_dir)}", 7000)
 
     def open_project(self) -> None:
         if not self._confirm_workspace_discard_changes():
@@ -535,10 +612,10 @@ class ProjectManagerWindow(QMainWindow):
             QMessageBox.warning(self, "最近项目不存在", f"找不到项目文件，已从最近项目移除：\n{display_path(path)}\n\n提示：如果项目已移动到其他位置，请使用「打开项目」重新加载。")
             self.loading_recent_path = None
             return
-        self.load_project_file(path, remember=False, confirm_discard=False)
+        self.load_project_file(path, remember=False, confirm_discard=False, auto_open_editor=True)
         self.loading_recent_path = None
 
-    def load_project_file(self, path: Path, remember: bool = True, confirm_discard: bool = True) -> None:
+    def load_project_file(self, path: Path, remember: bool = True, confirm_discard: bool = True, auto_open_editor: bool = False) -> None:
         if confirm_discard and not self._confirm_workspace_discard_changes():
             return
         if not path.exists():
@@ -559,9 +636,14 @@ class ProjectManagerWindow(QMainWindow):
         self.load_project_to_form()
         if remember:
             self.add_recent_project(path)
-        self.sync_embedded_editor_to_project()
-        self.workspace_tabs.setCurrentIndex(0)
-        self.statusBar().showMessage(f"已加载项目：{display_path(path)}。点击“打开当前项目”进入装配。", 7000)
+        
+        # Auto-open editor if requested (e.g., double-click)
+        if auto_open_editor:
+            self.open_graph_editor()
+            self.statusBar().showMessage(f"已加载并打开项目：{display_path(path)}", 7000)
+        else:
+            self.sync_embedded_editor_to_project()
+            self.workspace_tabs.setCurrentIndex(0)
 
     def sync_embedded_editor_to_project(self) -> None:
         if self.embedded_editor is None:
@@ -684,6 +766,46 @@ class ProjectManagerWindow(QMainWindow):
                 tmp_path.unlink(missing_ok=True)
         QMessageBox.information(self, "已生成", f"已生成 application：\n{display_path(out_dir)}\n\n下一步建议：\n1. 查看生成映射和文件树\n2. 在真实板卡工程中补 board_adapters\n3. 用 CMake/IDE 做一次编译验证")
 
+    def quick_generate(self) -> None:
+        """One-click validate and generate."""
+        self.apply_form_to_project()
+        
+        # Step 1: Validate
+        graph_path = self.graph_path()
+        try:
+            graph = self.project_graph()
+            validate_graph(graph)
+        except Exception as exc:
+            QMessageBox.warning(self, "校验失败", f"Graph 校验失败，请先修复错误：\n\n{exc}")
+            return
+        
+        # Step 2: Generate
+        out_dir = self.output_dir()
+        tmp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
+                json.dump(graph, tmp, ensure_ascii=False, indent=2)
+                tmp_path = Path(tmp.name)
+            
+            # Auto-confirm overwrite for quick generate
+            generate(tmp_path, out_dir, force=True)
+            
+        except Exception as exc:
+            QMessageBox.warning(self, "生成失败", str(exc))
+            return
+        finally:
+            if tmp_path is not None:
+                tmp_path.unlink(missing_ok=True)
+        
+        QMessageBox.information(
+            self,
+            "一键生成完成",
+            f"校验通过，已生成 application：\n{display_path(out_dir)}\n\n"
+            f"下一步：\n"
+            f"1. 在 board_adapters 中实现硬件操作\n"
+            f"2. 用 Keil/STM32CubeIDE/ESP-IDF 编译验证"
+        )
+
     def open_graph_editor(self) -> None:
         self.apply_form_to_project()
         graph_path = self.graph_path()
@@ -745,6 +867,265 @@ class ProjectManagerWindow(QMainWindow):
             "Delete / Backspace 删除当前对象\n"
             "Tab 打开就地搜索插入框\n"
             "Ctrl+` 打开输出 / 日志区",
+        )
+
+    def show_debug_analysis(self) -> None:
+        """Show the debug analysis panel."""
+        # First ensure the embedded editor is open
+        editor = self._ensure_embedded_editor()
+        if editor is None:
+            return
+        
+        # Switch to the debug tab in the bottom panel
+        if hasattr(editor, 'bottom_tabs') and hasattr(editor, 'bottom_dock'):
+            # Show the bottom dock if hidden
+            if not editor.bottom_dock.isVisible():
+                editor.bottom_dock.show()
+            
+            # Find and switch to the debug tab
+            for i in range(editor.bottom_tabs.count()):
+                if editor.bottom_tabs.tabText(i) == "运行分析":
+                    editor.bottom_tabs.setCurrentIndex(i)
+                    break
+            
+            # Refresh the analysis
+            if hasattr(editor, 'refresh_debug_analysis'):
+                editor.refresh_debug_analysis()
+        
+        # Switch to the assembly tab to show the editor
+        self.workspace_tabs.setCurrentWidget(editor)
+
+    def import_board_profile(self) -> None:
+        """Import a board profile using chip wizard or JSON file."""
+        # Ask user to choose import method
+        choice = QMessageBox.question(
+            self,
+            "导入芯片配置",
+            "请选择导入方式：\n\n"
+            "• 是 - 从芯片数据库选择（推荐）\n"
+            "• 否 - 从JSON文件导入",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Yes
+        )
+        
+        if choice == QMessageBox.StandardButton.Cancel:
+            return
+        
+        if choice == QMessageBox.StandardButton.Yes:
+            # Open chip selection wizard
+            from studio.chip_wizard import ChipSelectionDialog
+            dialog = ChipSelectionDialog(self)
+            if dialog.exec() == QDialog.DialogCode.Accepted if hasattr(QDialog, 'DialogCode') else dialog.exec_():
+                chip_id = dialog.get_selected_chip_id()
+                profile = dialog.get_selected_profile()
+                if chip_id and profile:
+                    # Add to board profiles
+                    from studio.model import BOARD_PROFILES
+                    BOARD_PROFILES[chip_id] = profile
+                    
+                    # Update combo box
+                    self.board_edit.clear()
+                    self.board_edit.addItems(list(BOARD_PROFILES))
+                    self.board_edit.setCurrentText(chip_id)
+                    
+                    QMessageBox.information(
+                        self,
+                        "导入成功",
+                        f"已从数据库导入芯片配置：\n{profile['label']}"
+                    )
+        else:
+            # Import from JSON file
+            path, _ = QFileDialog.getOpenFileName(
+                self,
+                "导入芯片配置 (Board Profile)",
+                str(REPO_ROOT / "examples" / "board_profiles"),
+                "所有支持的文件 (*.json .ioc sdkconfig);;JSON 文件 (*.json);;CubeMX 配置 (*.ioc);;ESP-IDF 配置 (sdkconfig);;所有文件 (*)"
+            )
+            if not path:
+                return
+            
+            try:
+                from studio.chip_database import detect_and_import
+                from studio.chip_wizard import ChipImportResultDialog
+                
+                config, source = detect_and_import(Path(path))
+                if not config:
+                    QMessageBox.warning(
+                        self,
+                        "导入失败",
+                        f"无法识别文件格式或提取配置信息。\n\n"
+                        "支持的格式：\n"
+                        "  • STM32CubeMX .ioc 文件\n"
+                        "  • ESP-IDF sdkconfig 文件\n"
+                        "  • 包含 board 配置的 JSON 文件"
+                    )
+                    return
+                
+                # Show import result dialog
+                result_dialog = ChipImportResultDialog(config, source, self)
+                if result_dialog.exec() == QDialog.DialogCode.Accepted if hasattr(QDialog, 'DialogCode') else result_dialog.exec_():
+                    profile_name = result_dialog.get_profile_name()
+                    profile = result_dialog.get_board_profile()
+                    
+                    # Add to board profiles
+                    from studio.model import BOARD_PROFILES
+                    BOARD_PROFILES[profile_name] = profile
+                    
+                    # Update combo box
+                    self.board_edit.clear()
+                    self.board_edit.addItems(list(BOARD_PROFILES))
+                    self.board_edit.setCurrentText(profile_name)
+                    
+                    QMessageBox.information(
+                        self,
+                        "导入成功",
+                        f"已导入芯片配置：{profile_name}"
+                    )
+            except Exception as exc:
+                QMessageBox.warning(self, "导入失败", f"导入芯片配置失败：\n{exc}")
+
+    def import_hardware_config(self) -> None:
+        """Import a hardware configuration file."""
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "导入硬件配置",
+            str(REPO_ROOT / "examples"),
+            "所有支持的文件 (*.json .ioc sdkconfig);;JSON 文件 (*.json);;CubeMX 配置 (*.ioc);;ESP-IDF 配置 (sdkconfig);;所有文件 (*)"
+        )
+        if not path:
+            return
+        
+        try:
+            from studio.chip_database import detect_and_import
+            from studio.chip_wizard import ChipImportResultDialog
+            
+            file_path = Path(path)
+            
+            # Try auto-detect first
+            config, source = detect_and_import(file_path)
+            
+            if config:
+                # Show import result dialog
+                result_dialog = ChipImportResultDialog(config, source, self)
+                if result_dialog.exec() == QDialog.DialogCode.Accepted if hasattr(QDialog, 'DialogCode') else result_dialog.exec_():
+                    profile_name = result_dialog.get_profile_name()
+                    profile = result_dialog.get_board_profile()
+                    
+                    # Add to board profiles
+                    from studio.model import BOARD_PROFILES
+                    BOARD_PROFILES[profile_name] = profile
+                    
+                    # Update combo box
+                    self.board_edit.clear()
+                    self.board_edit.addItems(list(BOARD_PROFILES))
+                    self.board_edit.setCurrentText(profile_name)
+                    
+                    QMessageBox.information(
+                        self,
+                        "导入成功",
+                        f"已导入硬件配置：{profile_name}"
+                    )
+                    return
+            
+            # Fallback: try to parse as JSON with pin_plan
+            if file_path.suffix.lower() == ".json":
+                data = json.loads(file_path.read_text(encoding="utf-8"))
+                
+                # Check for pin_plan
+                board = data.get("board", {})
+                pin_plan = data.get("pin_plan") or (board.get("pin_plan") if isinstance(board, dict) else None)
+                
+                if isinstance(pin_plan, list):
+                    # Update current project's pin plan
+                    if "board" not in self.project:
+                        self.project["board"] = {}
+                    self.project["board"]["pin_plan"] = pin_plan
+                    
+                    QMessageBox.information(
+                        self,
+                        "导入成功",
+                        f"已导入引脚配置，共 {len(pin_plan)} 个引脚定义"
+                    )
+                    return
+            
+            QMessageBox.warning(
+                self,
+                "格式不支持",
+                "无法识别的硬件配置格式。\n\n"
+                "支持的格式：\n"
+                "  • STM32CubeMX .ioc 文件\n"
+                "  • ESP-IDF sdkconfig 文件\n"
+                "  • 包含引脚配置的 JSON 文件"
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "导入失败", f"导入硬件配置失败：\n{exc}")
+
+    def export_board_profile(self) -> None:
+        """Export current board profile to a JSON file."""
+        current_profile = self.board_edit.currentText().strip()
+        if not current_profile or current_profile not in BOARD_PROFILES:
+            QMessageBox.warning(self, "导出失败", "请先选择一个有效的 Board Profile")
+            return
+        
+        default_name = f"{current_profile}_profile.json"
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "导出芯片配置",
+            str(REPO_ROOT / "examples" / "board_profiles" / default_name),
+            "JSON 文件 (*.json)"
+        )
+        if not path:
+            return
+        
+        try:
+            export_data = {current_profile: BOARD_PROFILES[current_profile]}
+            Path(path).write_text(json.dumps(export_data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+            QMessageBox.information(self, "导出成功", f"已导出芯片配置到：\n{display_path(Path(path))}")
+        except Exception as exc:
+            QMessageBox.warning(self, "导出失败", f"导出芯片配置失败：\n{exc}")
+
+    def open_chip_wizard(self) -> None:
+        """Open the chip selection wizard."""
+        from studio.chip_wizard import ChipSelectionDialog
+        dialog = ChipSelectionDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted if hasattr(QDialog, 'DialogCode') else dialog.exec_():
+            chip_id = dialog.get_selected_chip_id()
+            profile = dialog.get_selected_profile()
+            if chip_id and profile:
+                # Add to board profiles
+                from studio.model import BOARD_PROFILES
+                BOARD_PROFILES[chip_id] = profile
+                
+                # Update combo box
+                self.board_edit.clear()
+                self.board_edit.addItems(list(BOARD_PROFILES))
+                self.board_edit.setCurrentText(chip_id)
+                
+                QMessageBox.information(
+                    self,
+                    "导入成功",
+                    f"已从数据库导入芯片配置：\n{profile['label']}"
+                )
+
+    def show_about_dialog(self) -> None:
+        """Show about dialog."""
+        QMessageBox.about(
+            self,
+            "关于 EFW 可视化项目工作台",
+            "<h3>EFW 可视化项目工作台</h3>"
+            "<p>版本: 1.0.0</p>"
+            "<p>EFW (Embedded Framework) 是一个面向裸机和轻量RTOS的嵌入式C框架。</p>"
+            "<p>本工具提供可视化的项目管理、蓝图编辑、代码生成功能。</p>"
+            "<hr>"
+            "<p><b>主要功能：</b></p>"
+            "<ul>"
+            "<li>可视化蓝图编辑器</li>"
+            "<li>自动代码生成</li>"
+            "<li>芯片配置管理</li>"
+            "<li>运行流程分析</li>"
+            "</ul>"
+            "<hr>"
+            "<p>项目地址: <a href='https://github.com/your-repo/efw'>GitHub</a></p>"
         )
 
     def closeEvent(self, event: Any) -> None:

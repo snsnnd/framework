@@ -5,12 +5,9 @@ from __future__ import annotations
 
 import importlib.util
 
-if importlib.util.find_spec("PyQt6") is not None:
-    from PyQt6.QtWidgets import QMessageBox
-elif importlib.util.find_spec("PyQt5") is not None:
-    from PyQt5.QtWidgets import QMessageBox
-else:
-    QMessageBox = object
+from studio.qt_compat import (
+    QMessageBox,
+)
 
 from codegen.graph import CALLBACK_SIGNATURES, NODE_CONTRACTS, callback_signature
 
