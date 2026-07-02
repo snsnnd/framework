@@ -28,7 +28,11 @@ from codegen.graph import (
     node_generation_label,
 )
 from codegen import c_ident
-from pypinyin import lazy_pinyin
+try:
+    from pypinyin import lazy_pinyin
+except ImportError:  # Studio can still run without pypinyin; IDs just won't be transliterated.
+    def lazy_pinyin(value):
+        return [str(value)]
 from studio.core import page_for_node, page_hint, page_key, page_title, root_page, visible_nodes_for_page
 from studio.editor_canvas import BackdropItem, EdgeItem, GraphNodeItem
 from studio.editor_registry import NODE_TEMPLATES, TYPE_LABELS, display_label
@@ -225,9 +229,15 @@ class WorkbenchMixin:
 
     def _iter_live_backdrop_items(self) -> list[Any]:
         backdrops = []
-        for item in self.scene.items():
-            if isinstance(item, BackdropItem) and self._scene_item_alive(item):
-                backdrops.append(item)
+        if not hasattr(self, "scene") or self.scene is None:
+            return backdrops
+        try:
+            for item in self.scene.items():
+                if isinstance(item, BackdropItem) and self._scene_item_alive(item):
+                    backdrops.append(item)
+        except RuntimeError:
+            # Scene has been deleted
+            pass
         return backdrops
 
     def _set_backdrop_opacity(self, selected_ids: set[str] | None = None, active_backdrop_ids: set[str] | None = None, default_opacity: float = 0.95, dim_opacity: float = 0.18) -> None:
@@ -296,6 +306,7 @@ class WorkbenchMixin:
         self.refresh_module_assembly_view()
         self.refresh_release_view()
         self.refresh_workflow_panel()
+        self.refresh_debug_analysis()
         visible_ids = {node.get("id") for node in self.visible_nodes()}
         if self.current_node_id not in visible_ids:
             self.current_node_id = None
@@ -505,7 +516,26 @@ class WorkbenchMixin:
         runtime_summary = self.runtime_summary() if hasattr(self, "runtime_summary") else {}
         publishers = runtime_summary.get("publishers", []) if isinstance(runtime_summary, dict) else []
         state_machines = runtime_summary.get("state_machines", []) if isinstance(runtime_summary, dict) else []
-        lines = ["生成发布检查清单", "", "先让下面五项尽量都变成 [OK]，再点击生成 application。", ""]
+        
+        # Build HTML output
+        html = []
+        html.append('<div style="font-family: Consolas, monospace; font-size: 12px;">')
+        
+        # Status header
+        all_ok = not errors and not warnings and not missing and not conflicts and bool(self.graph.get("nodes"))
+        if all_ok:
+            html.append('<div style="background: #1a3a1a; border: 1px solid #2d5a2d; border-radius: 6px; padding: 10px; margin-bottom: 12px;">')
+            html.append('<span style="color: #4CAF50; font-weight: bold;">✅ 可以生成 Application</span>')
+            html.append('</div>')
+        else:
+            html.append('<div style="background: #3a1a1a; border: 1px solid #5a2d2d; border-radius: 6px; padding: 10px; margin-bottom: 12px;">')
+            html.append(f'<span style="color: #F44336; font-weight: bold;">❌ 需修正后再生成</span>')
+            html.append('</div>')
+        
+        # Checklist
+        html.append('<div style="margin-bottom: 12px;">')
+        html.append('<span style="color: #E0E0E0; font-weight: bold;">检查清单</span>')
+        html.append('<ul style="margin: 4px 0 0 20px; padding: 0;">')
         checks = [
             (not errors, f"Graph 校验错误：{len(errors)}"),
             (not warnings, f"警告：{len(warnings)}"),
@@ -514,25 +544,56 @@ class WorkbenchMixin:
             (bool(self.graph.get("nodes")), "Graph 至少包含一个节点"),
         ]
         for ok, text in checks:
-            lines.append(("[OK] " if ok else "[TODO] ") + text)
+            color = "#4CAF50" if ok else "#F44336"
+            icon = "✅" if ok else "❌"
+            html.append(f'<li style="color: {color}; margin: 2px 0;">{icon} {text}</li>')
+        html.append('</ul></div>')
+        
+        # Missing callbacks
         if missing:
-            lines.append("")
-            lines.append("缺失回调：")
+            html.append('<div style="margin-bottom: 12px;">')
+            html.append('<span style="color: #FFEB3B; font-weight: bold;">📝 缺失回调 (需要实现)</span>')
+            html.append('<ul style="margin: 4px 0 0 20px; padding: 0;">')
             for item in missing[:12]:
-                lines.append(f"- {item['owner']}.{item['field']} -> {item['name']}")
-        if errors or warnings:
-            lines.append("")
-            lines.append("校验消息：")
-            for message in (errors + warnings)[:12]:
-                lines.append(f"- {message}")
+                owner = item.get('owner', '')
+                field = item.get('field', '')
+                name = item.get('name', '')
+                sig = item.get('signature', '')
+                html.append(f'<li style="color: #FFF9C4; margin: 2px 0;"><b>{name}</b> <span style="color: #B0BEC5;">({sig})</span></li>')
+            if len(missing) > 12:
+                html.append(f'<li style="color: #B0BEC5;">... 还有 {len(missing) - 12} 个</li>')
+            html.append('</ul></div>')
+        
+        # Errors
+        if errors:
+            html.append('<div style="margin-bottom: 12px;">')
+            html.append('<span style="color: #F44336; font-weight: bold;">❌ 错误</span>')
+            html.append('<ul style="margin: 4px 0 0 20px; padding: 0;">')
+            for msg in errors[:8]:
+                html.append(f'<li style="color: #FFB3B3; margin: 2px 0;">{msg[2:]}</li>')
+            html.append('</ul></div>')
+        
+        # Warnings
+        if warnings:
+            html.append('<div style="margin-bottom: 12px;">')
+            html.append('<span style="color: #FF9800; font-weight: bold;">⚠️ 警告</span>')
+            html.append('<ul style="margin: 4px 0 0 20px; padding: 0;">')
+            for msg in warnings[:8]:
+                html.append(f'<li style="color: #FFE0A3; margin: 2px 0;">{msg[2:]}</li>')
+            html.append('</ul></div>')
+        
+        # Runtime summary
         if publishers or state_machines:
-            lines.append("")
-            lines.append("运行时摘要：")
-            lines.append(f"- 自动/手动发布者：{len(publishers)}")
-            lines.append(f"- 状态机：{len(state_machines)}")
-            for item in publishers[:8]:
-                lines.append(f"  - publisher {item.get('id')} | mode={item.get('mode')} | stage={item.get('stage')}")
-        self.release_output.setPlainText("\n".join(lines))
+            html.append('<div style="margin-bottom: 12px;">')
+            html.append('<span style="color: #2196F3; font-weight: bold;">ℹ️ 运行时摘要</span>')
+            html.append('<ul style="margin: 4px 0 0 20px; padding: 0;">')
+            html.append(f'<li style="color: #90CAF9; margin: 2px 0;">自动/手动发布者：{len(publishers)}</li>')
+            html.append(f'<li style="color: #90CAF9; margin: 2px 0;">状态机：{len(state_machines)}</li>')
+            html.append('</ul></div>')
+        
+        html.append('</div>')
+        
+        self.release_output.setHtml("\n".join(html))
 
     def open_module_item(self, item: QListWidgetItem) -> None:
         role = Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole
@@ -657,13 +718,21 @@ class WorkbenchMixin:
         self.edge_items.clear()
         positions = self.page_positions()
         visible_nodes = self.visible_nodes()
+        
+        # Create regular backdrops
         for group in self.graph.get("ui", {}).get("backdrops", []):
             if not isinstance(group, dict):
                 continue
             backdrop = BackdropItem(group, self)
             backdrop.update_geometry()
             self.scene.addItem(backdrop)
+        
+        # Place regular nodes
         placed: list[tuple[float, float, float, float]] = []
+        
+        # Get saved flip states
+        flipped_ports = self.graph.get("ui", {}).get("flipped_ports", {})
+        
         for index, node in enumerate(visible_nodes):
             item = GraphNodeItem(node, self)
             pos = positions.get(node.get("id"), [40 + index * 40, 60 + index * 150])
@@ -675,6 +744,12 @@ class WorkbenchMixin:
             item.setPos(QPointF(x, y))
             self.scene.addItem(item)
             self.node_items[node.get("id")] = item
+            
+            # Restore flip state
+            node_id = node.get("id")
+            if node_id in flipped_ports and flipped_ports[node_id]:
+                item.flip_ports()
+        
         self.refresh_edges()
         self.apply_focus_mode(self.focus_node_id)
 
@@ -743,6 +818,25 @@ class WorkbenchMixin:
             active_backdrop_ids=active_backdrops,
             default_backdrop_opacity=0.96,
         )
+
+    def flip_selected_node_ports(self) -> None:
+        """Flip ports on selected nodes."""
+        node_id = self.current_node_id
+        if not node_id:
+            return
+        
+        node_item = self.node_items.get(node_id)
+        if node_item and hasattr(node_item, 'flip_ports'):
+            node_item.flip_ports()
+            
+            # Save flip state to graph
+            ui = self.graph.setdefault("ui", {})
+            flipped = ui.setdefault("flipped_ports", {})
+            flipped[node_id] = node_item._ports_flipped
+            
+            # Refresh edges to update connection paths
+            self.refresh_edges()
+            self._mark_dirty()
 
     def handle_scene_selection_changed(self) -> None:
         self._prune_stale_scene_items()
@@ -1045,8 +1139,15 @@ class WorkbenchMixin:
                 b = self.port_scene_center(dst, edge.get("to_port"), "in")
                 if not a or not b:
                     continue
+                
+                # Determine port directions based on flip state
+                src_item = self.node_items.get(src)
+                dst_item = self.node_items.get(dst)
+                start_dir = "left" if (src_item and getattr(src_item, '_ports_flipped', False)) else "right"
+                end_dir = "right" if (dst_item and getattr(dst_item, '_ports_flipped', False)) else "left"
+                
                 line = EdgeItem(edge, self)
-                line.update_path(a, b)
+                line.update_path(a, b, start_dir, end_dir)
                 line.refresh_pen()
                 kind_label = EDGE_KIND_LABELS.get(str(edge.get("kind", "generic")), str(edge.get("kind", "generic")))
                 effect = ""
@@ -1194,8 +1295,6 @@ class WorkbenchMixin:
                 self.focus_node_id = None
                 self.apply_focus_mode(None)
             self.selected_label.setText("未选择卡片")
-            if hasattr(self, "ports_label"):
-                self.ports_label.setText("端口：未选择")
             self.node_json_editor.clear()
             if hasattr(self, "clear_property_tables"):
                 self.clear_property_tables()
@@ -1206,11 +1305,36 @@ class WorkbenchMixin:
             return
         prefix = "页面属性" if node.get("id") == self.active_page().get("id") else "已选择"
         self.selected_label.setText(f"{prefix}: {node.get('id')} ({TYPE_LABELS.get(node.get('type'), node.get('type'))})")
-        if hasattr(self, "ports_label"):
-            self.ports_label.setText(self.node_port_summary(node) + "\n" + self.node_contract_summary(node))
         self.node_json_editor.setPlainText(json.dumps(node, ensure_ascii=False, indent=2))
         self.populate_property_form(node)
         self.refresh_callback_selector(node)
+        self._update_tabs_for_node_type(node)
+
+    def _update_tabs_for_node_type(self, node: dict[str, Any]) -> None:
+        """Show/hide tabs based on node type."""
+        if not hasattr(self, "right_tabs"):
+            return
+        
+        node_type = str(node.get("type", ""))
+        
+        # Define which tabs to hide for each node type category
+        hidden_tabs = set()
+        
+        # Hardware nodes: HAL, Sensor, Actuator - show all tabs
+        hardware_types = {"hal.custom", "hal.gpio_line_input", "sensor.custom", "sensor.line_tracking", 
+                         "actuator.custom", "actuator.motor"}
+        
+        # Non-hardware nodes: hide pin planner
+        if node_type not in hardware_types:
+            hidden_tabs.add("引脚配置")
+        
+        # Data types: hide code tab
+        data_types = {"data.enum", "data.struct", "custom.card", "custom.interface_card"}
+        if node_type in data_types:
+            hidden_tabs.add("节点代码")
+        
+        # Rebuild inspector nav with hidden tabs
+        self.rebuild_inspector_nav(hidden_tabs)
 
     def page_for_node_location(self, node: dict[str, Any] | None) -> dict[str, str] | None:
         if not node:

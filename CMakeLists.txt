@@ -24,11 +24,17 @@ option(EFW_ENABLE_ALGO_ENCODER_SPEED "Enable encoder speed estimator" ON)
 option(EFW_ENABLE_ALGO_ATTITUDE_COMPLEMENTARY "Enable complementary attitude estimator" ON)
 option(EFW_ENABLE_STATE_MACHINE "Enable state machine registry" ON)
 option(EFW_ENABLE_EVENT "Enable lightweight topic event" ON)
+option(EFW_ENABLE_SCHEDULER "Enable multi-period task scheduler" ON)
+option(EFW_ENABLE_DEBUG "Enable online debug module" ON)
 
 set(EFW_SOURCES src/core/init.c src/core/diagnostic.c src/app/runtime.c)
 
 if(EFW_ENABLE_EVENT)
     list(APPEND EFW_SOURCES src/core/event.c)
+endif()
+
+if(EFW_ENABLE_SCHEDULER)
+    list(APPEND EFW_SOURCES src/core/scheduler.c)
 endif()
 
 if(EFW_ENABLE_HAL)
@@ -101,6 +107,10 @@ if(EFW_ENABLE_STATE_MACHINE)
     list(APPEND EFW_SOURCES src/state/state_machine_registry.c)
 endif()
 
+if(EFW_ENABLE_DEBUG)
+    list(APPEND EFW_SOURCES src/debug/efw_debug.c src/debug/efw_debug_litetune.c)
+endif()
+
 add_library(efw STATIC ${EFW_SOURCES})
 target_link_libraries(efw PUBLIC m)
 
@@ -131,6 +141,8 @@ target_compile_definitions(efw PUBLIC
     EFW_ENABLE_ALGO_ATTITUDE_COMPLEMENTARY=$<BOOL:${EFW_ENABLE_ALGO_ATTITUDE_COMPLEMENTARY}>
     EFW_ENABLE_STATE_MACHINE=$<BOOL:${EFW_ENABLE_STATE_MACHINE}>
     EFW_ENABLE_EVENT=$<BOOL:${EFW_ENABLE_EVENT}>
+    EFW_ENABLE_SCHEDULER=$<BOOL:${EFW_ENABLE_SCHEDULER}>
+    EFW_ENABLE_DEBUG=$<BOOL:${EFW_ENABLE_DEBUG}>
 )
 
 if(EFW_BUILD_APPLICATIONS)
@@ -173,4 +185,8 @@ if(EFW_BUILD_TESTS)
     add_executable(efw_test_contract_sizes tests/contract_size_check.c)
     target_link_libraries(efw_test_contract_sizes PRIVATE efw)
     add_test(NAME efw_contract_sizes COMMAND efw_test_contract_sizes)
+
+    add_executable(efw_sim_test tests/efw_sim_test.c)
+    target_link_libraries(efw_sim_test PRIVATE efw m)
+    add_test(NAME efw_sim_test COMMAND efw_sim_test)
 endif()

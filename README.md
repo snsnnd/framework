@@ -27,8 +27,10 @@ EFW 是一个面向裸机和轻量 RTOS 的嵌入式 C 框架，可直接作为�
 - `include/efw/module/`：模块生命周期接口
 - `include/efw/state/`：状态机接口
 - `src/`：库源码，按功能分层，可按需加入 Keil、STM32CubeIDE、ESP-IDF 或 CMake 工程
-- `application/`：接近真实工程结构的应用示例（`simple_blink/` 是最小例，`smart_environment_controller/` 展示多组件组合，`line_tracking_car/` 展示领域应用）
-- `docs/`：设计说明和环境需求
+- `application/`：手写应用示例（`simple_blink/`、`smart_environment_controller/`、`line_tracking_car/`）
+- `tools/`：CLI、API、Studio、codegen、debug、compiler、simulator 等工具层
+- `examples/`：项目描述和 Graph 示例，生成产物不入库
+- `docs/`：当前架构、CLI、Graph、codegen 和环境说明
 
 ## 快速接入
 1. 把 `include/` 加入头文件路径。
@@ -83,16 +85,27 @@ STATE：src/state/state_machine_registry.c
 - `application/smart_environment_controller/`：复杂一点的环境控制器，组合 ADC/I2C/GPIO HAL、自定义温湿度传感器、IMU、滑动均值、互补滤波、事件总线、状态机、继电器和告警 LED，用来展示 EFW 作为通用嵌入式开发工具的组织方式。
 - `application/line_tracking_car/`：循迹车示例，保留为机器人/控制类项目的领域模板。
 
-## 代码生成器第一阶段
-可视化蓝图系统的第一步已经落到 CLI：`tools/efw.py codegen` 可读取图描述 JSON，并生成可复制到真实项目的 `application/` 目录。当前定位为通用嵌入式 application 生成工具：支持自定义 HAL/SENSOR/ACTUATOR/ALGORITHM/MODULE/TASK 卡片，也保留循迹车 LineFollower 作为一个内置示例 flow。
+## Project-first CLI
+
+推荐用项目描述文件 `.efw_project.json` 管理 Graph、输出目录和目标板卡。CLI 和 Studio 都通过 `tools.api.*` 使用同一套工具能力。
 
 ```bash
-python3 tools/efw.py codegen examples/graphs/generic_embedded_app.json \
-  -o application/generated_generic_embedded_app \
-  --force
+python3 tools/efw.py project create demo --chip STM32F407VGT6 --board Discovery_F407
+python3 tools/efw.py project validate demo
+python3 tools/efw.py project generate demo --dry-run
+python3 tools/efw.py project build demo --generate
+python3 tools/efw.py project simulate demo --duration 1000
 ```
 
-生成代码仍然只依赖 EFW 的 application runtime 和 bind/update 句柄模式；真实项目可把 STM32 HAL、ESP-IDF、MSPM0 DriverLib 或自有 BSP glue 放进 `board_adapters`，生成器会检查回调函数存在、签名匹配并加入 CMake 片段。第二阶段增加统一 PyQt 工作台：`python3 tools/efw.py studio`，在同一窗口内管理 graph、输出目录、板级 profile、notes、蓝图画布、Connect Selected 连线、节点属性和 Code 区自定义 `.c/.h` 文件。自定义算法、模块和周期任务会与可视化卡片一起生成 application。更多说明见 `docs/codegen.md`，环境需求见 `docs/environment.md`。
+`project graph` 只提供读取、导出和格式化能力。Graph 的结构化编辑由 Studio 或 `tools.api.graph` 内部 API 完成；用户也可以直接编辑 `graph.json`。
+
+底层 `codegen` 仍可直接使用：
+
+```bash
+python3 tools/efw.py codegen examples/graphs/generic_embedded_app.json -o /tmp/efw_app --dry-run
+```
+
+真实项目可把 STM32 HAL、ESP-IDF、MSPM0 DriverLib 或自有 BSP glue 放进 `board_adapters`。生成代码调用 board adapter，不再伪装真实硬件 mock。
 
 ## 可视化工具环境
 代码生成器只依赖 Python 标准库；PyQt 可视化编辑器和项目管理界面需要安装 Qt 绑定：
@@ -102,7 +115,7 @@ python3 -m pip install -r tools/requirements-visual.txt
 python3 tools/efw.py studio
 ```
 
-`examples/projects/generic_embedded_app.efw_project.json` 是一个项目管理界面可直接打开的示例项目文件。仓库还包含 `.devcontainer/`，在 GitHub Codespaces 中可通过 6080 端口打开 noVNC 桌面来运行 PyQt 项目管理器，并可用 `bash .devcontainer/check-vnc.sh` 自检 VNC/noVNC/PyQt；详见 `docs/environment.md`。
+`examples/projects/generic_embedded_app.efw_project.json` 是 Studio 和 CLI 都可打开的示例项目文件。仓库还包含 `.devcontainer/`，在 GitHub Codespaces 中可通过 6080 端口打开 noVNC 桌面来运行 PyQt 项目管理器，并可用 `bash .devcontainer/check-vnc.sh` 自检 VNC/noVNC/PyQt；详见 `docs/environment.md`。
 
 ## 分发与打包
 

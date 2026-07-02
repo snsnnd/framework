@@ -11,9 +11,7 @@ from __future__ import annotations
 
 import json
 import copy
-import re
 import sys
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -26,7 +24,29 @@ from studio.qt_compat import (
     QFont, QKeySequence,
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+from studio.model import BOARD_PROFILES
+from studio.editor import VisualEditorWindow
+from tools.project.core import (
+    PROJECT_ROOT,
+    PROJECT_SCHEMA_VERSION,
+    PROJECT_SUFFIX,
+    REPO_ROOT,
+    add_recent_project as add_recent_project_record,
+    blank_graph,
+    create_project_files as create_project_files_on_disk,
+    default_project,
+    display_path,
+    load_json,
+    load_recent_projects,
+    normalize_project_descriptor,
+    project_graph_path,
+    project_output_dir,
+    project_slug,
+    rel_or_abs,
+    remove_recent_project,
+    save_recent_projects,
+)
+from tools.api.graph import generate_graph_application, preview_graph_generation, validate_graph_data
 
 WORKBENCH_STYLESHEET = """
 QMainWindow, QWidget { background: #0f1117; color: #e6e9ef; font-family: "Noto Sans CJK SC", "Microsoft YaHei", "SF Pro Display", "Segoe UI", "DejaVu Sans"; font-size: 10pt; }
@@ -111,106 +131,6 @@ QScrollBar::left-arrow:horizontal, QScrollBar::right-arrow:horizontal {
     background: none;
 }
 """
-
-PROJECT_SCHEMA_VERSION = 1
-PROJECT_SUFFIX = ".efw_project.json"
-RECENT_FILE = REPO_ROOT / ".efw_projects" / "recent.json"
-
-
-def default_project() -> dict[str, Any]:
-    return {
-        "kind": "efw.project",
-        "schema_version": PROJECT_SCHEMA_VERSION,
-        "name": "generic_embedded_app",
-        "description": "EFW Studio 项目文件。它保存项目说明、Graph 路径、输出目录和目标板卡配置。",
-        "graph_path": "examples/graphs/generic_embedded_app.json",
-        "output_dir": "application/generated_generic_embedded_app",
-        "board_profile": "generic-mock",
-        "notes": "Use the graph editor to edit cards/code, then generate application/. Put board-specific glue in graph.board_adapters.",
-        "workflow": [
-            "双击最近项目或打开 .efw_project.json 后，先检查项目名、Graph JSON、输出目录和 Board Profile。",
-            "点击“打开当前项目”进入项目装配，编辑卡片、关系和 custom_files。",
-            "回到项目页执行实时校验，通过后生成 application。",
-        ],
-    }
-
-
-def project_slug(name: str) -> str:
-    slug = re.sub(r"[^0-9A-Za-z_\-]+", "_", name.strip()).strip("_")
-    return slug or "new_efw_project"
-
-
-def blank_graph(name: str, board_profile: str) -> dict[str, Any]:
-    return {
-        "project": {"name": name, "tick_ms": 1},
-        "board": {"profile": board_profile, "pin_plan": []},
-        "nodes": [
-            {
-                "id": "app_module",
-                "type": "project.module",
-                "display_name": "应用模块",
-                "description": "项目的第一个模块。",
-            }
-        ],
-        "edges": [],
-        "flows": [],
-        "tasks": [],
-        "custom_files": [{"path": "app_custom.c", "content": "#include \"efw/efw.h\"\n"}],
-        "ui": {"positions": {"app_module": [40, 40]}},
-    }
-
-
-def rel_or_abs(path_text: str) -> Path:
-    path = Path(path_text).expanduser()
-    return path if path.is_absolute() else REPO_ROOT / path
-
-
-def display_path(path: Path) -> str:
-    try:
-        return path.resolve().relative_to(REPO_ROOT.resolve()).as_posix()
-    except ValueError:
-        return path.as_posix()
-
-
-def load_recent_projects() -> list[str]:
-    if not RECENT_FILE.exists():
-        return []
-    data = json.loads(RECENT_FILE.read_text(encoding="utf-8"))
-    if not isinstance(data, list):
-        return []
-    return [str(item) for item in data if isinstance(item, str) and str(item).endswith(PROJECT_SUFFIX)]
-
-
-def save_recent_projects(paths: list[str]) -> None:
-    RECENT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    unique: list[str] = []
-    for item in paths:
-        if item not in unique:
-            unique.append(item)
-    RECENT_FILE.write_text(json.dumps(unique[:20], ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-
-
-def remove_recent_project(path_text: str) -> None:
-    save_recent_projects([item for item in load_recent_projects() if item != path_text])
-
-
-def normalize_project_descriptor(project: dict[str, Any], project_path: Path) -> dict[str, Any]:
-    normalized = dict(project)
-    sibling_graph = project_path.parent / "graph.json"
-    graph_path_text = str(normalized.get("graph_path", ""))
-    if sibling_graph.exists() and graph_path_text in {"", "examples/graphs/generic_embedded_app.json"}:
-        normalized["graph_path"] = display_path(sibling_graph)
-        if not normalized.get("name") or normalized.get("name") == "generic_embedded_app":
-            try:
-                graph = json.loads(sibling_graph.read_text(encoding="utf-8"))
-                graph_name = graph.get("project", {}).get("name") if isinstance(graph, dict) else None
-                normalized["name"] = str(graph_name or project_path.stem.replace(PROJECT_SUFFIX, ""))
-            except Exception:  # noqa: BLE001 - best effort descriptor migration.
-                normalized["name"] = project_path.stem.replace(PROJECT_SUFFIX, "")
-        if not normalized.get("output_dir") or normalized.get("output_dir") == "application/generated_generic_embedded_app":
-            normalized["output_dir"] = f"application/generated_{project_slug(str(normalized.get('name', 'efw_project')))}"
-    return normalized
-
 
 class ProjectManagerWindow(QMainWindow):
     def __init__(self) -> None:
@@ -437,9 +357,7 @@ class ProjectManagerWindow(QMainWindow):
         self.recent_list.blockSignals(False)
 
     def add_recent_project(self, path: Path) -> None:
-        current = load_recent_projects()
-        text = display_path(path)
-        save_recent_projects([text] + [item for item in current if item != text])
+        add_recent_project_record(path)
         self.refresh_recent_list()
 
     def _confirm_workspace_discard_changes(self) -> bool:
@@ -466,7 +384,7 @@ class ProjectManagerWindow(QMainWindow):
         name, ok = QInputDialog.getText(self, "新建 EFW 项目", "项目名", text="new_efw_project")
         if not ok or not name.strip():
             return
-        board = self.board_edit.currentText().strip() or "generic-mock"
+        board = self.board_edit.currentText().strip() or "stm32-basic"
         output_dir = f"application/generated_{project_slug(name)}"
         self.create_project_files(name.strip(), blank_graph(name.strip(), board), output_dir, board)
 
@@ -474,8 +392,8 @@ class ProjectManagerWindow(QMainWindow):
         if not self._confirm_workspace_discard_changes():
             return
         templates = {
-            "空白项目": ("new_efw_project", None, "application/generated_new_efw_project", "generic-mock"),
-            "通用嵌入式应用": ("generic_embedded_app", "examples/graphs/generic_embedded_app.json", "application/generated_generic_embedded_app", "generic-mock"),
+            "空白项目": ("new_efw_project", None, "application/generated_new_efw_project", "stm32-basic"),
+            "通用嵌入式应用": ("generic_embedded_app", "examples/graphs/generic_embedded_app.json", "application/generated_generic_embedded_app", "stm32-basic"),
             "循迹小车": ("line_tracking_car", "examples/graphs/line_tracking_car.json", "application/generated_line_tracking_car", "robot-line-tracking"),
             "循迹 + 自定义代码": ("line_tracking_car_custom", "examples/graphs/line_tracking_car_with_custom_code.json", "application/generated_line_tracking_car_custom", "robot-line-tracking"),
         }
@@ -487,12 +405,12 @@ class ProjectManagerWindow(QMainWindow):
         if ok and custom_name:
             name = custom_name
             output_dir = f"application/generated_{project_slug(custom_name)}"
-        graph = blank_graph(name, board) if graph_path is None else json.loads(rel_or_abs(graph_path).read_text(encoding="utf-8"))
+        graph = blank_graph(name, board) if graph_path is None else load_json(rel_or_abs(graph_path))
         self.create_project_files(name, graph, output_dir, board)
 
     def create_project_files(self, name: str, graph: dict[str, Any], output_dir: str, board: str) -> None:
         slug = project_slug(name)
-        default_dir = REPO_ROOT / ".efw_projects" / slug
+        default_dir = PROJECT_ROOT / slug
         
         # Ask for project directory
         project_dir_str = QFileDialog.getExistingDirectory(
@@ -508,15 +426,10 @@ class ProjectManagerWindow(QMainWindow):
         else:
             project_dir = Path(project_dir_str) / slug
         
-        # Create project directory
-        project_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Project file paths
         project_path = project_dir / f"{slug}{PROJECT_SUFFIX}"
         graph_path = project_dir / "graph.json"
-        
-        # Check if files exist
-        if graph_path.exists() or project_path.exists():
+        force = False
+        if project_dir.exists() and any(project_dir.iterdir()):
             answer = QMessageBox.question(
                 self,
                 "覆盖确认",
@@ -526,27 +439,20 @@ class ProjectManagerWindow(QMainWindow):
             yes = QMessageBox.StandardButton.Yes if hasattr(QMessageBox, "StandardButton") else QMessageBox.Yes
             if answer != yes:
                 return
-        
-        # Write graph file
-        graph.setdefault("project", {})["name"] = name
-        graph.setdefault("board", {})["profile"] = board
-        graph_path.write_text(json.dumps(graph, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-        
-        # Set project data
-        self.project_path = project_path
-        self.project = {
-            "kind": "efw.project",
-            "schema_version": PROJECT_SCHEMA_VERSION,
-            "name": name,
-            "description": f"{name} 的 EFW Studio 项目描述文件。",
-            "graph_path": "graph.json",
-            "output_dir": output_dir,
-            "board_profile": board,
-            "notes": "由项目创建向导生成。建议先打开项目装配检查卡片、Board Profile 和 Pin Planner，再生成 application/。",
-            "workflow": default_project()["workflow"],
-        }
-        
-        # Save project file
+            force = True
+        try:
+            self.project_path, graph_path, self.project = create_project_files_on_disk(
+                name,
+                graph=graph,
+                output_dir=output_dir,
+                board_profile=board,
+                project_dir=project_dir,
+                force=force,
+            )
+            self.project["notes"] = "由项目创建向导生成。建议先打开项目装配检查卡片、Board Profile 和 Pin Planner，再生成 application。"
+        except Exception as exc:  # noqa: BLE001 - UI should show exact file creation failure.
+            QMessageBox.warning(self, "创建失败", str(exc))
+            return
         self.save_project()
         self.load_project_to_form()
         
@@ -707,10 +613,17 @@ class ProjectManagerWindow(QMainWindow):
             self.output_edit.setText(display_path(Path(path)))
 
     def graph_path(self) -> Path:
-        return rel_or_abs(str(self.project.get("graph_path", "")))
+        if self.project_path is None:
+            raw_path = str(self.project.get("graph_path", ""))
+            return rel_or_abs(raw_path) if raw_path else REPO_ROOT / "graph.json"
+        return project_graph_path(self.project_path, self.project)
 
     def output_dir(self) -> Path:
-        return rel_or_abs(self.output_edit.text().strip())
+        if self.project_path is None:
+            return rel_or_abs(self.output_edit.text().strip())
+        project = dict(self.project)
+        project["output_dir"] = self.output_edit.text().strip()
+        return project_output_dir(self.project_path, project)
 
     def project_graph(self) -> dict[str, Any]:
         graph_path = self.graph_path()
@@ -732,7 +645,7 @@ class ProjectManagerWindow(QMainWindow):
         graph_path = self.graph_path()
         try:
             graph = self.project_graph()
-            validate_graph(graph)
+            validate_graph_data(graph)
         except Exception as exc:  # noqa: BLE001 - UI validation dialog should show exact validator message.
             QMessageBox.warning(self, "Graph 无效", str(exc))
             return False
@@ -742,13 +655,9 @@ class ProjectManagerWindow(QMainWindow):
     def generate_application(self) -> None:
         self.apply_form_to_project()
         out_dir = self.output_dir()
-        tmp_path: Path | None = None
         try:
             graph = self.project_graph()
-            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
-                json.dump(graph, tmp, ensure_ascii=False, indent=2)
-                tmp_path = Path(tmp.name)
-            preview = preview_application_files(tmp_path, out_dir)
+            preview = preview_graph_generation(graph, out_dir)
             summary = "\n".join(f"{item['status']}: {item['path']}" for item in preview[:40])
             force = False
             if out_dir.exists() and any(out_dir.iterdir()):
@@ -757,13 +666,10 @@ class ProjectManagerWindow(QMainWindow):
                 if answer != yes:
                     return
                 force = True
-            generate(tmp_path, out_dir, force=force)
+            generate_graph_application(graph, out_dir, force=force)
         except Exception as exc:  # noqa: BLE001 - UI generation dialog should show exact generator message.
             QMessageBox.warning(self, "生成失败", str(exc))
             return
-        finally:
-            if tmp_path is not None:
-                tmp_path.unlink(missing_ok=True)
         QMessageBox.information(self, "已生成", f"已生成 application：\n{display_path(out_dir)}\n\n下一步建议：\n1. 查看生成映射和文件树\n2. 在真实板卡工程中补 board_adapters\n3. 用 CMake/IDE 做一次编译验证")
 
     def quick_generate(self) -> None:
@@ -774,28 +680,18 @@ class ProjectManagerWindow(QMainWindow):
         graph_path = self.graph_path()
         try:
             graph = self.project_graph()
-            validate_graph(graph)
+            validate_graph_data(graph)
         except Exception as exc:
             QMessageBox.warning(self, "校验失败", f"Graph 校验失败，请先修复错误：\n\n{exc}")
             return
         
         # Step 2: Generate
         out_dir = self.output_dir()
-        tmp_path: Path | None = None
         try:
-            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
-                json.dump(graph, tmp, ensure_ascii=False, indent=2)
-                tmp_path = Path(tmp.name)
-            
-            # Auto-confirm overwrite for quick generate
-            generate(tmp_path, out_dir, force=True)
-            
+            generate_graph_application(graph, out_dir, force=True)
         except Exception as exc:
             QMessageBox.warning(self, "生成失败", str(exc))
             return
-        finally:
-            if tmp_path is not None:
-                tmp_path.unlink(missing_ok=True)
         
         QMessageBox.information(
             self,
@@ -920,7 +816,6 @@ class ProjectManagerWindow(QMainWindow):
                 profile = dialog.get_selected_profile()
                 if chip_id and profile:
                     # Add to board profiles
-                    from studio.model import BOARD_PROFILES
                     BOARD_PROFILES[chip_id] = profile
                     
                     # Update combo box
@@ -968,7 +863,6 @@ class ProjectManagerWindow(QMainWindow):
                     profile = result_dialog.get_board_profile()
                     
                     # Add to board profiles
-                    from studio.model import BOARD_PROFILES
                     BOARD_PROFILES[profile_name] = profile
                     
                     # Update combo box
@@ -1012,7 +906,6 @@ class ProjectManagerWindow(QMainWindow):
                     profile = result_dialog.get_board_profile()
                     
                     # Add to board profiles
-                    from studio.model import BOARD_PROFILES
                     BOARD_PROFILES[profile_name] = profile
                     
                     # Update combo box
@@ -1093,7 +986,6 @@ class ProjectManagerWindow(QMainWindow):
             profile = dialog.get_selected_profile()
             if chip_id and profile:
                 # Add to board profiles
-                from studio.model import BOARD_PROFILES
                 BOARD_PROFILES[chip_id] = profile
                 
                 # Update combo box

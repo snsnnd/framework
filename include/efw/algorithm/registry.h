@@ -58,18 +58,18 @@ typedef enum {
  *              in 和 out 是 void* 类型，调用方需确保类型匹配
  */
 typedef struct {
-    const char *name;       /**< 全局唯一名称 */
-    efw_algo_type_t type;   /**< 算法类型 */
-    void *ctx;              /**< 算法上下文 (私有状态数据) */
-    efw_status_t (*run)(void *ctx, const void *in, void *out); /**< 执行函数 */
+    const char *name;
+    efw_algo_type_t type;
+    void *ctx;
+    efw_status_t (*run)(void *ctx, const void *in, uint16_t in_size, void *out, uint16_t out_size);
 } efw_algo_ops_t;
-
-/* ====== 算法注册表 API ====== */
 
 efw_status_t efw_algo_registry_init(void);
 efw_status_t efw_algo_registry_init_pool(const efw_algo_ops_t **pool, size_t capacity);
 efw_status_t efw_algo_register(const efw_algo_ops_t *ops);
 efw_status_t efw_algo_get(const char *name, const efw_algo_ops_t **out_ops);
-efw_status_t efw_algo_run(const char *name, const void *in, void *out);
+efw_status_t efw_algo_unregister(const char *name);
+efw_status_t efw_algo_run(const char *name, const void *in, uint16_t in_size, void *out, uint16_t out_size);
+size_t efw_algo_count(void);
 
 #endif

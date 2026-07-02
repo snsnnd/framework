@@ -15,16 +15,16 @@ from studio.qt_compat import (
 
 from codegen import c_ident
 from codegen.generator import build_runtime_summary
-from codegen.validate import validate_graph
 from codegen.graph import NODE_CONTRACTS, apply_pair_semantics, callback_signature, node_generation_label, semantic_edge_kind
 from studio.editor_registry import TYPE_LABELS
 from studio.model import GENERATED_APPLICATION_TREE, NODE_GENERATION_STATUS
+from tools.api.graph import validate_graph_data
 
 
 class ValidationMixin:
     def runtime_summary(self) -> dict[str, Any]:
         try:
-            summary = build_runtime_summary(validate_graph(self.graph))
+            summary = build_runtime_summary(validate_graph_data(self.graph))
         except Exception:
             summary = {}
         self._runtime_summary_cache = summary
@@ -205,26 +205,60 @@ class ValidationMixin:
         if not hasattr(self, "schedule_output"):
             return
         tick = int(self.graph.get("project", {}).get("tick_ms", 1))
-        lines = [f"运行计划预览（tick = {tick} ms）", ""]
         plan = self.runtime_plan_preview()
+        
+        # Build HTML output
+        html = []
+        html.append('<div style="font-family: Consolas, monospace; font-size: 12px;">')
+        
+        # Title
+        html.append(f'<div style="color: #E0E0E0; font-weight: bold; margin-bottom: 12px;">运行计划预览（tick = {tick} ms）</div>')
+        
         if plan:
+            # Show timeline visualization
+            html.append('<div style="margin-bottom: 12px;">')
+            html.append('<span style="color: #2196F3; font-weight: bold;">⏱ 调度时间线</span>')
+            
             for period in sorted(plan):
-                lines.append(f"{period}ms:")
+                # Period header
+                html.append(f'<div style="margin: 8px 0 4px 0; color: #FFEB3B; font-weight: bold;">{period}ms 周期:</div>')
+                html.append('<ul style="margin: 0 0 0 20px; padding: 0;">')
+                
                 for order, label in sorted(plan[period], key=lambda item: (item[0], item[1])):
-                    lines.append(f"  {order}. {label}")
-                lines.append("")
+                    # Color based on type
+                    if "dataflow" in label.lower():
+                        color = "#4FC3F7"  # Light blue
+                    elif "task" in label.lower():
+                        color = "#81C784"  # Green
+                    elif "state" in label.lower():
+                        color = "#CE93D8"  # Purple
+                    elif "module" in label.lower():
+                        color = "#FFB74D"  # Orange
+                    else:
+                        color = "#E0E0E0"  # White
+                    
+                    html.append(f'<li style="color: {color}; margin: 2px 0;">{order}. {label}</li>')
+                
+                html.append('</ul>')
+            html.append('</div>')
         else:
-            lines.append("暂无自动 dataflow、flow、task、state machine 或 module poll。")
-            lines.append("")
-        lines.append("调度语义：")
-        lines.append("  1. 自动 dataflow pipelines")
-        lines.append("  2. 未被 task.periodic 接管的 control.line_follower flows")
-        lines.append("  3. task.periodic")
-        lines.append("  4. state.machine tick")
-        lines.append("  5. efw_module_poll_all()")
-        lines.append("说明：同一周期按编号顺序生成；多个 dataflow 仅按发现顺序执行，不表达跨 pipeline 依赖。")
-        lines.append("如果需要严格顺序、共享状态仲裁或避免 task/module 重复处理，请收敛到 task.periodic 或 module.custom.poll。")
-        self.schedule_output.setPlainText("\n".join(lines).rstrip())
+            html.append('<div style="color: #78909C; margin-bottom: 12px;">暂无自动 dataflow、flow、task、state machine 或 module poll。</div>')
+        
+        # Legend
+        html.append('<div style="margin-top: 16px; padding-top: 8px; border-top: 1px solid #242D40;">')
+        html.append('<span style="color: #90A4AE; font-weight: bold;">调度语义：</span>')
+        html.append('<ol style="margin: 4px 0 0 20px; padding: 0; color: #B0BEC5;">')
+        html.append('<li><span style="color: #4FC3F7;">自动 dataflow pipelines</span></li>')
+        html.append('<li><span style="color: #81C784;">task.periodic</span></li>')
+        html.append('<li><span style="color: #CE93D8;">state.machine tick</span></li>')
+        html.append('<li><span style="color: #FFB74D;">efw_module_poll_all()</span></li>')
+        html.append('</ol>')
+        html.append('<div style="color: #78909C; margin-top: 8px; font-size: 11px;">说明：同一周期按编号顺序生成；多个 dataflow 仅按发现顺序执行。</div>')
+        html.append('</div>')
+        
+        html.append('</div>')
+        
+        self.schedule_output.setHtml("\n".join(html))
 
     def generation_readiness_lines(self) -> list[str]:
         missing_callbacks = self.missing_callback_requirements()
@@ -304,7 +338,7 @@ class ValidationMixin:
         ok = True
         try:
             self.apply_code_file(record_history=False)
-            validate_graph(self.graph)
+            validate_graph_data(self.graph)
             edge_count = len(self.graph.get("edges", []))
             by_generation: dict[str, list[str]] = {}
             for node in self.graph.get("nodes", []):
@@ -325,28 +359,78 @@ class ValidationMixin:
             if node.get("type") == "state.transition" and not str(node.get("condition", "")).strip():
                 messages.append(f"❌ {node.get('id')}.condition 为空：transition 必须填写条件函数")
                 ok = False
+        
+        # Format output with HTML for better styling
+        html_lines = []
+        html_lines.append('<div style="font-family: Consolas, monospace; font-size: 12px;">')
+        
+        # Summary section
         errors = [item for item in messages if item.startswith("❌")]
         warnings = [item for item in messages if item.startswith("⚠️")]
-        next_step = "可以直接生成 application。" if ok else "先处理红色错误，再重新校验；黄色警告建议在生成前处理。"
-        actions = [self.action_for_validation_message(message, target) for message, target in zip(messages, [self._validation_target_from_message(message) for message in messages]) if message.startswith(("❌", "⚠️"))]
-        summary_lines = [
-            "校验摘要",
-            f"- 错误：{len(errors)}",
-            f"- 警告：{len(warnings)}",
-            f"- 结论：{'可生成' if ok else '需修正后再生成'}",
-            f"- 下一步：{next_step}",
-            "",
-        ]
-        if actions:
-            summary_lines.append("建议动作")
-            for index, action in enumerate(actions[:5], start=1):
-                summary_lines.append(f"{index}. {action}")
-            summary_lines.append("")
-        text = "\n".join(summary_lines + messages)
+        infos = [item for item in messages if item.startswith("ℹ️")]
+        successes = [item for item in messages if item.startswith("✅")]
+        
+        # Status header
+        if ok:
+            html_lines.append('<div style="background: #1a3a1a; border: 1px solid #2d5a2d; border-radius: 6px; padding: 10px; margin-bottom: 12px;">')
+            html_lines.append('<span style="color: #4CAF50; font-weight: bold;">✅ 可以生成 Application</span>')
+            html_lines.append('</div>')
+        else:
+            html_lines.append('<div style="background: #3a1a1a; border: 1px solid #5a2d2d; border-radius: 6px; padding: 10px; margin-bottom: 12px;">')
+            html_lines.append(f'<span style="color: #F44336; font-weight: bold;">❌ 需修正后再生成 ({len(errors)} 个错误, {len(warnings)} 个警告)</span>')
+            html_lines.append('</div>')
+        
+        # Errors section
+        if errors:
+            html_lines.append('<div style="margin-bottom: 8px;">')
+            html_lines.append('<span style="color: #F44336; font-weight: bold;">❌ 错误</span>')
+            html_lines.append('<ul style="margin: 4px 0 0 20px; padding: 0;">')
+            for msg in errors:
+                html_lines.append(f'<li style="color: #FFB3B3; margin: 2px 0;">{msg[2:]}</li>')
+            html_lines.append('</ul></div>')
+        
+        # Warnings section
+        if warnings:
+            html_lines.append('<div style="margin-bottom: 8px;">')
+            html_lines.append('<span style="color: #FF9800; font-weight: bold;">⚠️ 警告</span>')
+            html_lines.append('<ul style="margin: 4px 0 0 20px; padding: 0;">')
+            for msg in warnings:
+                html_lines.append(f'<li style="color: #FFE0A3; margin: 2px 0;">{msg[2:]}</li>')
+            html_lines.append('</ul></div>')
+        
+        # Missing callbacks section
+        missing_callbacks = self.missing_callback_requirements()
+        if missing_callbacks:
+            html_lines.append('<div style="margin-bottom: 8px;">')
+            html_lines.append('<span style="color: #FFEB3B; font-weight: bold;">📝 缺失回调 (需要实现)</span>')
+            html_lines.append('<ul style="margin: 4px 0 0 20px; padding: 0;">')
+            for req in missing_callbacks[:10]:
+                name = req.get("name", "")
+                sig = req.get("signature", "")
+                html_lines.append(f'<li style="color: #FFF9C4; margin: 2px 0;"><b>{name}</b> <span style="color: #B0BEC5;">({sig})</span></li>')
+            if len(missing_callbacks) > 10:
+                html_lines.append(f'<li style="color: #B0BEC5;">... 还有 {len(missing_callbacks) - 10} 个</li>')
+            html_lines.append('</ul></div>')
+        
+        # Info section
+        if infos:
+            html_lines.append('<div style="margin-bottom: 8px;">')
+            html_lines.append('<span style="color: #2196F3; font-weight: bold;">ℹ️ 信息</span>')
+            html_lines.append('<ul style="margin: 4px 0 0 20px; padding: 0;">')
+            for msg in infos:
+                html_lines.append(f'<li style="color: #90CAF9; margin: 2px 0;">{msg[2:]}</li>')
+            html_lines.append('</ul></div>')
+        
+        html_lines.append('</div>')
+        
+        text = "\n".join(html_lines)
         self.validation_messages = messages
         self.validation_targets = [self._validation_target_from_message(message) for message in messages]
+        if hasattr(self, "release_output"):
+            self.release_output.setHtml(text)
         if hasattr(self, "validation_output"):
-            self.validation_output.setPlainText(text)
+            # Also use HTML for validation_output
+            self.validation_output.setHtml(text)
         if hasattr(self, "validation_list"):
             role = Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole
             self.validation_list.clear()

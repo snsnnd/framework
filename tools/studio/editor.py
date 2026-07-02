@@ -12,7 +12,6 @@ import copy
 import json
 import os
 import sys
-import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -31,8 +30,7 @@ from studio.qt_compat import (
     QVBoxLayout, QWidget,
 )
 
-from codegen import c_ident, generate, preview_application_files
-from codegen.validate import validate_graph
+from codegen import c_ident
 from codegen.graph import (
     PORT_COLORS,
     PORT_DESCRIPTIONS,
@@ -49,6 +47,7 @@ from codegen.graph import (
     edge_effect_description,
     node_generation_label,
 )
+from tools.api.graph import generate_graph_application, preview_graph_generation
 from studio.core import (
     apply_board_profile_defaults_to_graph,
     discover_framework_templates,
@@ -63,6 +62,8 @@ from studio.core import (
 )
 from studio.editor_registry import NODE_CATEGORIES, NODE_TEMPLATES, PROPERTY_FIELD_ORDER, TYPE_LABELS
 from studio.model import BOARD_PROFILES, GENERATED_APPLICATION_TREE, NODE_GENERATION_STATUS
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 DEFAULT_FLOW = {
     "id": "line_follower",
@@ -230,6 +231,7 @@ from studio.editor_canvas import (
 )
 from studio.editor_callbacks import CallbackMixin
 from studio.editor_code import CodeEditorMixin
+from studio.editor_debug import DebugMixin
 from studio.editor_properties import PropertyMixin
 from studio.editor_ui import UIBuilderMixin
 from studio.editor_validation import ValidationMixin
@@ -240,7 +242,7 @@ from studio.editor_shortcuts import (
     load_custom_shortcuts, save_custom_shortcuts,
 )
 
-class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, CallbackMixin, WorkbenchMixin, UIBuilderMixin, QMainWindow):
+class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, CallbackMixin, WorkbenchMixin, DebugMixin, UIBuilderMixin, QMainWindow):
     def __init__(self, embedded: bool = False):
         super().__init__()
         self.embedded = embedded
@@ -287,6 +289,20 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
         self.statusBar().addPermanentWidget(self._state_label)
         self._install_shortcuts()
         self.refresh_all()
+        self._check_first_run()
+
+    def _check_first_run(self) -> None:
+        """Check if this is the first run and show welcome guide."""
+        guide_shown_file = REPO_ROOT / ".efw_studio_guide_shown"
+        if not guide_shown_file.exists():
+            # Show welcome guide after a short delay to ensure UI is ready
+            QTimer.singleShot(500, self._show_welcome_guide)
+
+    def _show_welcome_guide(self) -> None:
+        """Show welcome guide and mark as shown."""
+        self.show_welcome_guide()
+        guide_shown_file = REPO_ROOT / ".efw_studio_guide_shown"
+        guide_shown_file.write_text("shown", encoding="utf-8")
 
     def graph_snapshot(self) -> dict[str, Any]:
         return copy.deepcopy(self.graph)
@@ -472,6 +488,7 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
             "create_backdrop": self.create_backdrop_from_selection,
             "delete_selected_node": self.delete_selected_object,
             "delete_selected_node2": self.delete_selected_object,
+            "flip_ports": self.flip_selected_node_ports,
             "zoom_in": lambda: self.zoom_relation_view(1.15),
             "zoom_out": lambda: self.zoom_relation_view(1 / 1.15),
             "zoom_reset": self.reset_relation_zoom,
@@ -808,7 +825,33 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
             return
         self.push_undo()
 
-        # 1. Remove selected nodes.
+        # 0. Find all child nodes of selected modules/state machines/topics
+        child_ids = set()
+        for node in self.graph.get("nodes", []):
+            node_type = str(node.get("type", ""))
+            node_id = str(node.get("id", ""))
+            
+            # Check if this node belongs to a selected module
+            parent_module = str(node.get("module") or node.get("parent") or "")
+            if parent_module in selected_set:
+                child_ids.add(node_id)
+            
+            # Check if this state/transition belongs to a selected state machine
+            if node_type in {"state.state", "state.transition"}:
+                machine = str(node.get("machine") or "")
+                if machine in selected_set:
+                    child_ids.add(node_id)
+            
+            # Check if this publisher/subscriber belongs to a selected topic
+            if node_type in {"event.publisher", "event.subscriber"}:
+                topic = str(node.get("topic") or "")
+                if topic in selected_set:
+                    child_ids.add(node_id)
+        
+        # Merge child ids into selected set
+        selected_set.update(child_ids)
+
+        # 1. Remove selected nodes and their children.
         self.graph["nodes"] = [node for node in self.graph.get("nodes", []) if str(node.get("id")) not in selected_set]
 
         # 2. Remove edges that reference deleted nodes.
@@ -844,6 +887,9 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
         ui = self.graph.get("ui", {})
         for node_id in selected_set:
             ui.get("positions", {}).pop(node_id, None)
+            # Also clean flip state
+            if "flipped_ports" in ui:
+                ui["flipped_ports"].pop(node_id, None)
         for page_positions in ui.get("positions_by_page", {}).values():
             for node_id in selected_set:
                 page_positions.pop(node_id, None)
@@ -960,10 +1006,7 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
         out_path = Path(out_dir)
         self._last_output_dir = out_path
         try:
-            with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False, encoding="utf-8") as tmp:
-                json.dump(self.graph, tmp, ensure_ascii=False, indent=2)
-                tmp_path = Path(tmp.name)
-            preview = preview_application_files(tmp_path, out_path)
+            preview = preview_graph_generation(self.graph, out_path)
             def preview_line(item: dict[str, Any]) -> str:
                 sha = f" {item.get('old_sha', 'new')}→{item.get('new_sha', '')}" if item.get("new_sha") else ""
                 lines = f" lines:{item.get('old_lines', '-')}→{item.get('new_lines', '-')}" if item.get("new_lines") else ""
@@ -975,11 +1018,9 @@ class VisualEditorWindow(CodeEditorMixin, PropertyMixin, ValidationMixin, Callba
                 answer = QMessageBox.question(self, "Diff 预览 / 覆盖确认", f"输出目录已存在且非空，非生成文件会保留：\n{out_path}\n\n{summary}\n\n是否覆盖生成文件？")
                 yes = QMessageBox.StandardButton.Yes if hasattr(QMessageBox, "StandardButton") else QMessageBox.Yes
                 if answer != yes:
-                    tmp_path.unlink(missing_ok=True)
                     return
                 force = True
-            generate(tmp_path, out_path, force=force)
-            tmp_path.unlink(missing_ok=True)
+            generate_graph_application(self.graph, out_path, force=force)
             created = sum(1 for item in preview if item.get("status") == "create")
             overwritten = sum(1 for item in preview if item.get("status") == "backup+overwrite")
             preserved = sum(1 for item in preview if item.get("status") == "preserve")

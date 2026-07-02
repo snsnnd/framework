@@ -113,8 +113,9 @@ static efw_status_t line_input_read(void *ctx, void *buf, uint16_t len, uint16_t
  * 传感器回调中调用 efw_hal_read() 访问底层 ADC。
  * 传感器不需要知道 ADC 在哪个引脚、什么配置——只需要 HAL 的名称。
  */
-static efw_status_t line_sensor_read(void *ctx, void *out) {
-    EFW_UNUSED(ctx);  /* 此传感器无私有上下文 */
+static efw_status_t line_sensor_read(void *ctx, void *out, uint16_t out_size) {
+    EFW_UNUSED(ctx);
+    if (out_size < sizeof(efw_line_tracking_data_t)) return EFW_ERR_INVALID;
     return efw_hal_read(APP_LINE_INPUT_HAL_NAME, out, sizeof(efw_line_tracking_data_t), 0);
 }
 
@@ -123,9 +124,10 @@ static efw_status_t line_sensor_read(void *ctx, void *out) {
  *
  * 真实项目：将 speed → PWM 占空比，direction → GPIO 方向引脚电平
  */
-static efw_status_t motor_write(void *ctx, const void *cmd) {
+static efw_status_t motor_write(void *ctx, const void *cmd, uint16_t cmd_size) {
     app_motor_ctx_t *motor = (app_motor_ctx_t *)ctx;                    /* ctx → 电机上下文 */
     const efw_motor_cmd_t *motor_cmd = (const efw_motor_cmd_t *)cmd;   /* cmd → 电机指令 */
+    (void)cmd_size;
 
     if (!motor || !motor_cmd) return EFW_ERR_INVALID;
     /* 真实项目在这里使用 motor->pwm 和 motor->dir_pin 调用芯片 SDK。 */

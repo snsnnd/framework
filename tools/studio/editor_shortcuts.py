@@ -55,6 +55,7 @@ SHORTCUT_DEFAULTS: dict[str, tuple[str, str]] = {
     "create_backdrop":        ("创建分组区域", "Ctrl+Shift+B"),
     "delete_selected_node":   ("删除选中对象", "Delete"),
     "delete_selected_node2":  ("删除选中对象 (Backspace)", "Backspace"),
+    "flip_ports":             ("翻转选中卡片接口", "F"),
     "zoom_in":                ("放大画布", "Ctrl++"),
     "zoom_out":               ("缩小画布", "Ctrl+-"),
     "zoom_reset":             ("重置缩放", "Ctrl+0"),
@@ -84,6 +85,7 @@ LEGACY_SHORTCUTS_CONFIG_PATH = REPO_ROOT / ".efw_shortcuts.json"
 
 
 def load_custom_shortcuts() -> dict[str, str]:
+    import sys
     for path in (SHORTCUTS_CONFIG_PATH, LEGACY_SHORTCUTS_CONFIG_PATH):
         if not path.exists():
             continue
@@ -91,17 +93,18 @@ def load_custom_shortcuts() -> dict[str, str]:
             data = json.loads(path.read_text(encoding="utf-8"))
             if isinstance(data, dict):
                 return {k: v for k, v in data.items() if isinstance(v, str) and v}
-        except (OSError, json.JSONDecodeError):
-            pass
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"Warning: Failed to load shortcuts from {path}: {exc}", file=sys.stderr)
     return {}
 
 
 def save_custom_shortcuts(mapping: dict[str, str]) -> None:
+    import sys
     try:
         SHORTCUTS_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         SHORTCUTS_CONFIG_PATH.write_text(json.dumps(mapping, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    except OSError:
-        pass
+    except OSError as exc:
+        print(f"Warning: Failed to save shortcuts: {exc}", file=sys.stderr)
 
 
 class ShortcutsEditor(QWidget):

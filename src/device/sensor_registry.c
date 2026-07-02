@@ -27,20 +27,15 @@
 #include <string.h>
 #include "efw/core/config.h"
 #include "efw/core/diagnostic.h"
+#include "efw/core/registry.h"
 #include "efw/device/sensor.h"
 
-#if EFW_ENABLE_SENSOR  /**< 编译开关 */
+#if EFW_ENABLE_SENSOR
 
 static const efw_sensor_ops_t *g_sensor_default_pool[EFW_MAX_SENSORS];
 static const efw_sensor_ops_t **g_sensors = g_sensor_default_pool;
 static size_t g_sensor_cap = EFW_MAX_SENSORS;
 static size_t g_sensor_n;
-
-static int same_name(const char *a, const char *b) {
-    return a && b && strcmp(a, b) == 0;
-}
-
-/* ====== 初始化 ====== */
 
 efw_status_t efw_sensor_registry_init(void) { g_sensors = g_sensor_default_pool; g_sensor_cap = EFW_MAX_SENSORS; g_sensor_n = 0; return EFW_OK; }
 efw_status_t efw_sensor_registry_init_pool(const efw_sensor_ops_t **pool, size_t capacity) {
@@ -48,61 +43,68 @@ efw_status_t efw_sensor_registry_init_pool(const efw_sensor_ops_t **pool, size_t
     g_sensors = pool; g_sensor_cap = capacity; g_sensor_n = 0; return EFW_OK;
 }
 
-/* ====== 注册 (含双重 IO 绑定校验) ====== */
-
 efw_status_t efw_sensor_register(const efw_sensor_ops_t *ops) {
     if (!ops || !ops->name || !ops->read) { efw_diag_set(EFW_ERR_INVALID, "sensor", 0, "invalid ops"); return EFW_ERR_INVALID; }
-
-    /* ② ★ HAL 绑定校验 (注册时) */
     if (ops->hal_name) {
 #if EFW_ENABLE_HAL
         const efw_hal_ops_t *hal;
-        efw_status_t s = efw_hal_get(ops->hal_name, &hal);  /* 查找 HAL */
-        if (s != EFW_OK) return s;                           /* 不存在 → 拒绝 */
+        efw_status_t s = efw_hal_get(ops->hal_name, &hal);
+        if (s != EFW_OK) return s;
 #else
-        return EFW_ERR_INVALID;  /* HAL 禁用，无法绑定 */
+        return EFW_ERR_INVALID;
 #endif
     }
-
-    /* ③ ★ COMM 绑定校验 (注册时) */
     if (ops->comm_name) {
 #if EFW_ENABLE_COMM
         const efw_comm_ops_t *comm;
-        efw_status_t s = efw_comm_get(ops->comm_name, &comm);  /* 查找 COMM */
-        if (s != EFW_OK) return s;                              /* 不存在 → 拒绝 */
+        efw_status_t s = efw_comm_get(ops->comm_name, &comm);
+        if (s != EFW_OK) return s;
 #else
-        return EFW_ERR_INVALID;  /* COMM 禁用，无法绑定 */
+        return EFW_ERR_INVALID;
 #endif
     }
-
-    /* ④ 名称冲突 */
     for (size_t i = 0; i < g_sensor_n; ++i)
-        if (same_name(g_sensors[i]->name, ops->name))
+        if (efw_name_eq(g_sensors[i]->name, ops->name))
             { efw_diag_set(EFW_ERR_ALREADY_EXISTS, "sensor", ops->name, "duplicate name"); return EFW_ERR_ALREADY_EXISTS; }
-
-    /* ⑤ 容量 + ⑥ 存入 */
     if (g_sensor_n >= g_sensor_cap) { efw_diag_set(EFW_ERR_FULL, "sensor", ops->name, "pool full"); return EFW_ERR_FULL; }
     g_sensors[g_sensor_n++] = ops;
     return EFW_OK;
 }
 
-/* ====== 查找 + 统计 ====== */
-
 efw_status_t efw_sensor_get(const char *name, const efw_sensor_ops_t **out_ops) {
     if (!name || !out_ops) return EFW_ERR_INVALID;
     for (size_t i = 0; i < g_sensor_n; ++i)
-        if (same_name(g_sensors[i]->name, name)) {
+        if (efw_name_eq(g_sensors[i]->name, name)) {
             *out_ops = g_sensors[i];
             return EFW_OK;
         }
     return EFW_ERR_NOT_FOUND;
 }
 
+efw_status_t efw_sensor_unregister(const char *name) {
+    for (size_t i = 0; i < g_sensor_n; ++i) {
+        if (efw_name_eq(g_sensors[i]->name, name)) {
+            g_sensors[i] = g_sensors[--g_sensor_n];
+            return EFW_OK;
+        }
+    }
+    return EFW_ERR_NOT_FOUND;
+}
+
+size_t efw_sensor_count(void) { return g_sensor_n; }
+
 size_t efw_sensor_count_by_type(efw_sensor_type_t type) {
     size_t n = 0;
     for (size_t i = 0; i < g_sensor_n; ++i)
         if (g_sensors[i]->type == type) ++n;
     return n;
+}
+
+void efw_sensor_enumerate(efw_sensor_enumerate_fn fn, void *user) {
+    if (!fn) return;
+    for (size_t i = 0; i < g_sensor_n; ++i) {
+        fn(g_sensors[i], user);
+    }
 }
 
 /* ====== IO 绑定查询：传感器名 → HAL/COMM ====== */
@@ -147,11 +149,11 @@ efw_status_t efw_sensor_init_device(const char *name) {
  * @brief 读取传感器数据 ★ 最常用 API
  * 按名称查找传感器 → 调用 read 回调 → 结果写入 out。
  */
-efw_status_t efw_sensor_read(const char *name, void *out) {
+efw_status_t efw_sensor_read(const char *name, void *out, uint16_t out_size) {
     const efw_sensor_ops_t *ops;
     efw_status_t s = efw_sensor_get(name, &ops);
     if (s != EFW_OK) return s;
-    return ops->read(ops->ctx, out);
+    return ops->read(ops->ctx, out, out_size);
 }
 
 #endif /* EFW_ENABLE_SENSOR */

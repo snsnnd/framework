@@ -7,7 +7,11 @@ import json
 import sys
 from pathlib import Path
 
-from .generator import generate, preview_application_files
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    from codegen.generator import generate, preview_application_files
+else:
+    from .generator import generate, preview_application_files
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:

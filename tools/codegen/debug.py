@@ -16,21 +16,38 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from codegen.validate import validate_graph
-from codegen.generator import (
-    build_runtime_summary,
-    build_publisher_runtime_model,
-    build_state_runtime_model,
-    build_project_module_runtime_model,
-    build_hal_runtime_model,
-    build_sensor_runtime_model,
-    build_actuator_runtime_model,
-    dataflow_paths,
-    dataflow_period_ms,
-    nodes_of,
-    event_topic_id,
-)
-from codegen.utils import c_ident
+try:
+    from .validate import validate_graph
+    from .generator import (
+        build_runtime_summary,
+        build_publisher_runtime_model,
+        build_state_runtime_model,
+        build_project_module_runtime_model,
+        build_hal_runtime_model,
+        build_sensor_runtime_model,
+        build_actuator_runtime_model,
+        dataflow_paths,
+        dataflow_period_ms,
+        nodes_of,
+        event_topic_id,
+    )
+    from .utils import c_ident
+except ImportError:  # pragma: no cover - supports legacy top-level codegen imports
+    from codegen.validate import validate_graph
+    from codegen.generator import (
+        build_runtime_summary,
+        build_publisher_runtime_model,
+        build_state_runtime_model,
+        build_project_module_runtime_model,
+        build_hal_runtime_model,
+        build_sensor_runtime_model,
+        build_actuator_runtime_model,
+        dataflow_paths,
+        dataflow_period_ms,
+        nodes_of,
+        event_topic_id,
+    )
+    from codegen.utils import c_ident
 
 
 # ─── Formatters ───────────────────────────────────────────────────────────────

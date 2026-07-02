@@ -74,7 +74,7 @@ typedef struct {
     const char *comm_name;      /**< 绑定的 COMM 名称 (可空) */
     void *ctx;                  /**< 用户私有上下文 */
     efw_status_t (*init)(void *ctx);            /**< 初始化回调 */
-    efw_status_t (*read)(void *ctx, void *out);  /**< 读取回调 (必填) */
+    efw_status_t (*read)(void *ctx, void *out, uint16_t out_size);  /**< 读取回调 (必填, out_size=输出缓冲区字节数) */
 } efw_sensor_ops_t;
 
 /* ====== 传感器注册表 API ====== */
@@ -83,10 +83,14 @@ efw_status_t efw_sensor_registry_init(void);
 efw_status_t efw_sensor_registry_init_pool(const efw_sensor_ops_t **pool, size_t capacity);
 efw_status_t efw_sensor_register(const efw_sensor_ops_t *ops);
 efw_status_t efw_sensor_get(const char *name, const efw_sensor_ops_t **out_ops);
+efw_status_t efw_sensor_unregister(const char *name);
+size_t efw_sensor_count(void);
+typedef void (*efw_sensor_enumerate_fn)(const efw_sensor_ops_t *ops, void *user);
+void efw_sensor_enumerate(efw_sensor_enumerate_fn fn, void *user);
 size_t efw_sensor_count_by_type(efw_sensor_type_t type);
 efw_status_t efw_sensor_bind_hal(const char *sensor_name, const efw_hal_ops_t **out_hal);
 efw_status_t efw_sensor_bind_comm(const char *sensor_name, const efw_comm_ops_t **out_comm);
 efw_status_t efw_sensor_init_device(const char *name);
-efw_status_t efw_sensor_read(const char *name, void *out);
+efw_status_t efw_sensor_read(const char *name, void *out, uint16_t out_size);
 
 #endif

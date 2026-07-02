@@ -72,7 +72,7 @@ typedef struct {
  * @param out  输出缓冲区 (任意类型指针)
  * @return EFW_OK 成功, EFW_ERR_INVALID out 为空
  */
-efw_status_t efw_custom_sensor_read(const char *name, void *out);
+efw_status_t efw_custom_sensor_read(const char *name, void *out, uint16_t out_size);
 
 /**
  * @brief 读取自定义传感器数据 (带大小校验的版本)

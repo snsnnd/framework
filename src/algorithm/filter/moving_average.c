@@ -89,11 +89,12 @@ void efw_moving_avg_reset(efw_moving_avg_t *avg) {
  * @param out 指向 float (滤波后的均值写回)
  * @return EFW_OK 成功, EFW_ERR_INVALID 参数非法
  */
-efw_status_t efw_moving_avg_run(void *ctx, const void *in, void *out) {
-    /* 类型转换 */
-    efw_moving_avg_t *avg = (efw_moving_avg_t *)ctx;  /* 滤波器状态 */
-    const float *sample = (const float *)in;            /* 新采样值 (只读) */
-    float *result = (float *)out;                       /* 滤波结果 (写入) */
+efw_status_t efw_moving_avg_run(void *ctx, const void *in, uint16_t in_size, void *out, uint16_t out_size) {
+    efw_moving_avg_t *avg = (efw_moving_avg_t *)ctx;
+    const float *sample = (const float *)in;
+    float *result = (float *)out;
+    if (!avg || !sample || !result) return EFW_ERR_INVALID;
+    if (in_size < sizeof(float) || out_size < sizeof(float)) return EFW_ERR_RANGE;
 
     /* 参数校验：所有指针非空 + buffer 已分配 + capacity>0 */
     if (!avg || !avg->buffer || avg->capacity == 0 || !sample || !result)

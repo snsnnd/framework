@@ -1,85 +1,119 @@
-/**
- * @file    event.c
- * @brief   事件总线实现 —— 发布-订阅轻量级消息系统
- *
- * 由 EFW_ENABLE_EVENT 宏控制编译。
- *
- * =========================================================================
- * 实现细节
- * =========================================================================
- *
- *   订阅者存储结构：
- *     g_subs[] — 静态数组，每个元素记录 { topic_id, callback, user }
- *     g_sub_n  — 当前订阅者数量
- *
- *   不支持取消订阅 (unsubscribe) —— 嵌入式场景中订阅关系通常在初始化时
- *   一次性建立，不需要运行时动态取消。
- *
- *   publish 遍历全部 g_sub_n 个条目，对每个匹配 topic_id 的订阅者
- *   同步调用回调。调用顺序 = 订阅顺序。
- *
- *   复杂度：publish O(n)，n=总订阅数。对于 ≤8 的典型值开销可忽略。
- */
-
 #include "efw/core/config.h"
 #include "efw/core/event.h"
+#include <string.h>
 
-#if EFW_ENABLE_EVENT  /**< 编译开关 */
+#if EFW_ENABLE_EVENT
 
-/**
- * @brief 单个订阅条目
- * @field topic_id 订阅的话题 ID
- * @field cb       回调函数指针
- * @field user     用户自定义指针
- */
 typedef struct {
-    uint16_t topic_id;      /**< 话题 ID */
-    efw_topic_cb_t cb;      /**< 回调函数 */
-    void *user;             /**< 用户指针 */
+    uint16_t topic_id;
+    efw_topic_cb_t cb;
+    void *user;
 } efw_sub_t;
 
-/** @brief 订阅者数组 (固定容量 EFW_MAX_TOPIC_SUBS) */
 static efw_sub_t g_subs[EFW_MAX_TOPIC_SUBS];
-/** @brief 当前订阅者数量 */
 static size_t g_sub_n;
 
-/**
- * @brief 清空所有订阅 —— g_sub_n = 0
- */
+static efw_event_item_t g_event_queue[EFW_EVENT_QUEUE_CAPACITY];
+static uint8_t g_eq_head;
+static uint8_t g_eq_tail;
+static uint8_t g_eq_count;
+
 efw_status_t efw_topic_clear(void) {
-    g_sub_n = 0;        /* 计数归零 = 全部清除 */
+    g_sub_n = 0;
     return EFW_OK;
 }
 
-/**
- * @brief 订阅话题
- *
- * 校验：cb 非空 + 容量未满。
- * 存入 g_subs[g_sub_n++] 尾部追加。
- * 不支持去重——同一回调可以多次订阅同一 topic。
- */
 efw_status_t efw_topic_subscribe(uint16_t topic_id, efw_topic_cb_t cb, void *user) {
-    if (!cb) return EFW_ERR_INVALID;                    /* 回调不能为空 */
-    if (g_sub_n >= EFW_MAX_TOPIC_SUBS) return EFW_ERR_FULL;   /* 容量已满 */
-    g_subs[g_sub_n++] = (efw_sub_t){ topic_id, cb, user };    /* 尾部追加 */
+    if (!cb) return EFW_ERR_INVALID;
+    if (g_sub_n >= EFW_MAX_TOPIC_SUBS) return EFW_ERR_FULL;
+    g_subs[g_sub_n++] = (efw_sub_t){ topic_id, cb, user };
     return EFW_OK;
 }
 
-/**
- * @brief 发布话题
- *
- * 遍历全部订阅者，对匹配 topic_id 的每个订阅者调用回调。
- * 回调在 publish 的调用上下文中同步执行——不需要队列或事件循环。
- *
- * 注意：不检查单个回调的返回值——一个回调失败不影响其他订阅者。
- */
+efw_status_t efw_topic_unsubscribe(uint16_t topic_id, efw_topic_cb_t cb) {
+    if (!cb) return EFW_ERR_INVALID;
+    for (size_t i = 0; i < g_sub_n; ++i) {
+        if (g_subs[i].topic_id == topic_id && g_subs[i].cb == cb) {
+            g_subs[i] = g_subs[--g_sub_n];
+            return EFW_OK;
+        }
+    }
+    return EFW_ERR_NOT_FOUND;
+}
+
 efw_status_t efw_topic_publish(uint16_t topic_id, const void *data, uint16_t size) {
     for (size_t i = 0; i < g_sub_n; ++i) {
-        if (g_subs[i].topic_id == topic_id) {   /* topic 匹配 → 通知 */
+        if (g_subs[i].topic_id == topic_id) {
             g_subs[i].cb(topic_id, data, size, g_subs[i].user);
         }
     }
     return EFW_OK;
 }
 
-#endif /* EFW_ENABLE_EVENT */
+efw_status_t efw_event_queue_init(void) {
+    g_eq_head = 0;
+    g_eq_tail = 0;
+    g_eq_count = 0;
+    return EFW_OK;
+}
+
+static efw_status_t queue_post(uint16_t topic_id, const char *event_name, const void *data, uint16_t size) {
+    if (g_eq_count >= EFW_EVENT_QUEUE_CAPACITY) return EFW_ERR_FULL;
+    if (size > 0 && !data) return EFW_ERR_INVALID;
+    if (size > EFW_EVENT_ITEM_MAX_SIZE) return EFW_ERR_RANGE;
+    efw_event_item_t *item = &g_event_queue[g_eq_tail];
+    item->topic_id = topic_id;
+    item->event_name = event_name;
+    item->size = size;
+    if (data && size > 0) {
+        memcpy(item->data, data, size);
+    }
+    g_eq_tail = (uint8_t)((g_eq_tail + 1u) % EFW_EVENT_QUEUE_CAPACITY);
+    g_eq_count++;
+    return EFW_OK;
+}
+
+efw_status_t efw_event_queue_post(uint16_t topic_id, const void *data, uint16_t size) {
+    return queue_post(topic_id, 0, data, size);
+}
+
+efw_status_t efw_event_queue_post_named(uint16_t topic_id, const char *event_name, const void *data, uint16_t size) {
+    return queue_post(topic_id, event_name, data, size);
+}
+
+efw_status_t efw_event_queue_process(void) {
+    uint8_t to_process = g_eq_count;
+    while (to_process > 0 && g_eq_count > 0) {
+        efw_event_item_t *item = &g_event_queue[g_eq_head];
+        g_eq_head = (uint8_t)((g_eq_head + 1u) % EFW_EVENT_QUEUE_CAPACITY);
+        g_eq_count--;
+        to_process--;
+        if (item->topic_id != 0) {
+            efw_status_t s = efw_topic_publish(item->topic_id,
+                                               item->size > 0 ? item->data : 0,
+                                               item->size);
+            if (s != EFW_OK) return s;
+        }
+    }
+    return EFW_OK;
+}
+
+efw_status_t efw_event_queue_process_ex(efw_event_dispatch_fn dispatch) {
+    if (!dispatch) return EFW_ERR_INVALID;
+    uint8_t to_process = g_eq_count;
+    while (to_process > 0 && g_eq_count > 0) {
+        efw_event_item_t *item = &g_event_queue[g_eq_head];
+        g_eq_head = (uint8_t)((g_eq_head + 1u) % EFW_EVENT_QUEUE_CAPACITY);
+        g_eq_count--;
+        to_process--;
+        dispatch(item->event_name, item->topic_id,
+                 item->size > 0 ? item->data : 0, item->size);
+    }
+    return EFW_OK;
+}
+
+uint8_t efw_event_queue_count(void) {
+    return g_eq_count;
+}
+
+#endif

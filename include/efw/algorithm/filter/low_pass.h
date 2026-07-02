@@ -76,6 +76,6 @@ void efw_low_pass_reset(efw_low_pass_t *filter, float value);
  * @param out 指向 float (滤波后输出)
  * @return EFW_OK / EFW_ERR_INVALID (参数非法或 alpha 超出 [0,1])
  */
-efw_status_t efw_low_pass_run(void *ctx, const void *in, void *out);
+efw_status_t efw_low_pass_run(void *ctx, const void *in, uint16_t in_size, void *out, uint16_t out_size);
 
 #endif

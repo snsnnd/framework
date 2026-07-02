@@ -22,6 +22,8 @@ if importlib.util.find_spec("PyQt6") is not None:
         QPixmap, QIcon
     )
     from PyQt6.QtWidgets import (
+        QGraphicsDropShadowEffect,
+        QGraphicsObject,
         QApplication,
         QCheckBox,
         QComboBox,
@@ -53,7 +55,6 @@ if importlib.util.find_spec("PyQt6") is not None:
         QPlainTextEdit,
         QPushButton,
         QScrollArea,
-        QShortcut,
         QSpinBox,
         QSplitter,
         QStackedWidget,
@@ -93,6 +94,8 @@ elif importlib.util.find_spec("PyQt5") is not None:
         QPixmap, QIcon
     )
     from PyQt5.QtWidgets import (
+        QGraphicsDropShadowEffect,
+        QGraphicsObject,
         QApplication,
         QCheckBox,
         QComboBox,
@@ -154,90 +157,100 @@ elif importlib.util.find_spec("PyQt5") is not None:
     TabPosition = QTabWidget
 
 else:
-    # No Qt available - provide dummy classes
+    # No Qt available - provide dummy classes that can be inherited
     QT_LIB = "missing"
     
-    class _DummyClass:
-        """Dummy class when Qt is not available."""
-        def __getattr__(self, name):
-            return _DummyClass()
+    class _DummyBase:
+        """Base class for dummy Qt classes when Qt is not available."""
+        def __init__(self, *args, **kwargs):
+            pass
         def __call__(self, *args, **kwargs):
-            return _DummyClass()
+            return self
+        def __getattr__(self, name):
+            # Return a callable that returns itself for method chains
+            attr = _DummyBase()
+            return attr
     
-    # Create dummy versions of all classes
-    QApplication = _DummyClass()
-    QCheckBox = _DummyClass()
-    QComboBox = _DummyClass()
-    QDialog = _DummyClass()
-    QDialogButtonBox = _DummyClass()
-    QDockWidget = _DummyClass()
-    QDoubleSpinBox = _DummyClass()
-    QFileDialog = _DummyClass()
-    QFormLayout = _DummyClass()
-    QGraphicsEllipseItem = _DummyClass()
-    QGraphicsItem = _DummyClass()
-    QGraphicsLineItem = _DummyClass()
-    QGraphicsPathItem = _DummyClass()
-    QGraphicsRectItem = _DummyClass()
-    QGraphicsScene = _DummyClass()
-    QGraphicsSimpleTextItem = _DummyClass()
-    QGraphicsTextItem = _DummyClass()
-    QGraphicsView = _DummyClass()
-    QGroupBox = _DummyClass()
-    QHBoxLayout = _DummyClass()
-    QInputDialog = _DummyClass()
-    QLabel = _DummyClass()
-    QLineEdit = _DummyClass()
-    QListWidget = _DummyClass()
-    QListWidgetItem = _DummyClass()
-    QMainWindow = _DummyClass()
-    QMenu = _DummyClass()
-    QMessageBox = _DummyClass()
-    QPlainTextEdit = _DummyClass()
-    QPushButton = _DummyClass()
-    QScrollArea = _DummyClass()
-    QShortcut = _DummyClass()
-    QSpinBox = _DummyClass()
-    QSplitter = _DummyClass()
-    QStackedWidget = _DummyClass()
-    QTabBar = _DummyClass()
-    QTabWidget = _DummyClass()
-    QTableWidget = _DummyClass()
-    QTableWidgetItem = _DummyClass()
-    QTextEdit = _DummyClass()
-    QToolBox = _DummyClass()
-    QToolBar = _DummyClass()
-    QVBoxLayout = _DummyClass()
-    QWidget = _DummyClass()
+    def _make_dummy(name):
+        """Create a dummy class with the given name."""
+        return type(name, (_DummyBase,), {})
     
-    QBrush = _DummyClass()
-    QColor = _DummyClass()
-    QDrag = _DummyClass()
-    QFont = _DummyClass()
-    QFontMetrics = _DummyClass()
-    QKeySequence = _DummyClass()
-    QPen = _DummyClass()
-    QPainter = _DummyClass()
-    QPainterPath = _DummyClass()
-    QLinearGradient = _DummyClass()
-    QPixmap = _DummyClass()
-    QIcon = _DummyClass()
+    # Create all dummy classes uniformly
+    QApplication = _make_dummy('QApplication')
+    QCheckBox = _make_dummy('QCheckBox')
+    QComboBox = _make_dummy('QComboBox')
+    QDialog = _make_dummy('QDialog')
+    QDialogButtonBox = _make_dummy('QDialogButtonBox')
+    QDockWidget = _make_dummy('QDockWidget')
+    QDoubleSpinBox = _make_dummy('QDoubleSpinBox')
+    QFileDialog = _make_dummy('QFileDialog')
+    QFormLayout = _make_dummy('QFormLayout')
+    QGraphicsDropShadowEffect = _make_dummy('QGraphicsDropShadowEffect')
+    QGraphicsEllipseItem = _make_dummy('QGraphicsEllipseItem')
+    QGraphicsItem = _make_dummy('QGraphicsItem')
+    QGraphicsLineItem = _make_dummy('QGraphicsLineItem')
+    QGraphicsObject = _make_dummy('QGraphicsObject')
+    QGraphicsPathItem = _make_dummy('QGraphicsPathItem')
+    QGraphicsRectItem = _make_dummy('QGraphicsRectItem')
+    QGraphicsScene = _make_dummy('QGraphicsScene')
+    QGraphicsSimpleTextItem = _make_dummy('QGraphicsSimpleTextItem')
+    QGraphicsTextItem = _make_dummy('QGraphicsTextItem')
+    QGraphicsView = _make_dummy('QGraphicsView')
+    QGroupBox = _make_dummy('QGroupBox')
+    QHBoxLayout = _make_dummy('QHBoxLayout')
+    QInputDialog = _make_dummy('QInputDialog')
+    QLabel = _make_dummy('QLabel')
+    QLineEdit = _make_dummy('QLineEdit')
+    QListWidget = _make_dummy('QListWidget')
+    QListWidgetItem = _make_dummy('QListWidgetItem')
+    QMainWindow = _make_dummy('QMainWindow')
+    QMenu = _make_dummy('QMenu')
+    QMessageBox = _make_dummy('QMessageBox')
+    QPlainTextEdit = _make_dummy('QPlainTextEdit')
+    QPushButton = _make_dummy('QPushButton')
+    QScrollArea = _make_dummy('QScrollArea')
+    QShortcut = _make_dummy('QShortcut')
+    QSpinBox = _make_dummy('QSpinBox')
+    QSplitter = _make_dummy('QSplitter')
+    QStackedWidget = _make_dummy('QStackedWidget')
+    QTabBar = _make_dummy('QTabBar')
+    QTabWidget = _make_dummy('QTabWidget')
+    QTableWidget = _make_dummy('QTableWidget')
+    QTableWidgetItem = _make_dummy('QTableWidgetItem')
+    QTextEdit = _make_dummy('QTextEdit')
+    QToolBox = _make_dummy('QToolBox')
+    QToolBar = _make_dummy('QToolBar')
+    QVBoxLayout = _make_dummy('QVBoxLayout')
+    QWidget = _make_dummy('QWidget')
     
-    Qt = _DummyClass()
-    QTimer = _DummyClass()
-    QRectF = _DummyClass()
-    QPointF = _DummyClass()
-    QSizeF = _DummyClass()
-    QMimeData = _DummyClass()
-    QAbstractAnimation = _DummyClass()
+    QBrush = _make_dummy('QBrush')
+    QColor = _make_dummy('QColor')
+    QDrag = _make_dummy('QDrag')
+    QFont = _make_dummy('QFont')
+    QFontMetrics = _make_dummy('QFontMetrics')
+    QKeySequence = _make_dummy('QKeySequence')
+    QPen = _make_dummy('QPen')
+    QPainter = _make_dummy('QPainter')
+    QPainterPath = _make_dummy('QPainterPath')
+    QLinearGradient = _make_dummy('QLinearGradient')
+    QPixmap = _make_dummy('QPixmap')
+    QIcon = _make_dummy('QIcon')
+    
+    Qt = _make_dummy('Qt')
+    QTimer = _make_dummy('QTimer')
+    QRectF = _make_dummy('QRectF')
+    QPointF = _make_dummy('QPointF')
+    QSizeF = _make_dummy('QSizeF')
+    QMimeData = _make_dummy('QMimeData')
+    QAbstractAnimation = _make_dummy('QAbstractAnimation')
     
     ItemDataRole = 0
-    WindowType = _DummyClass()
-    Orientation = _DummyClass()
-    ScrollBarPolicy = _DummyClass()
-    DockWidgetArea = _DummyClass()
-    DockWidgetFeature = _DummyClass()
-    TabPosition = _DummyClass()
+    WindowType = _make_dummy('WindowType')
+    Orientation = _make_dummy('Orientation')
+    ScrollBarPolicy = _make_dummy('ScrollBarPolicy')
+    DockWidgetArea = _make_dummy('DockWidgetArea')
+    DockWidgetFeature = _make_dummy('DockWidgetFeature')
+    TabPosition = _make_dummy('TabPosition')
     
     def get_standard_button(button):
         return 0

@@ -143,7 +143,7 @@ class CodegenSnapshotTest(unittest.TestCase):
                 "path": "app_custom.c",
                 "content": '#include "efw/efw.h"\n'
                            'efw_status_t app_read_sensor(void *ctx, void *out){EFW_UNUSED(ctx); if(out) *(float*)out = 1.0f; return EFW_OK;}\n'
-                           'efw_status_t app_process(void *ctx, const void *in, void *out){EFW_UNUSED(ctx); if(in && out) *(float*)out = *(const float*)in; return EFW_OK;}\n'
+                           'efw_status_t app_process(void *ctx, const efw_app_multi_input_t *in, void *out){const efw_app_input_view_t *sensor = efw_app_multi_input_get(in, "sensor"); EFW_UNUSED(ctx); if(sensor && sensor->data && out) *(float*)out = *(const float*)sensor->data; return EFW_OK;}\n'
             }],
             "ui": {"positions": {}},
         }
@@ -153,6 +153,507 @@ class CodegenSnapshotTest(unittest.TestCase):
         self.assertIn("app_cache_source_root_processor_custom_proc", bootstrap_c)
         self.assertIn("app_publish_root_event_publisher_pub_auto", bootstrap_c)
         self.assertIn("EFW_ERR_NOT_READY", bootstrap_c)
+
+    def test_processor_uses_port_specific_input_contracts(self) -> None:
+        graph = {
+            "project": {"name": "proc_ports", "tick_ms": 1},
+            "board": {"profile": "generic-mock", "pin_plan": []},
+            "nodes": [
+                {"id": "src", "type": "sensor.custom", "read": "app_read_sensor", "output_type": "float"},
+                {"id": "topic_evt", "type": "event.topic", "topic_id": 3, "payload_type": "uint16_t"},
+                {"id": "sub", "type": "event.subscriber", "topic": "topic_evt", "target": "proc", "callback": "app_on_evt"},
+                {"id": "proc", "type": "processor.custom", "process": "app_process", "output_type": "efw_pid_input_t", "output_contract": "efw_pid_input_t"},
+            ],
+            "edges": [
+                {"id": "e1", "from": "src", "to": "proc", "from_port": "sensor", "to_port": "sensor", "kind": "data_flow"},
+                {"id": "e2", "from": "topic_evt", "to": "sub", "from_port": "topic", "to_port": "topic", "kind": "event"},
+                {"id": "e3", "from": "sub", "to": "proc", "from_port": "event", "to_port": "event", "kind": "event"},
+            ],
+            "flows": [],
+            "tasks": [],
+            "custom_files": [{
+                "path": "app_custom.c",
+                "content": '#include "efw/efw.h"\n'
+                           'efw_status_t app_read_sensor(void *ctx, void *out){EFW_UNUSED(ctx); if(out) *(float*)out = 1.0f; return EFW_OK;}\n'
+                           'efw_status_t app_process(void *ctx, const efw_app_multi_input_t *in, void *out){EFW_UNUSED(ctx); EFW_UNUSED(in); EFW_UNUSED(out); return EFW_OK;}\n'
+                           'void app_on_evt(uint16_t topic_id, const void *data, uint16_t size, void *user){EFW_UNUSED(topic_id); EFW_UNUSED(data); EFW_UNUSED(size); EFW_UNUSED(user);}\n'
+            }],
+            "ui": {"positions": {}},
+        }
+        ctx = validate_graph(graph)
+        proc = ctx["nodes_by_id"]["proc"]
+        self.assertEqual(proc["input_ports"]["sensor"]["contract"], "float")
+        self.assertEqual(proc["input_ports"]["sensor"]["size"], 4)
+        self.assertEqual(proc["input_ports"]["event"]["contract"], "uint16_t")
+
+    def test_processor_rejects_builtin_contract_mismatch(self) -> None:
+        graph = {
+            "project": {"name": "proc_mismatch", "tick_ms": 1},
+            "board": {"profile": "generic-mock", "pin_plan": []},
+            "nodes": [
+                {"id": "proc", "type": "processor.custom", "process": "app_process", "input_contract": "float", "input_type": "uint8_t", "input_size": 8, "output_type": "float"},
+            ],
+            "edges": [],
+            "flows": [],
+            "tasks": [],
+            "custom_files": [{
+                "path": "app_custom.c",
+                "content": '#include "efw/efw.h"\n'
+                           'efw_status_t app_process(void *ctx, const efw_app_multi_input_t *in, void *out){EFW_UNUSED(ctx); EFW_UNUSED(in); EFW_UNUSED(out); return EFW_OK;}\n'
+            }],
+            "ui": {"positions": {}},
+        }
+        with self.assertRaisesRegex(ValueError, "内建契约 float 不一致"):
+            validate_graph(graph)
+
+    def test_processor_and_algorithm_use_multi_input_runtime_abi(self) -> None:
+        graph = {
+            "project": {"name": "multi_input_runtime", "tick_ms": 1},
+            "board": {"profile": "generic-mock", "pin_plan": []},
+            "nodes": [
+                {"id": "src", "type": "sensor.custom", "read": "app_read_sensor", "output_type": "float"},
+                {"id": "proc", "type": "processor.custom", "process": "app_process", "output_contract": "float", "output_type": "float"},
+                {"id": "algo", "type": "algorithm.custom", "run": "app_run_algo", "output_type": "float"},
+            ],
+            "edges": [
+                {"id": "e1", "from": "src", "to": "proc", "from_port": "sensor", "to_port": "sensor", "kind": "data_flow"},
+                {"id": "e2", "from": "proc", "to": "algo", "from_port": "processor", "to_port": "processor", "kind": "data_flow"},
+            ],
+            "flows": [],
+            "tasks": [],
+            "custom_files": [{
+                "path": "app_custom.c",
+                "content": '#include "efw/efw.h"\n'
+                           'efw_status_t app_read_sensor(void *ctx, void *out){EFW_UNUSED(ctx); if(out) *(float*)out = 1.0f; return EFW_OK;}\n'
+                           'efw_status_t app_process(void *ctx, const efw_app_multi_input_t *in, void *out){const efw_app_input_view_t *sensor = efw_app_multi_input_get(in, "sensor"); EFW_UNUSED(ctx); if(sensor && sensor->data && out) *(float*)out = *(const float*)sensor->data; return EFW_OK;}\n'
+                           'efw_status_t app_run_algo(void *ctx, const efw_app_multi_input_t *in, void *out){const efw_app_input_view_t *processor = efw_app_multi_input_get(in, "processor"); EFW_UNUSED(ctx); if(processor && processor->data && out) *(float*)out = *(const float*)processor->data; return EFW_OK;}\n'
+            }],
+            "ui": {"positions": {}},
+        }
+        files = self.render_graph(graph)
+        self.assertIn("const efw_app_multi_input_t *in", files["app_bootstrap.c"])
+        self.assertIn("app_processor_proc_run_port", files["app_bootstrap.c"])
+        self.assertIn("app_algorithm_algo_dispatch", files["app_bootstrap.c"])
+        self.assertIn(".run = app_algorithm_algo_dispatch", files["app_components.c"])
+
+    def test_subscriber_targeting_processor_updates_event_cache_via_proxy(self) -> None:
+        graph = {
+            "project": {"name": "processor_event_proxy", "tick_ms": 1},
+            "board": {"profile": "generic-mock", "pin_plan": []},
+            "nodes": [
+                {"id": "topic_evt", "type": "event.topic", "topic_id": 5, "payload_type": "uint16_t"},
+                {"id": "sub", "type": "event.subscriber", "topic": "topic_evt", "target": "proc", "callback": "app_on_evt"},
+                {"id": "proc", "type": "processor.custom", "process": "app_process", "output_contract": "float", "output_type": "float"},
+            ],
+            "edges": [
+                {"id": "e1", "from": "topic_evt", "to": "sub", "from_port": "topic", "to_port": "topic", "kind": "event"},
+                {"id": "e2", "from": "sub", "to": "proc", "from_port": "event", "to_port": "event", "kind": "event"},
+            ],
+            "flows": [],
+            "tasks": [],
+            "custom_files": [{
+                "path": "app_custom.c",
+                "content": '#include "efw/efw.h"\n'
+                           'efw_status_t app_process(void *ctx, const efw_app_multi_input_t *in, void *out){EFW_UNUSED(ctx); EFW_UNUSED(in); EFW_UNUSED(out); return EFW_OK;}\n'
+                           'void app_on_evt(uint16_t topic_id, const void *data, uint16_t size, void *user){EFW_UNUSED(topic_id); EFW_UNUSED(data); EFW_UNUSED(size); EFW_UNUSED(user);}\n'
+            }],
+            "ui": {"positions": {}},
+        }
+        files = self.render_graph(graph)
+        self.assertIn("app_subscriber_sub_proxy", files["app_bootstrap.c"])
+        self.assertIn("app_cache_processor_proc_event(data, size);", files["app_bootstrap.c"])
+
+    def test_module_custom_poll_uses_multi_input_bridge(self) -> None:
+        graph = {
+            "project": {"name": "module_multi_input", "tick_ms": 1},
+            "board": {"profile": "generic-mock", "pin_plan": []},
+            "nodes": [
+                {"id": "src", "type": "sensor.custom", "read": "app_read_sensor", "output_type": "float"},
+                {"id": "proc", "type": "processor.custom", "process": "app_process", "output_contract": "float", "output_type": "float"},
+                {"id": "mod", "type": "module.custom", "poll": "app_poll_module"},
+            ],
+            "edges": [
+                {"id": "e1", "from": "src", "to": "proc", "from_port": "sensor", "to_port": "sensor", "kind": "data_flow"},
+                {"id": "e2", "from": "proc", "to": "mod", "from_port": "module_output", "to_port": "module_input", "kind": "data_flow"},
+            ],
+            "flows": [],
+            "tasks": [],
+            "custom_files": [{
+                "path": "app_custom.c",
+                "content": '#include "efw/efw.h"\n'
+                           'efw_status_t app_read_sensor(void *ctx, void *out){EFW_UNUSED(ctx); if(out) *(float*)out = 1.0f; return EFW_OK;}\n'
+                           'efw_status_t app_process(void *ctx, const efw_app_multi_input_t *in, void *out){const efw_app_input_view_t *sensor = efw_app_multi_input_get(in, "sensor"); EFW_UNUSED(ctx); if(sensor && sensor->data && out) *(float*)out = *(const float*)sensor->data; return EFW_OK;}\n'
+                           'efw_status_t app_poll_module(void *ctx, const efw_app_multi_input_t *in){const efw_app_input_view_t *module_input = efw_app_multi_input_get(in, "module_input"); EFW_UNUSED(ctx); EFW_UNUSED(module_input); return EFW_OK;}\n'
+            }],
+            "ui": {"positions": {}},
+        }
+        files = self.render_graph(graph)
+        self.assertIn("app_module_mod_poll_bridge", files["app_bootstrap.c"])
+        self.assertIn("app_cache_module_mod_module_input", files["app_bootstrap.c"])
+        self.assertIn(".poll = app_module_mod_poll_bridge", files["app_components.c"])
+
+    def test_subscriber_targeting_algorithm_triggers_event_runtime(self) -> None:
+        graph = {
+            "project": {"name": "algorithm_event_proxy", "tick_ms": 1},
+            "board": {"profile": "generic-mock", "pin_plan": []},
+            "nodes": [
+                {"id": "topic_evt", "type": "event.topic", "topic_id": 6, "payload_type": "uint16_t"},
+                {"id": "sub", "type": "event.subscriber", "topic": "topic_evt", "target": "algo", "callback": "app_on_evt"},
+                {"id": "algo", "type": "algorithm.custom", "run": "app_run_algo", "output_type": "float"},
+                {"id": "motor", "type": "actuator.custom", "write": "app_write_motor", "input_type": "float"},
+            ],
+            "edges": [
+                {"id": "e1", "from": "topic_evt", "to": "sub", "from_port": "topic", "to_port": "topic", "kind": "event"},
+                {"id": "e2", "from": "sub", "to": "algo", "from_port": "event", "to_port": "event", "kind": "event"},
+                {"id": "e3", "from": "algo", "to": "motor", "from_port": "algorithm", "to_port": "control", "kind": "control_flow"},
+            ],
+            "flows": [],
+            "tasks": [],
+            "custom_files": [{
+                "path": "app_custom.c",
+                "content": '#include "efw/efw.h"\n'
+                           'efw_status_t app_run_algo(void *ctx, const efw_app_multi_input_t *in, void *out){EFW_UNUSED(ctx); EFW_UNUSED(in); if(out) *(float*)out = 1.0f; return EFW_OK;}\n'
+                           'efw_status_t app_write_motor(void *ctx, const void *cmd){EFW_UNUSED(ctx); EFW_UNUSED(cmd); return EFW_OK;}\n'
+                           'void app_on_evt(uint16_t topic_id, const void *data, uint16_t size, void *user){EFW_UNUSED(topic_id); EFW_UNUSED(data); EFW_UNUSED(size); EFW_UNUSED(user);}\n'
+            }],
+            "ui": {"positions": {}},
+        }
+        files = self.render_graph(graph)
+        self.assertIn("app_subscriber_sub_proxy", files["app_bootstrap.c"])
+        self.assertIn("app_cache_algorithm_algo_event(data, size);", files["app_bootstrap.c"])
+        self.assertIn("app_algorithm_algo_trigger_event", files["app_bootstrap.c"])
+
+    def test_module_custom_event_can_optionally_trigger_poll_immediately(self) -> None:
+        graph = {
+            "project": {"name": "module_event_poll", "tick_ms": 1},
+            "board": {"profile": "generic-mock", "pin_plan": []},
+            "nodes": [
+                {"id": "topic_evt", "type": "event.topic", "topic_id": 8, "payload_type": "uint16_t"},
+                {"id": "sub", "type": "event.subscriber", "topic": "topic_evt", "target": "mod", "callback": "app_on_evt"},
+                {"id": "mod", "type": "module.custom", "poll": "app_poll_module", "poll_on_event": True, "input_ports": {"event": {"contract": "uint16_t", "type": "uint16_t", "size": 2, "align": 2}}},
+            ],
+            "edges": [
+                {"id": "e1", "from": "topic_evt", "to": "sub", "from_port": "topic", "to_port": "topic", "kind": "event"},
+                {"id": "e2", "from": "sub", "to": "mod", "from_port": "event", "to_port": "event", "kind": "event"},
+            ],
+            "flows": [],
+            "tasks": [],
+            "custom_files": [{
+                "path": "app_custom.c",
+                "content": '#include "efw/efw.h"\n'
+                           'efw_status_t app_poll_module(void *ctx, const efw_app_multi_input_t *in){EFW_UNUSED(ctx); EFW_UNUSED(in); return EFW_OK;}\n'
+                           'void app_on_evt(uint16_t topic_id, const void *data, uint16_t size, void *user){EFW_UNUSED(topic_id); EFW_UNUSED(data); EFW_UNUSED(size); EFW_UNUSED(user);}\n'
+            }],
+            "ui": {"positions": {}},
+        }
+        files = self.render_graph(graph)
+        self.assertIn("app_cache_module_mod_event(data, size);", files["app_bootstrap.c"])
+        self.assertIn("app_record_immediate_status(\"module:mod\", \"event\", s);", files["app_bootstrap.c"])
+
+    def test_event_contract_mismatch_is_rejected(self) -> None:
+        graph = {
+            "project": {"name": "event_mismatch", "tick_ms": 1},
+            "board": {"profile": "generic-mock", "pin_plan": []},
+            "nodes": [
+                {"id": "topic_evt", "type": "event.topic", "topic_id": 1, "payload_type": "uint16_t"},
+                {"id": "sub", "type": "event.subscriber", "topic": "topic_evt", "target": "proc", "callback": "app_on_evt"},
+                {"id": "proc", "type": "processor.custom", "process": "app_process", "input_ports": {"event": {"contract": "float", "type": "float", "size": 4, "align": 4}}, "output_type": "float"},
+            ],
+            "edges": [
+                {"id": "e1", "from": "topic_evt", "to": "sub", "from_port": "topic", "to_port": "topic", "kind": "event"},
+                {"id": "e2", "from": "sub", "to": "proc", "from_port": "event", "to_port": "event", "kind": "event"},
+            ],
+            "flows": [],
+            "tasks": [],
+            "custom_files": [{
+                "path": "app_custom.c",
+                "content": '#include "efw/efw.h"\n'
+                           'void app_on_evt(uint16_t topic_id, const void *data, uint16_t size, void *user){EFW_UNUSED(topic_id);EFW_UNUSED(data);EFW_UNUSED(size);EFW_UNUSED(user);}\n'
+                           'efw_status_t app_process(void *ctx, const efw_app_multi_input_t *in, void *out){EFW_UNUSED(ctx);EFW_UNUSED(in);EFW_UNUSED(out); return EFW_OK;}\n'
+            }],
+            "ui": {"positions": {}},
+        }
+        with self.assertRaisesRegex(ValueError, "event contract mismatch"):
+            validate_graph(graph)
+
+    def test_immediate_event_diagnostics_are_generated(self) -> None:
+        graph = {
+            "project": {"name": "event_diag", "tick_ms": 1},
+            "board": {"profile": "generic-mock", "pin_plan": []},
+            "nodes": [
+                {"id": "topic_evt", "type": "event.topic", "topic_id": 9, "payload_type": "uint16_t"},
+                {"id": "sub", "type": "event.subscriber", "topic": "topic_evt", "target": "algo", "callback": "app_on_evt"},
+                {"id": "algo", "type": "algorithm.custom", "run": "app_run_algo", "output_type": "float"},
+            ],
+            "edges": [
+                {"id": "e1", "from": "topic_evt", "to": "sub", "from_port": "topic", "to_port": "topic", "kind": "event"},
+                {"id": "e2", "from": "sub", "to": "algo", "from_port": "event", "to_port": "event", "kind": "event"},
+            ],
+            "flows": [],
+            "tasks": [],
+            "custom_files": [{
+                "path": "app_custom.c",
+                "content": '#include "efw/efw.h"\n'
+                           'efw_status_t app_run_algo(void *ctx, const efw_app_multi_input_t *in, void *out){EFW_UNUSED(ctx);EFW_UNUSED(in); if(out) *(float*)out = 0.0f; return EFW_OK;}\n'
+                           'void app_on_evt(uint16_t topic_id, const void *data, uint16_t size, void *user){EFW_UNUSED(topic_id);EFW_UNUSED(data);EFW_UNUSED(size);EFW_UNUSED(user);}\n'
+            }],
+            "ui": {"positions": {}},
+        }
+        files = self.render_graph(graph)
+        self.assertIn("app_last_immediate_status", files["app_bootstrap.h"])
+        self.assertIn("app_record_immediate_status", files["app_bootstrap.c"])
+
+    def test_processor_mapping_only_generates_struct_mapping(self) -> None:
+        graph = {
+            "project": {"name": "processor_mapping_only", "tick_ms": 1},
+            "board": {"profile": "generic-mock", "pin_plan": []},
+            "nodes": [
+                {
+                    "id": "src",
+                    "type": "sensor.custom",
+                    "read": "app_read_sensor",
+                    "output_type": "float",
+                },
+                {
+                    "id": "proc",
+                    "type": "processor.custom",
+                    "output_contract": "efw_pid_input_t",
+                    "output_type": "efw_pid_input_t",
+                    "output_size": 16,
+                    "output_align": 4,
+                    "primary_input_port": "sensor",
+                    "trigger_policy": "primary_only",
+                    "output_mode": "assemble_struct",
+                    "process_mode": "mapping_only",
+                    "field_mappings": [
+                        {"field": "setpoint", "source": "const", "value": 0.0, "transform": "identity", "required": True},
+                        {"field": "feedback", "source": "sensor", "path": "", "transform": "identity", "required": True},
+                        {"field": "dt", "source": "const", "value": 0.01, "transform": "identity", "required": True},
+                        {"field": "feedforward", "source": "const", "value": 0.0, "transform": "identity", "required": True},
+                    ],
+                },
+            ],
+            "edges": [
+                {"id": "e1", "from": "src", "to": "proc", "from_port": "sensor", "to_port": "sensor", "kind": "data_flow"},
+            ],
+            "flows": [],
+            "tasks": [],
+            "custom_files": [{
+                "path": "app_custom.c",
+                "content": '#include "efw/efw.h"\n'
+                           'efw_status_t app_read_sensor(void *ctx, void *out){EFW_UNUSED(ctx); if(out) *(float*)out = 2.0f; return EFW_OK;}\n'
+            }],
+            "ui": {"positions": {}},
+        }
+        files = self.render_graph(graph)
+        bootstrap_c = files["app_bootstrap.c"]
+        self.assertIn("static efw_status_t app_processor_proc_apply_mapping", bootstrap_c)
+        self.assertIn("mapped->feedback = (*(const float *)src_view->data);", bootstrap_c)
+        self.assertIn("mapped->dt = 0.01f;", bootstrap_c)
+        self.assertIn("return EFW_OK;", bootstrap_c)
+
+    def test_processor_mapping_then_custom_calls_callback_after_mapping(self) -> None:
+        graph = {
+            "project": {"name": "processor_mapping_then_custom", "tick_ms": 1},
+            "board": {"profile": "generic-mock", "pin_plan": []},
+            "nodes": [
+                {"id": "src", "type": "sensor.custom", "read": "app_read_sensor", "output_type": "float"},
+                {
+                    "id": "proc",
+                    "type": "processor.custom",
+                    "process": "app_process",
+                    "output_contract": "efw_pid_input_t",
+                    "output_type": "efw_pid_input_t",
+                    "output_size": 16,
+                    "output_align": 4,
+                    "primary_input_port": "sensor",
+                    "trigger_policy": "primary_only",
+                    "output_mode": "assemble_struct",
+                    "process_mode": "mapping_then_custom",
+                    "field_mappings": [
+                        {"field": "feedback", "source": "sensor", "path": "", "transform": "identity", "required": True},
+                    ],
+                },
+            ],
+            "edges": [
+                {"id": "e1", "from": "src", "to": "proc", "from_port": "sensor", "to_port": "sensor", "kind": "data_flow"},
+            ],
+            "flows": [],
+            "tasks": [],
+            "custom_files": [{
+                "path": "app_custom.c",
+                "content": '#include "efw/efw.h"\n'
+                           'efw_status_t app_read_sensor(void *ctx, void *out){EFW_UNUSED(ctx); if(out) *(float*)out = 2.0f; return EFW_OK;}\n'
+                           'efw_status_t app_process(void *ctx, const efw_app_multi_input_t *in, void *out){EFW_UNUSED(ctx); EFW_UNUSED(in); EFW_UNUSED(out); return EFW_OK;}\n'
+            }],
+            "ui": {"positions": {}},
+        }
+        files = self.render_graph(graph)
+        bootstrap_c = files["app_bootstrap.c"]
+        self.assertIn("app_processor_proc_apply_mapping(&multi, out)", bootstrap_c)
+        self.assertIn("return app_process(ctx ? ctx : 0, &multi, out);", bootstrap_c)
+
+    def test_algorithm_mapping_only_generates_output_mapping(self) -> None:
+        graph = {
+            "project": {"name": "algorithm_mapping_only", "tick_ms": 1},
+            "board": {"profile": "generic-mock", "pin_plan": []},
+            "nodes": [
+                {"id": "src", "type": "sensor.custom", "read": "app_read_sensor", "output_type": "float"},
+                {
+                    "id": "algo",
+                    "type": "algorithm.custom",
+                    "output_contract": "efw_pid_output_t",
+                    "output_type": "efw_pid_output_t",
+                    "output_size": 12,
+                    "output_align": 4,
+                    "primary_input_port": "sensor",
+                    "trigger_policy": "primary_only",
+                    "output_mode": "assemble_struct",
+                    "process_mode": "mapping_only",
+                    "field_mappings": [
+                        {"field": "output", "source": "sensor", "path": "", "transform": "identity", "required": True},
+                        {"field": "error", "source": "const", "value": 0.0, "transform": "identity", "required": True},
+                        {"field": "feedforward", "source": "const", "value": 0.0, "transform": "identity", "required": True},
+                    ],
+                },
+            ],
+            "edges": [
+                {"id": "e1", "from": "src", "to": "algo", "from_port": "sensor", "to_port": "sensor", "kind": "data_flow"},
+            ],
+            "flows": [],
+            "tasks": [],
+            "custom_files": [{
+                "path": "app_custom.c",
+                "content": '#include "efw/efw.h"\n'
+                           'efw_status_t app_read_sensor(void *ctx, void *out){EFW_UNUSED(ctx); if(out) *(float*)out = 3.0f; return EFW_OK;}\n'
+            }],
+            "ui": {"positions": {}},
+        }
+        files = self.render_graph(graph)
+        bootstrap_c = files["app_bootstrap.c"]
+        self.assertIn("static efw_status_t app_algorithm_algo_apply_mapping", bootstrap_c)
+        self.assertIn("mapped->output = (*(const float *)src_view->data);", bootstrap_c)
+        self.assertIn("mapped->error = 0.0f;", bootstrap_c)
+
+    def test_algorithm_mapping_then_custom_calls_run_after_mapping(self) -> None:
+        graph = {
+            "project": {"name": "algorithm_mapping_then_custom", "tick_ms": 1},
+            "board": {"profile": "generic-mock", "pin_plan": []},
+            "nodes": [
+                {"id": "src", "type": "sensor.custom", "read": "app_read_sensor", "output_type": "float"},
+                {
+                    "id": "algo",
+                    "type": "algorithm.custom",
+                    "run": "app_run_algo",
+                    "output_contract": "efw_pid_output_t",
+                    "output_type": "efw_pid_output_t",
+                    "output_size": 12,
+                    "output_align": 4,
+                    "primary_input_port": "sensor",
+                    "trigger_policy": "primary_only",
+                    "output_mode": "assemble_struct",
+                    "process_mode": "mapping_then_custom",
+                    "field_mappings": [
+                        {"field": "output", "source": "sensor", "path": "", "transform": "identity", "required": True},
+                    ],
+                },
+            ],
+            "edges": [
+                {"id": "e1", "from": "src", "to": "algo", "from_port": "sensor", "to_port": "sensor", "kind": "data_flow"},
+            ],
+            "flows": [],
+            "tasks": [],
+            "custom_files": [{
+                "path": "app_custom.c",
+                "content": '#include "efw/efw.h"\n'
+                           'efw_status_t app_read_sensor(void *ctx, void *out){EFW_UNUSED(ctx); if(out) *(float*)out = 3.0f; return EFW_OK;}\n'
+                           'efw_status_t app_run_algo(void *ctx, const efw_app_multi_input_t *in, void *out){EFW_UNUSED(ctx); EFW_UNUSED(in); EFW_UNUSED(out); return EFW_OK;}\n'
+            }],
+            "ui": {"positions": {}},
+        }
+        files = self.render_graph(graph)
+        bootstrap_c = files["app_bootstrap.c"]
+        self.assertIn("app_algorithm_algo_apply_mapping(&multi, out)", bootstrap_c)
+        self.assertIn("return app_run_algo(ctx ? ctx : 0, &multi, out);", bootstrap_c)
+
+    def test_module_mapping_only_caches_output_for_auto_publish(self) -> None:
+        graph = {
+            "project": {"name": "module_mapping_only", "tick_ms": 1},
+            "board": {"profile": "generic-mock", "pin_plan": []},
+            "nodes": [
+                {"id": "src", "type": "sensor.custom", "read": "app_read_sensor", "output_type": "float"},
+                {
+                    "id": "mod",
+                    "type": "module.custom",
+                    "poll": "app_poll_module",
+                    "input_ports": {"module_input": {"contract": "float", "type": "float", "size": 4, "align": 4}},
+                    "output_contract": "float",
+                    "output_type": "float",
+                    "output_size": 4,
+                    "output_mode": "scalar_compute",
+                    "process_mode": "mapping_only",
+                    "field_mappings": [
+                        {"field": "", "source": "module_input", "path": "", "transform": "identity", "required": True},
+                    ],
+                },
+                {"id": "topic_evt", "type": "event.topic", "topic_id": 12, "payload_type": "float"},
+                {"id": "pub", "type": "event.publisher", "topic": "topic_evt", "source": "mod"},
+            ],
+            "edges": [
+                {"id": "e1", "from": "src", "to": "mod", "from_port": "sensor", "to_port": "module_input", "kind": "data_flow"},
+                {"id": "e2", "from": "mod", "to": "pub", "from_port": "event_source", "to_port": "event_source", "kind": "event"},
+                {"id": "e3", "from": "topic_evt", "to": "pub", "from_port": "topic", "to_port": "topic", "kind": "event"},
+            ],
+            "flows": [],
+            "tasks": [],
+            "custom_files": [{
+                "path": "app_custom.c",
+                "content": '#include "efw/efw.h"\n'
+                           'efw_status_t app_read_sensor(void *ctx, void *out){EFW_UNUSED(ctx); if(out) *(float*)out = 4.0f; return EFW_OK;}\n'
+                           'efw_status_t app_poll_module(void *ctx, const efw_app_multi_input_t *in){EFW_UNUSED(ctx); EFW_UNUSED(in); return EFW_OK;}\n'
+            }],
+            "ui": {"positions": {}},
+        }
+        files = self.render_graph(graph)
+        bootstrap_c = files["app_bootstrap.c"]
+        self.assertIn("app_cache_source_mod(&mapped_out", bootstrap_c)
+
+    def test_nested_path_mapping_validates_and_generates(self) -> None:
+        graph = {
+            "project": {"name": "nested_path", "tick_ms": 1},
+            "board": {"profile": "generic-mock", "pin_plan": []},
+            "nodes": [
+                {"id": "inner_type", "type": "data.struct", "name": "inner_t", "fields": [{"type": "float", "name": "value"}]},
+                {"id": "outer_type", "type": "data.struct", "name": "outer_t", "fields": [{"type": "inner_t", "name": "nested"}]},
+                {"id": "src", "type": "sensor.custom", "read": "app_read_sensor", "output_contract": "outer_t", "output_type": "outer_t", "output_size": 4},
+                {"id": "proc", "type": "processor.custom", "output_contract": "float", "output_type": "float", "output_mode": "scalar_compute", "process_mode": "mapping_only", "primary_input_port": "sensor", "field_mappings": [{"field": "", "source": "sensor", "path": "nested.value", "transform": "identity", "required": True}]},
+            ],
+            "edges": [
+                {"id": "e1", "from": "src", "to": "proc", "from_port": "sensor", "to_port": "sensor", "kind": "data_flow"},
+            ],
+            "flows": [],
+            "tasks": [],
+            "custom_files": [{"path": "app_custom.c", "content": '#include "efw/efw.h"\nefw_status_t app_read_sensor(void *ctx, void *out){EFW_UNUSED(ctx); EFW_UNUSED(out); return EFW_OK;}\n'}],
+            "ui": {"positions": {}},
+        }
+        files = self.render_graph(graph)
+        self.assertIn("->nested.value", files["app_bootstrap.c"])
+
+    def test_invalid_expr_and_transform_type_are_rejected(self) -> None:
+        graph = {
+            "project": {"name": "invalid_mapping_rules", "tick_ms": 1},
+            "board": {"profile": "generic-mock", "pin_plan": []},
+            "nodes": [
+                {"id": "proc", "type": "processor.custom", "output_contract": "efw_pid_input_t", "output_type": "efw_pid_input_t", "output_mode": "assemble_struct", "process_mode": "mapping_only", "field_mappings": [{"field": "feedback", "source": "expr", "expr": "a();", "transform": "identity", "required": True}, {"field": "dt", "source": "const", "value": 1, "transform": "to_uint16", "required": True}]},
+            ],
+            "edges": [],
+            "flows": [],
+            "tasks": [],
+            "custom_files": [],
+            "ui": {"positions": {}},
+        }
+        with self.assertRaisesRegex(ValueError, "expr|to_uint16"):
+            validate_graph(graph)
 
 
 if __name__ == "__main__":

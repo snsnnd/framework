@@ -24,7 +24,7 @@ static efw_status_t blink_poll(void *ctx) {
 
     blink->led_on = (uint8_t)!blink->led_on;
     cmd.value = blink->led_on ? 1.0f : 0.0f;
-    return efw_actuator_write(APP_STATUS_LED_NAME, &cmd);
+    return efw_actuator_write(APP_STATUS_LED_NAME, &cmd, (uint16_t)sizeof(cmd));
 }
 
 static efw_module_ops_t g_blink_module = {

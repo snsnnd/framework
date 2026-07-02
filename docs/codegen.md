@@ -329,7 +329,7 @@ efw_ringbuf_push(&rx_rb, byte);
 - `state.machine`、`state.state`、`state.transition` 已从占位升级为生成轻量状态机 glue：生成状态注册、当前状态索引、`on_enter/on_update/on_exit` 调用以及带 `condition` 的转换判断。
 - 低代码式逻辑卡片已从 Studio 主模型移除；数据格式不匹配改由 `processor.custom` 显式表达 `input_contract → process() → output_contract`。
 - `project.module` 仍然是项目结构分组，但在可视化编辑器中可双击进入子模块页面，根视图/模块视图之间可以切换。
-- Board Profile 数据库位于 `examples/board_profiles/board_profiles.json`，当前内置 `generic-mock`、`stm32-basic`、`esp32-basic`，Pin Planner 会基于 profile 生成默认资源规划草稿并检查冲突。
+- Board Profile 数据库优先来自 `data/board_profiles/` 和 MCU 数据；`generic-mock` 仅作为兼容/Host 演示 profile，真实项目应选择具体板卡或 MCU profile。Pin Planner 会基于 profile 生成默认资源规划草稿并检查冲突。
 - 端口连线现在会先调用统一连接语义，只有合法连接才写入 `graph.edges`；无效连接会高亮并提示。
 - 生成前会展示 create/overwrite/same/preserve 摘要；`--force` 和 UI 覆盖只覆盖生成目标文件，不再清空整个输出目录，因此额外用户文件会保留。
 

@@ -166,6 +166,6 @@ typedef struct {
 } efw_pid_output_t;
 
 void efw_pid_reset(efw_pid_t *pid);
-efw_status_t efw_pid_run(void *ctx, const void *in, void *out);
+efw_status_t efw_pid_run(void *ctx, const void *in, uint16_t in_size, void *out, uint16_t out_size);
 
 #endif

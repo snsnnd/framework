@@ -10,10 +10,11 @@ import importlib.util
 
 from studio.qt_compat import (
     Qt, QTimer, QRectF, QPointF, QSizeF, QMimeData,
-    QBrush, QColor, QFont, QFontMetrics, QPen, QPainter, QPixmap, QIcon,
-    QGraphicsEllipseItem, QGraphicsItem, QGraphicsLineItem, QGraphicsPathItem,
-    QGraphicsRectItem, QGraphicsScene, QGraphicsSimpleTextItem, QGraphicsTextItem,
-    QGraphicsView, QLineEdit, QMenu, QPushButton, QWidget,
+    QBrush, QColor, QFont, QFontMetrics, QPen, QPainter, QPainterPath, QPixmap, QIcon,
+    QGraphicsDropShadowEffect, QGraphicsEllipseItem, QGraphicsItem, QGraphicsLineItem,
+    QGraphicsObject, QGraphicsPathItem, QGraphicsRectItem, QGraphicsScene,
+    QGraphicsSimpleTextItem, QGraphicsTextItem, QGraphicsView,
+    QLineEdit, QListWidget, QMenu, QPushButton, QWidget,
 )
 
 from codegen.graph import NODE_CONTRACTS, PORT_COLORS, PORT_LABELS, PORT_RULES
@@ -190,12 +191,51 @@ class EdgeItem(QGraphicsPathItem):
     def set_emphasis_pen(self, pen: QPen):
         self.setPen(pen)
 
-    def update_path(self, start_pos: QPointF, end_pos: QPointF):
+    def update_path(self, start_pos: QPointF, end_pos: QPointF, start_dir: str = "right", end_dir: str = "left"):
+        """Update edge path with UE5-style bezier curve.
+        
+        Args:
+            start_pos: Starting position (source port)
+            end_pos: Ending position (target port)
+            start_dir: Direction the start port faces ("left" or "right")
+            end_dir: Direction the end port faces ("left" or "right")
+        """
         path = QPainterPath(start_pos)
-        dist_x = abs(end_pos.x() - start_pos.x()) * 0.5
-        ctrl_dist = max(dist_x, 40.0)
-        ctrl1 = QPointF(start_pos.x() + ctrl_dist, start_pos.y())
-        ctrl2 = QPointF(end_pos.x() - ctrl_dist, end_pos.y())
+        
+        # Calculate horizontal distance
+        dx = end_pos.x() - start_pos.x()
+        dy = end_pos.y() - start_pos.y()
+        abs_dx = abs(dx)
+        abs_dy = abs(dy)
+        
+        # Minimum control point distance
+        min_ctrl_dist = 60.0
+        
+        # Scale factor based on distance
+        if abs_dx > 200:
+            ctrl_dist = abs_dx * 0.4
+        elif abs_dx > 100:
+            ctrl_dist = abs_dx * 0.5
+        else:
+            ctrl_dist = max(abs_dx * 0.6, min_ctrl_dist)
+        
+        # For backwards connections, use larger control distance
+        if dx < 0:
+            ctrl_dist = max(ctrl_dist, abs_dy * 0.5 + 100)
+        
+        # Calculate control points based on port direction
+        # Output ports face right, input ports face left (normal case)
+        # When flipped, output ports face left, input ports face right
+        if start_dir == "right":
+            ctrl1 = QPointF(start_pos.x() + ctrl_dist, start_pos.y())
+        else:  # left
+            ctrl1 = QPointF(start_pos.x() - ctrl_dist, start_pos.y())
+        
+        if end_dir == "left":
+            ctrl2 = QPointF(end_pos.x() - ctrl_dist, end_pos.y())
+        else:  # right
+            ctrl2 = QPointF(end_pos.x() + ctrl_dist, end_pos.y())
+        
         path.cubicTo(ctrl1, ctrl2, end_pos)
         self.setPath(path)
 
@@ -269,6 +309,70 @@ class BackdropItem(QGraphicsRectItem):
         self._drag_origin = None
         self._member_origin_positions = {}
         super().mouseReleaseEvent(event)
+
+
+
+
+class EventFlowIndicator(QGraphicsPathItem):
+    """Visual indicator for event flow between nodes."""
+    
+    def __init__(self, source_pos: QPointF, target_pos: QPointF, 
+                 topic_name: str, event_type: str = "publish"):
+        super().__init__()
+        self.topic_name = topic_name
+        self.event_type = event_type
+        self._dash_offset = 0.0
+        
+        # Set style
+        color = QColor("#ff7043") if event_type == "publish" else QColor("#ff9800")
+        pen = QPen(color, 2.5)
+        pen.setStyle(Qt.PenStyle.DashDotLine if hasattr(Qt, "PenStyle") else Qt.DashDotLine)
+        pen.setDashPattern([8, 4, 2, 4])
+        self.setPen(pen)
+        self.setZValue(5)
+        
+        # Create path
+        self.update_path(source_pos, target_pos)
+        
+        # Add label
+        self.label = QGraphicsSimpleTextItem(topic_name, self)
+        self.label.setBrush(QBrush(color))
+        self.label.setFont(QFont("Sans", 8))
+        mid_x = (source_pos.x() + target_pos.x()) / 2
+        mid_y = (source_pos.y() + target_pos.y()) / 2
+        self.label.setPos(mid_x, mid_y - 15)
+    
+    def update_path(self, start: QPointF, end: QPointF):
+        path = QPainterPath(start)
+        
+        # Create curved path
+        dx = end.x() - start.x()
+        dy = end.y() - start.y()
+        
+        # Control points for curve
+        ctrl1 = QPointF(start.x() + dx * 0.3, start.y())
+        ctrl2 = QPointF(end.x() - dx * 0.3, end.y())
+        
+        path.cubicTo(ctrl1, ctrl2, end)
+        
+        # Add arrowhead
+        arrow_size = 8
+        angle = 3.14159 * 0.8  # Angle for arrowhead
+        p1 = QPointF(end.x() - arrow_size * 0.7, end.y() - arrow_size * 0.5)
+        p2 = QPointF(end.x() - arrow_size * 0.7, end.y() + arrow_size * 0.5)
+        
+        path.moveTo(end)
+        path.lineTo(p1)
+        path.moveTo(end)
+        path.lineTo(p2)
+        
+        self.setPath(path)
+    
+    def advance_animation(self, amount: float = 1.0):
+        self._dash_offset -= amount
+        pen = self.pen()
+        pen.setDashOffset(self._dash_offset)
+        self.setPen(pen)
 
 
 def node_theme(node_type: str) -> dict[str, str]:
@@ -359,6 +463,27 @@ class GraphNodeItem(QGraphicsObject):
         for port in self.ports:
             port.set_enabled_state(self.editor.port_is_enabled(self.node, port.direction, port.port_type))
         self.update_lod(1.0)
+        self._ports_flipped = False
+
+    def flip_ports(self) -> None:
+        """Manually flip input/output port positions."""
+        self._ports_flipped = not self._ports_flipped
+        self._reposition_ports()
+        self.update()  # Trigger repaint to update labels
+
+    def _reposition_ports(self) -> None:
+        """Reposition ports based on flip state."""
+        for port in self.ports:
+            if port.direction == "in":
+                if self._ports_flipped:
+                    port.setPos(self.WIDTH, port.y())
+                else:
+                    port.setPos(0, port.y())
+            else:  # out
+                if self._ports_flipped:
+                    port.setPos(0, port.y())
+                else:
+                    port.setPos(self.WIDTH, port.y())
 
     def boundingRect(self):
         return QRectF(0, 0, self.WIDTH, self.HEIGHT)
@@ -405,11 +530,21 @@ class GraphNodeItem(QGraphicsObject):
             for idx, port_type in enumerate(self.in_ports):
                 label = PORT_LABELS.get(port_type, port_type)
                 y = self.HEADER_HEIGHT + self.BODY_TOP_PADDING + idx * self.PORT_ROW_HEIGHT
-                painter.drawText(QRectF(16, y, self.WIDTH / 2, self.PORT_ROW_HEIGHT), (Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft) if hasattr(Qt, "AlignmentFlag") else (Qt.AlignVCenter | Qt.AlignLeft), label)
+                if self._ports_flipped:
+                    # When flipped, input port is on right, label on right
+                    painter.drawText(QRectF(self.WIDTH / 2, y, self.WIDTH / 2 - 16, self.PORT_ROW_HEIGHT), (Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight) if hasattr(Qt, "AlignmentFlag") else (Qt.AlignVCenter | Qt.AlignRight), label)
+                else:
+                    # Normal: input port on left, label on left
+                    painter.drawText(QRectF(16, y, self.WIDTH / 2, self.PORT_ROW_HEIGHT), (Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft) if hasattr(Qt, "AlignmentFlag") else (Qt.AlignVCenter | Qt.AlignLeft), label)
             for idx, port_type in enumerate(self.out_ports):
                 label = PORT_LABELS.get(port_type, port_type)
                 y = self.HEADER_HEIGHT + self.BODY_TOP_PADDING + idx * self.PORT_ROW_HEIGHT
-                painter.drawText(QRectF(self.WIDTH / 2, y, self.WIDTH / 2 - 16, self.PORT_ROW_HEIGHT), (Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight) if hasattr(Qt, "AlignmentFlag") else (Qt.AlignVCenter | Qt.AlignRight), label)
+                if self._ports_flipped:
+                    # When flipped, output port is on left, label on left
+                    painter.drawText(QRectF(16, y, self.WIDTH / 2, self.PORT_ROW_HEIGHT), (Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft) if hasattr(Qt, "AlignmentFlag") else (Qt.AlignVCenter | Qt.AlignLeft), label)
+                else:
+                    # Normal: output port on right, label on right
+                    painter.drawText(QRectF(self.WIDTH / 2, y, self.WIDTH / 2 - 16, self.PORT_ROW_HEIGHT), (Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignRight) if hasattr(Qt, "AlignmentFlag") else (Qt.AlignVCenter | Qt.AlignRight), label)
 
     def itemChange(self, change, value):
         try:

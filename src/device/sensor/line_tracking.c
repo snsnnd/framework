@@ -73,7 +73,7 @@
 
 efw_status_t efw_line_tracking_read(const char *name, efw_line_tracking_data_t *out) {
     if (!out) return EFW_ERR_INVALID;
-    return efw_sensor_read(name, out);
+    return efw_sensor_read(name, out, (uint16_t)sizeof(*out));
 }
 
 /* ==================================================================
@@ -182,7 +182,7 @@ efw_status_t efw_line_tracking_follow_diff(const char *sensor_name, const char *
     pid_in.dt = dt;
 
     /* ③ PID 计算 */
-    s = efw_algo_run(pid_name, &pid_in, &pid_out);
+    s = efw_algo_run(pid_name, &pid_in, sizeof(pid_in), &pid_out, sizeof(pid_out));
     if (s != EFW_OK) return s;
 
     /* ④ 差速驱动 (无速度限制) */
@@ -288,7 +288,7 @@ efw_status_t efw_line_follower_update(efw_line_follower_t *follower, float *out_
     if (!follower) return EFW_ERR_INVALID;
 
     /* ① 读取传感器 (使用缓存指针直接调用，O(1)) */
-    s = follower->sensor->read(follower->sensor->ctx, &data);
+    s = follower->sensor->read(follower->sensor->ctx, &data, (uint16_t)sizeof(data));
     if (s != EFW_OK) return s;
 
     /* ② 误差计算：数字模块用二值误差，模拟模块用加权误差 */
@@ -303,7 +303,7 @@ efw_status_t efw_line_follower_update(efw_line_follower_t *follower, float *out_
     pid_in.feedback = error;
     pid_in.feedforward = 0.0f;
     pid_in.dt = follower->dt;
-    s = follower->pid->run(follower->pid->ctx, &pid_in, &pid_out);
+    s = follower->pid->run(follower->pid->ctx, &pid_in, sizeof(pid_in), &pid_out, sizeof(pid_out));
     if (s != EFW_OK) return s;
 
     /* ④ 差速公式 + 限速 */
@@ -319,13 +319,13 @@ efw_status_t efw_line_follower_update(efw_line_follower_t *follower, float *out_
     /* ⑤ 写入左电机 */
     left_cmd.speed = (left_speed >= 0.0f) ? left_speed : -left_speed;
     left_cmd.direction = (left_speed > 0.0f) ? 1.0f : ((left_speed < 0.0f) ? -1.0f : 0.0f);
-    s = follower->left_motor->write(follower->left_motor->ctx, &left_cmd);
+    s = follower->left_motor->write(follower->left_motor->ctx, &left_cmd, (uint16_t)sizeof(left_cmd));
     if (s != EFW_OK) return s;
 
     /* ⑥ 写入右电机 */
     right_cmd.speed = (right_speed >= 0.0f) ? right_speed : -right_speed;
     right_cmd.direction = (right_speed > 0.0f) ? 1.0f : ((right_speed < 0.0f) ? -1.0f : 0.0f);
-    s = follower->right_motor->write(follower->right_motor->ctx, &right_cmd);
+    s = follower->right_motor->write(follower->right_motor->ctx, &right_cmd, (uint16_t)sizeof(right_cmd));
     if (s != EFW_OK) return s;
 
     /* ⑦ 可选输出 */

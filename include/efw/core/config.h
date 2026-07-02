@@ -124,6 +124,10 @@
 #define EFW_ENABLE_EVENT 1
 #endif
 
+#ifndef EFW_ENABLE_SCHEDULER
+#define EFW_ENABLE_SCHEDULER 1
+#endif
+
 
 /* ==================================================================
  *  第2级：各注册表最大容量
@@ -209,6 +213,37 @@
  */
 #ifndef EFW_MAX_STATE_MACHINES
 #define EFW_MAX_STATE_MACHINES 8
+#endif
+
+#ifndef EFW_MAX_SCHEDULER_TASKS
+#define EFW_MAX_SCHEDULER_TASKS 16
+#endif
+
+#ifndef EFW_ERROR_HISTORY_SIZE
+#define EFW_ERROR_HISTORY_SIZE 4
+#endif
+
+#ifndef EFW_EVENT_QUEUE_CAPACITY
+#define EFW_EVENT_QUEUE_CAPACITY 8
+#endif
+
+#ifndef EFW_EVENT_ITEM_MAX_SIZE
+#define EFW_EVENT_ITEM_MAX_SIZE 32
+#endif
+
+#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+_Static_assert(EFW_EVENT_ITEM_MAX_SIZE >= 4, "EFW_EVENT_ITEM_MAX_SIZE must be >= 4");
+_Static_assert(EFW_EVENT_QUEUE_CAPACITY >= 1, "EFW_EVENT_QUEUE_CAPACITY must be >= 1");
+_Static_assert(EFW_MAX_SCHEDULER_TASKS >= 1, "EFW_MAX_SCHEDULER_TASKS must be >= 1");
+#if EFW_ENABLE_COMM && !EFW_ENABLE_HAL
+#error "EFW_ENABLE_COMM requires EFW_ENABLE_HAL"
+#endif
+#if EFW_ENABLE_SENSOR && !EFW_ENABLE_HAL
+#error "EFW_ENABLE_SENSOR requires EFW_ENABLE_HAL"
+#endif
+#if EFW_ENABLE_ACTUATOR && !EFW_ENABLE_HAL
+#error "EFW_ENABLE_ACTUATOR requires EFW_ENABLE_HAL"
+#endif
 #endif
 
 #endif

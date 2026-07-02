@@ -32,6 +32,7 @@ from codegen.debug import (
     analyze_scheduler,
     analyze_state_machines,
 )
+from tools.api.graph import validate_graph_data
 
 
 # ─── Color Palette ────────────────────────────────────────────────────────────
@@ -746,17 +747,46 @@ class DebugMixin:
 
     def refresh_debug_analysis(self) -> None:
         """Refresh the debug analysis output."""
+        # Initialize debug_sections if not exists
+        if not hasattr(self, "debug_sections"):
+            self.debug_sections = {
+                "info": QCheckBox("项目信息"),
+                "init": QCheckBox("初始化顺序"),
+                "dataflow": QCheckBox("数据流"),
+                "scheduler": QCheckBox("调度器"),
+                "state": QCheckBox("状态机"),
+                "events": QCheckBox("事件系统"),
+                "loop": QCheckBox("运行循环"),
+                "linefollower": QCheckBox("循迹车"),
+            }
+            for name, checkbox in self.debug_sections.items():
+                checkbox.setChecked(name in {"init", "dataflow", "state", "events"})
+        
+        # Initialize views if not exists
+        if not hasattr(self, "init_view"):
+            self.init_view = InitSequenceView()
+        if not hasattr(self, "dataflow_view"):
+            self.dataflow_view = FlowChartView()
+        if not hasattr(self, "scheduler_view"):
+            self.scheduler_view = TimelineView()
+        if not hasattr(self, "state_view"):
+            self.state_view = StateMachineView()
+        if not hasattr(self, "event_view"):
+            self.event_view = EventTopologyView()
+        
         try:
             ctx = self._build_debug_context()
         except Exception as exc:
-            self.debug_status.setText(f"错误: {exc}")
-            self.debug_status.setStyleSheet("color: #F44336; padding: 4px;")
+            if hasattr(self, "debug_status"):
+                self.debug_status.setText(f"错误: {exc}")
+                self.debug_status.setStyleSheet("color: #F44336; padding: 4px;")
             return
 
         sections = [name for name, checkbox in self.debug_sections.items() if checkbox.isChecked()]
-
+        
         if not sections:
-            self.debug_status.setText("请选择至少一个分析部分")
+            if hasattr(self, "debug_status"):
+                self.debug_status.setText("请选择至少一个分析部分")
             return
 
         # Update each visualization
@@ -775,13 +805,21 @@ class DebugMixin:
         if "events" in sections:
             self.event_view.draw_events(ctx)
 
-        self.debug_status.setText(f"分析完成 - {len(ctx.get('nodes', []))} 个节点")
-        self.debug_status.setStyleSheet("color: #4CAF50; padding: 4px;")
+        # Count items
+        node_count = len(ctx.get('nodes', []))
+        df_count = len(ctx.get('runtime_dataflows', []))
+        sm_count = len([n for n in ctx.get('nodes', []) if n.get('type') == 'state.machine'])
+        ev_count = len([n for n in ctx.get('nodes', []) if n.get('type') == 'event.topic'])
+
+        if hasattr(self, "debug_status"):
+            self.debug_status.setText(
+                f"分析完成: {node_count} 节点 | {df_count} 数据流 | {sm_count} 状态机 | {ev_count} 事件Topic"
+            )
+            self.debug_status.setStyleSheet("color: #4CAF50; padding: 4px;")
 
     def _build_debug_context(self) -> dict[str, Any]:
         """Build the context for debug analysis from current graph."""
-        from codegen.validate import validate_graph
-        return validate_graph(self.graph)
+        return validate_graph_data(self.graph)
 
     def toggle_debug_panel(self) -> None:
         """Toggle the debug panel visibility."""

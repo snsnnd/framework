@@ -90,12 +90,14 @@ extern double sqrt(double);             /**< 标准库平方根 */
  * @param out 指向 efw_attitude_output_t (roll/pitch)
  * @return EFW_OK / EFW_ERR_INVALID
  */
-efw_status_t efw_attitude_complementary_run(void *ctx, const void *in, void *out) {
-    efw_attitude_complementary_t *est = (efw_attitude_complementary_t *)ctx;          /* ctx */
-    const efw_attitude_input_t *input = (const efw_attitude_input_t *)in;             /* 输入 */
-    efw_attitude_output_t *result = (efw_attitude_output_t *)out;                      /* 输出 */
-    float accel_roll;       /* 加速度计算出的 roll 角 (度) */
-    float accel_pitch;      /* 加速度计算出的 pitch 角 (度) */
+efw_status_t efw_attitude_complementary_run(void *ctx, const void *in, uint16_t in_size, void *out, uint16_t out_size) {
+    efw_attitude_complementary_t *est = (efw_attitude_complementary_t *)ctx;
+    const efw_attitude_input_t *input = (const efw_attitude_input_t *)in;
+    efw_attitude_output_t *result = (efw_attitude_output_t *)out;
+    float accel_roll;
+    float accel_pitch;
+    if (!est || !input || !result) return EFW_ERR_INVALID;
+    if (in_size < sizeof(efw_attitude_input_t) || out_size < sizeof(efw_attitude_output_t)) return EFW_ERR_RANGE;
 
     /* 参数校验：指针非空 + dt>0 + α 在 [0,1] 范围 */
     if (!est || !input || !result || input->dt <= 0.0f ||

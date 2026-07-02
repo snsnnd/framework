@@ -131,6 +131,6 @@ void efw_moving_avg_reset(efw_moving_avg_t *avg);
  * @param out 指向 float 的指针 (滤波后的均值写回此处)
  * @return EFW_OK 成功, EFW_ERR_INVALID 参数非法
  */
-efw_status_t efw_moving_avg_run(void *ctx, const void *in, void *out);
+efw_status_t efw_moving_avg_run(void *ctx, const void *in, uint16_t in_size, void *out, uint16_t out_size);
 
 #endif

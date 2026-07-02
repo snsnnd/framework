@@ -200,20 +200,53 @@ class CallbackMixin:
         if not hasattr(self, "callback_gap_output"):
             return
         missing = self.missing_callback_requirements()
-        lines = ["缺失回调 / 用户代码行动项", ""]
+        
+        # Build HTML output
+        html = []
+        html.append('<div style="font-family: Consolas, monospace; font-size: 12px;">')
+        
+        # Title
+        html.append('<div style="margin-bottom: 12px;">')
+        html.append('<span style="color: #E0E0E0; font-weight: bold; font-size: 14px;">缺失回调 / 用户代码行动项</span>')
+        html.append('</div>')
+        
         if missing:
+            # Missing callbacks section
+            html.append('<div style="margin-bottom: 12px;">')
+            html.append('<span style="color: #FFEB3B; font-weight: bold;">📝 需要实现的回调</span>')
+            html.append('<ul style="margin: 4px 0 0 20px; padding: 0;">')
             for item in missing:
                 signature = callback_signature(item["signature_key"])
-                lines.append(f"- {item['owner']}.{item['field']} -> {item['name']}: {signature}，建议生成到 app_custom.c 或放入 board_adapters。")
+                name = item.get('name', '')
+                owner = item.get('owner', '')
+                html.append(f'<li style="color: #FFF9C4; margin: 4px 0;">')
+                html.append(f'<b>{name}</b> <span style="color: #B0BEC5;">({signature})</span>')
+                html.append(f'<br><span style="color: #78909C; font-size: 11px;">来自: {owner} → 建议生成到 app_custom.c</span>')
+                html.append(f'</li>')
+            html.append('</ul></div>')
         else:
-            lines.append("- 当前没有缺失回调。")
+            html.append('<div style="color: #4CAF50; margin-bottom: 12px;">✅ 当前没有缺失回调。</div>')
+        
+        # Documentation/organization nodes
         doc_nodes = [node for node in self.graph.get("nodes", []) if not NODE_CONTRACTS.get(str(node.get("type")), {}).get("generated")]
         if doc_nodes:
-            lines.append("")
-            lines.append("仅说明/组织节点：")
+            html.append('<div style="margin-bottom: 12px;">')
+            html.append('<span style="color: #2196F3; font-weight: bold;">ℹ️ 仅说明/组织节点</span>')
+            html.append('<ul style="margin: 4px 0 0 20px; padding: 0;">')
             for node in doc_nodes:
-                lines.append(f"- {node.get('id')} [{node.get('type')}]：{self.node_action_hint(node)}")
-        self.callback_gap_output.setPlainText("\n".join(lines))
+                node_id = node.get('id', '')
+                node_type = node.get('type', '')
+                hint = self.node_action_hint(node)
+                html.append(f'<li style="color: #90CAF9; margin: 2px 0;">')
+                html.append(f'<b>{node_id}</b> <span style="color: #78909C;">[{node_type}]</span>')
+                if hint:
+                    html.append(f'<br><span style="color: #78909C; font-size: 11px;">{hint}</span>')
+                html.append(f'</li>')
+            html.append('</ul></div>')
+        
+        html.append('</div>')
+        
+        self.callback_gap_output.setHtml("\n".join(html))
 
     def callback_stubs_legacy(self) -> list[str]:
         stubs: list[str] = []

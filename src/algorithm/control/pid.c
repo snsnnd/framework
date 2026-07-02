@@ -106,8 +106,7 @@ void efw_pid_reset(efw_pid_t *pid) {
  * @param out 指向 efw_pid_output_t (output/error/feedforward 写回)
  * @return EFW_OK / EFW_ERR_INVALID
  */
-efw_status_t efw_pid_run(void *ctx, const void *in, void *out) {
-    /* Step 1: void* → 具体类型 */
+efw_status_t efw_pid_run(void *ctx, const void *in, uint16_t in_size, void *out, uint16_t out_size) {
     efw_pid_t *pid = (efw_pid_t *)ctx;
     const efw_pid_input_t *input = (const efw_pid_input_t *)in;
     efw_pid_output_t *output = (efw_pid_output_t *)out;
@@ -121,6 +120,7 @@ efw_status_t efw_pid_run(void *ctx, const void *in, void *out) {
 
     /* Step 2: 参数校验 */
     if (!pid || !input || !output || input->dt <= 0.0f) return EFW_ERR_INVALID;
+    if (in_size < sizeof(efw_pid_input_t) || out_size < sizeof(efw_pid_output_t)) return EFW_ERR_RANGE;
 
     /* Step 3: 误差 = 目标 - 实际 */
     error = input->setpoint - input->feedback;

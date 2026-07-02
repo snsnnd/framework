@@ -6,6 +6,7 @@ import copy
 from pathlib import Path
 from typing import Any
 
+from codegen.graph import FIELD_MAPPING_SOURCE_CHOICES, FIELD_MAPPING_TRANSFORM_CHOICES, MAPPING_ENABLED_NODE_TYPES, MULTI_INPUT_NODE_PORTS, OUTPUT_MODE_CHOICES, PROCESS_MODE_CHOICES, TRIGGER_POLICY_CHOICES
 from .component_metadata import COMPONENT_METADATA
 
 
@@ -40,6 +41,8 @@ def discover_framework_templates(node_templates: dict[str, dict[str, Any]], repo
     inferred library module, callback fields, and generation boundary.  This lets
     the UI show where a card came from without pretending that path-based scans
     are a full C reflection system.
+    
+    Scanned templates are filtered to avoid duplicates with existing node_templates.
     """
     templates: dict[str, dict[str, Any]] = {}
     order: list[str] = []
@@ -47,8 +50,19 @@ def discover_framework_templates(node_templates: dict[str, dict[str, Any]], repo
     if not include_root.exists():
         return templates, order
 
+    # Collect existing template types to avoid duplicates
+    existing_types = set()
+    for key, template in node_templates.items():
+        node_type = template.get("type", "")
+        if node_type:
+            existing_types.add(node_type)
+
     def add_template(key: str, template: dict[str, Any], header: Path, library_module: str, callbacks: list[str]) -> None:
         if key in templates:
+            return
+        # Skip if this type already exists in node_templates
+        template_type = template.get("type", "")
+        if template_type in existing_types:
             return
         _annotate_scan_template(template, key, header, repo_root, library_module, callbacks)
         templates[key] = template
@@ -57,6 +71,10 @@ def discover_framework_templates(node_templates: dict[str, dict[str, Any]], repo
     def add_metadata_template(key: str, header_rel: str) -> None:
         metadata = COMPONENT_METADATA.get(key)
         if not metadata or key in templates:
+            return
+        # Skip if this type already exists in node_templates
+        template_type = metadata.get("type", "")
+        if template_type in existing_types:
             return
         template = copy.deepcopy(metadata)
         header = repo_root / header_rel
@@ -126,6 +144,19 @@ def node_summary(node: dict[str, Any]) -> str:
         inputs = ",".join(node.get("inputs", [])[:2]) if isinstance(node.get("inputs"), list) else ""
         outputs = ",".join(node.get("outputs", [])[:2]) if isinstance(node.get("outputs"), list) else ""
         return f"in=[{inputs}] · out=[{outputs}]" if inputs or outputs else str(node.get("display_name", ""))
+    if node_type == "processor.custom":
+        input_ports = node.get("input_ports", {})
+        sensor_contract = ""
+        if isinstance(input_ports, dict) and isinstance(input_ports.get("sensor"), dict):
+            sensor_contract = str(input_ports["sensor"].get("contract") or input_ports["sensor"].get("type") or "")
+        if not sensor_contract:
+            sensor_contract = str(node.get("input_contract") or node.get("input_type") or "custom")
+        return f"sensor={sensor_contract} · out={node.get('output_contract') or node.get('output_type') or 'custom'} · process={node.get('process')}"
+    if node_type == "module.custom":
+        input_ports = node.get("input_ports", {}) if isinstance(node.get("input_ports"), dict) else {}
+        ports = ",".join(sorted(input_ports.keys())[:2])
+        event_mode = "event->poll" if node.get("poll_on_event") else "event cache"
+        return f"in=[{ports}] · out={node.get('output_contract') or node.get('output_type') or 'custom'} · {event_mode}"
     keys_by_type = {
         "algorithm.pid": ["input_type", "output_type", "kp", "ki", "kd"],
         "task.periodic": ["period_ms", "call"],
@@ -137,7 +168,6 @@ def node_summary(node: dict[str, Any]) -> str:
         "hal.custom": ["hal_type", "bus_id"],
         "sensor.custom": ["sensor_type", "output_type", "read"],
         "algorithm.custom": ["input_type", "output_type", "run"],
-        "processor.custom": ["input_contract", "output_contract", "process"],
         "module.custom": ["input_type", "output_type", "poll"],
         "actuator.custom": ["actuator_type", "hal_name", "write"],
     }
@@ -161,6 +191,8 @@ def property_choices(graph: dict[str, Any], node: dict[str, Any], key: str, node
     if key in {"pid", "algorithm"}:
         return [""] + [n.get("id", "") for n in graph.get("nodes", []) if str(n.get("type", "")).startswith("algorithm.")]
     if key in {"left_motor", "right_motor", "target"}:
+        if node_type == "custom.interface_card":
+            return [""] + [n.get("id", "") for n in graph.get("nodes", []) if n.get("id") and n.get("type") != "custom.interface_card"]
         return [""] + [n.get("id", "") for n in graph.get("nodes", []) if str(n.get("type", "")).startswith(("actuator.", "processor.", "module."))]
     if key == "topic":
         return [""] + by_type("event.topic")
@@ -183,6 +215,14 @@ def property_choices(graph: dict[str, Any], node: dict[str, Any], key: str, node
         return ["EFW_MODULE_CUSTOM", "EFW_MODULE_SERVICE", "EFW_MODULE_CONTROL", "EFW_MODULE_COMMS"]
     if key == "algo_type":
         return ["EFW_ALGO_CUSTOM", "EFW_ALGO_PID", "EFW_ALGO_FILTER", "EFW_ALGO_ESTIMATOR"]
+    if key == "primary_input_port" and node_type in MULTI_INPUT_NODE_PORTS:
+        return [""] + list(MULTI_INPUT_NODE_PORTS[node_type])
+    if key == "trigger_policy" and node_type in MAPPING_ENABLED_NODE_TYPES:
+        return list(TRIGGER_POLICY_CHOICES)
+    if key == "output_mode" and node_type in MAPPING_ENABLED_NODE_TYPES:
+        return list(OUTPUT_MODE_CHOICES)
+    if key == "process_mode" and node_type in MAPPING_ENABLED_NODE_TYPES:
+        return list(PROCESS_MODE_CHOICES)
     if key == "io_contract":
         return ["custom", "efw_pid", "scalar", "vector", "event"]
     if key in {"input_contract", "output_contract"}:

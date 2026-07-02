@@ -46,7 +46,7 @@ def is_root_visible_node(node: dict[str, Any]) -> bool:
     node_type = node.get("type")
     if node_type == "project.module":
         return not node.get("parent")
-    if node_type == "custom.card":
+    if node_type in {"custom.card", "custom.interface_card"}:
         return node.get("scope", "root") == "root" and not node.get("module")
     if node_type in {"event.topic", "event.publisher", "event.subscriber"}:
         return not node.get("module")
@@ -63,10 +63,10 @@ def visible_nodes_for_page(graph: dict[str, Any], page: Page | None) -> list[dic
         return [node for node in nodes if node.get("module") == node_id or node.get("parent") == node_id]
     if kind == "state":
         scope = page.get("key")
-        return [node for node in nodes if node.get("id") == node_id or node.get("machine") == node_id or (node.get("type") == "custom.card" and node.get("scope") == scope)]
+        return [node for node in nodes if node.get("id") == node_id or node.get("machine") == node_id or (node.get("type") in {"custom.card", "custom.interface_card"} and node.get("scope") == scope)]
     if kind == "comm":
         scope = page.get("key")
-        return [node for node in nodes if node.get("topic") == node_id or (node.get("type") == "custom.card" and node.get("scope") == scope)]
+        return [node for node in nodes if node.get("topic") == node_id or (node.get("type") in {"custom.card", "custom.interface_card"} and node.get("scope") == scope)]
     return nodes
 
 

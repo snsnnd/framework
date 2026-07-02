@@ -15,8 +15,12 @@ from string import Template
 from pathlib import Path
 from typing import Any
 
-from codegen.utils import c_ident, macro_ident, c_str, c_float, c_bool, require, nodes_of, number_or_default
-from codegen.validate import BUILTIN_CONTRACTS, contract_name_for_output, validate_graph
+try:
+    from .utils import c_ident, macro_ident, c_str, c_float, c_bool, require, nodes_of, number_or_default
+    from .validate import BUILTIN_CONTRACTS, contract_name_for_output, validate_graph
+except ImportError:  # pragma: no cover - supports legacy top-level codegen imports
+    from codegen.utils import c_ident, macro_ident, c_str, c_float, c_bool, require, nodes_of, number_or_default
+    from codegen.validate import BUILTIN_CONTRACTS, contract_name_for_output, validate_graph
 
 
 def graph_edges_of(ctx, kinds=None):
@@ -516,7 +520,7 @@ def build_publisher_runtime_model(ctx):
 
 def pin_expr(pin):
     port = str(pin.get("port", "A")).upper()
-    require(port in {"A", "B", "C"}, f"unsupported GPIO port: {port}")
+    require(port in {"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K"}, f"unsupported GPIO port: {port}")
     return f"{{ APP_GPIO_PORT_{port}, {int(pin.get('pin', 0))}u }}"
 
 
@@ -542,7 +546,7 @@ def render_board_config(ctx):
     line_inputs = nodes_of(ctx, "hal.gpio_line_input")
     motors = nodes_of(ctx, "actuator.motor")
     board = ctx.get("board", {})
-    board_profile = board.get("profile") or ctx["project"].get("board_profile") or "generic-mock"
+    board_profile = board.get("profile") or ctx["project"].get("board_profile") or "stm32-basic"
     lines = ["""
 /**
  * @file    app_board_config.h
@@ -567,6 +571,14 @@ typedef struct {
 #define APP_GPIO_PORT_A 0u
 #define APP_GPIO_PORT_B 1u
 #define APP_GPIO_PORT_C 2u
+#define APP_GPIO_PORT_D 3u
+#define APP_GPIO_PORT_E 4u
+#define APP_GPIO_PORT_F 5u
+#define APP_GPIO_PORT_G 6u
+#define APP_GPIO_PORT_H 7u
+#define APP_GPIO_PORT_I 8u
+#define APP_GPIO_PORT_J 9u
+#define APP_GPIO_PORT_K 10u
 """]
     lines.append(f"#define APP_BOARD_PROFILE {c_str(board_profile)}\n")
     for entry in board.get("pin_plan", []):
@@ -837,7 +849,6 @@ def render_platform_type_helpers(line_inputs, line_sensors, motors):
     parts = []
     if line_inputs:
         parts.append("""typedef struct {
-    uint16_t channel[EFW_LINE_TRACKING_MAX_CHANNELS];
     uint8_t channel_count;
     const app_gpio_pin_t *pins;
 } app_line_input_ctx_t;
@@ -857,31 +868,8 @@ static efw_status_t line_input_read(void *ctx, void *buf, uint16_t len, uint16_t
     efw_line_tracking_data_t *out = (efw_line_tracking_data_t *)buf;
     if (!input || !out || len < sizeof(efw_line_tracking_data_t)) return EFW_ERR_INVALID;
 
-    /* Hardware implementation:
-     * Read GPIO pins for each channel and store in out->value[]
-     *
-     * Example for STM32 HAL:
-     *   for (uint8_t i = 0; i < input->channel_count; ++i) {
-     *       GPIO_PinState state = HAL_GPIO_ReadPin(input->pins[i].port, 1 << input->pins[i].pin);
-     *       out->value[i] = (state == GPIO_PIN_SET) ? 1 : 0;
-     *   }
-     *
-     * Example for ESP-IDF:
-     *   for (uint8_t i = 0; i < input->channel_count; ++i) {
-     *       out->value[i] = gpio_get_level(input->pins[i].pin);
-     *   }
-     *
-     * Example for analog sensors (ADC):
-     *   for (uint8_t i = 0; i < input->channel_count; ++i) {
-     *       out->value[i] = (uint16_t)adc_read(input->pins[i].pin);
-     *   }
-     */
-
-    /* TODO: Replace with real hardware calls */
-    out->count = input->channel_count;
-    for (uint8_t i = 0; i < input->channel_count; ++i) {
-        out->value[i] = input->channel[i];
-    }
+    efw_status_t s = app_board_read_line_input(input->pins, input->channel_count, out);
+    if (s != EFW_OK) return s;
     if (actual) *actual = sizeof(efw_line_tracking_data_t);
     return EFW_OK;
 }
@@ -897,8 +885,6 @@ static efw_status_t line_input_read(void *ctx, void *buf, uint16_t len, uint16_t
         parts.append("""typedef struct {
     app_pwm_channel_t pwm;
     app_gpio_pin_t dir_pin;
-    float last_speed;
-    float last_direction;
 } app_motor_ctx_t;
 
 static efw_status_t motor_write(void *ctx, const void *cmd) {
@@ -906,33 +892,7 @@ static efw_status_t motor_write(void *ctx, const void *cmd) {
     const efw_motor_cmd_t *motor_cmd = (const efw_motor_cmd_t *)cmd;
     if (!motor || !motor_cmd) return EFW_ERR_INVALID;
 
-    /* Hardware implementation:
-     * 1. Set direction GPIO based on motor_cmd->direction
-     *    - direction > 0: forward (set dir_pin HIGH)
-     *    - direction < 0: reverse (set dir_pin LOW)
-     *    - direction == 0: stop
-     *
-     * 2. Set PWM duty cycle based on motor_cmd->speed
-     *    - speed range: [min_speed, max_speed]
-     *    - Convert to PWM duty: duty = |speed| / max_speed * 100%
-     *
-     * Example for STM32 HAL:
-     *   HAL_GPIO_WritePin(motor->dir_pin.port, 1 << motor->dir_pin.pin,
-     *                     motor_cmd->direction > 0 ? GPIO_PIN_SET : GPIO_PIN_RESET);
-     *   __HAL_TIM_SET_COMPARE(&htim[motor->pwm.timer_id], motor->pwm.channel,
-     *                         (uint32_t)(fabsf(motor_cmd->speed) * htim[motor->pwm.timer_id].Init.Period));
-     *
-     * Example for ESP-IDF:
-     *   gpio_set_level(motor->dir_pin.pin, motor_cmd->direction > 0 ? 1 : 0);
-     *   ledc_set_duty(LEDC_HIGH_SPEED_MODE, motor->pwm.channel,
-     *                 (uint32_t)(fabsf(motor_cmd->speed) / 100.0f * 8191));
-     *   ledc_update_duty(LEDC_HIGH_SPEED_MODE, motor->pwm.channel);
-     */
-
-    /* TODO: Replace with real hardware calls */
-    motor->last_speed = motor_cmd->speed;
-    motor->last_direction = motor_cmd->direction;
-    return EFW_OK;
+    return app_board_write_motor(motor->pwm, motor->dir_pin, motor_cmd);
 }
 
 """)
@@ -941,6 +901,10 @@ static efw_status_t motor_write(void *ctx, const void *cmd) {
 
 def render_platform_externs(ctx):
     parts = []
+    if nodes_of(ctx, "hal.gpio_line_input"):
+        parts.append("extern efw_status_t app_board_read_line_input(const app_gpio_pin_t *pins, uint8_t count, efw_line_tracking_data_t *out);\n")
+    if nodes_of(ctx, "actuator.motor"):
+        parts.append("extern efw_status_t app_board_write_motor(app_pwm_channel_t pwm, app_gpio_pin_t dir_pin, const efw_motor_cmd_t *cmd);\n")
     for node in nodes_of(ctx, "hal.custom"):
         for cb, sig in [("init", "void *ctx"), ("read", "void *ctx, void *buf, uint16_t len, uint16_t *actual"), ("write", "void *ctx, const void *buf, uint16_t len, uint16_t *actual"), ("ioctl", "void *ctx, uint32_t cmd, void *arg")]:
             if node.get(cb):
@@ -1091,8 +1055,7 @@ def platform_template_values(ctx):
     if not line_inputs:
         line_state_body.append("    (void)count;\n")
     for node in line_inputs:
-        ident = c_ident(node["id"])
-        line_state_body.append(f"    if (app_name_eq(input_name, {c_str(node['id'])})) {{\n        uint8_t n = (count < g_{ident}_ctx.channel_count) ? count : g_{ident}_ctx.channel_count;\n        for (uint8_t i = 0; i < n; ++i) g_{ident}_ctx.channel[i] = values[i];\n        return;\n    }}\n")
+        line_state_body.append(f"    if (app_name_eq(input_name, {c_str(node['id'])})) {{\n        (void)count;\n        return;\n    }}\n")
     return {
         "TYPE_HELPERS": render_platform_type_helpers(line_inputs, line_sensors, motors),
         "EXTERNS": render_platform_externs(ctx),

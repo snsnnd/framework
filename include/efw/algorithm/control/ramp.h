@@ -85,6 +85,6 @@ void efw_ramp_reset(efw_ramp_t *ramp, float value);
  * @param out 指向 float (斜坡后的当前值写入此处)
  * @return EFW_OK / EFW_ERR_INVALID (参数非法, dt≤0, rate<0)
  */
-efw_status_t efw_ramp_run(void *ctx, const void *in, void *out);
+efw_status_t efw_ramp_run(void *ctx, const void *in, uint16_t in_size, void *out, uint16_t out_size);
 
 #endif

@@ -10,8 +10,12 @@ import re
 from pathlib import Path
 from typing import Any
 
-from codegen.utils import c_ident, require, nodes_of, BUILTIN_CONTRACTS
-from codegen.graph import CALLBACK_RETURNS, CALLBACK_SIGNATURES, GENERATED_FILES, NODE_CONTRACTS, SUPPORTED_FLOW_TYPES, SUPPORTED_NODE_TYPES, VALID_EDGE_KINDS, MULTI_INPUT_NODE_PORTS, TRIGGER_POLICY_CHOICES, OUTPUT_MODE_CHOICES, PROCESS_MODE_CHOICES, FIELD_MAPPING_SOURCE_CHOICES, FIELD_MAPPING_TRANSFORM_CHOICES, BUILTIN_STRUCT_FIELD_TYPES, apply_pair_semantics, node_generation_label
+try:
+    from .utils import c_ident, require, nodes_of, BUILTIN_CONTRACTS
+    from .graph import CALLBACK_RETURNS, CALLBACK_SIGNATURES, GENERATED_FILES, NODE_CONTRACTS, SUPPORTED_FLOW_TYPES, SUPPORTED_NODE_TYPES, VALID_EDGE_KINDS, MULTI_INPUT_NODE_PORTS, TRIGGER_POLICY_CHOICES, OUTPUT_MODE_CHOICES, PROCESS_MODE_CHOICES, FIELD_MAPPING_SOURCE_CHOICES, FIELD_MAPPING_TRANSFORM_CHOICES, BUILTIN_STRUCT_FIELD_TYPES, apply_pair_semantics, node_generation_label
+except ImportError:  # pragma: no cover - supports legacy top-level codegen imports
+    from codegen.utils import c_ident, require, nodes_of, BUILTIN_CONTRACTS
+    from codegen.graph import CALLBACK_RETURNS, CALLBACK_SIGNATURES, GENERATED_FILES, NODE_CONTRACTS, SUPPORTED_FLOW_TYPES, SUPPORTED_NODE_TYPES, VALID_EDGE_KINDS, MULTI_INPUT_NODE_PORTS, TRIGGER_POLICY_CHOICES, OUTPUT_MODE_CHOICES, PROCESS_MODE_CHOICES, FIELD_MAPPING_SOURCE_CHOICES, FIELD_MAPPING_TRANSFORM_CHOICES, BUILTIN_STRUCT_FIELD_TYPES, apply_pair_semantics, node_generation_label
 
 
 def node_type(nodes: dict[str, dict[str, Any]], node_id: str | None) -> str | None:
@@ -957,9 +961,9 @@ def validate_graph_header(graph: dict[str, Any]) -> tuple[dict[str, Any], int, l
 
 def validate_board_config(graph: dict[str, Any]) -> dict[str, Any]:
     board = graph.get("board", {})
-    require(isinstance(board, dict), "board 必须是对象类型，请至少设置 {\"profile\": \"generic-mock\"}")
+    require(isinstance(board, dict), "board 必须是对象类型，请至少设置 {\"profile\": \"stm32-basic\"}")
     if "profile" in board:
-        require(isinstance(board.get("profile"), str), "board.profile 必须是字符串，如 \"generic-mock\" 或 \"stm32-basic\"")
+        require(isinstance(board.get("profile"), str), "board.profile 必须是字符串，如 \"stm32-basic\" 或真实板卡 profile 名称")
     pin_plan = board.get("pin_plan", [])
     require(isinstance(pin_plan, list), "board.pin_plan must be an array when present")
     seen_board_pins = set()

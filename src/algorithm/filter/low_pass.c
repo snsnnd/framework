@@ -75,15 +75,13 @@ void efw_low_pass_reset(efw_low_pass_t *filter, float value) {
  * @param out 指向 float (滤波输出)
  * @return EFW_OK / EFW_ERR_INVALID
  */
-efw_status_t efw_low_pass_run(void *ctx, const void *in, void *out) {
-    efw_low_pass_t *filter = (efw_low_pass_t *)ctx;      /* ctx → 滤波器状态 */
-    const float *sample = (const float *)in;               /* 新采样值 */
-    float *result = (float *)out;                          /* 输出结果 */
-
-    /* 参数校验：指针非空 + α 在有效范围 [0, 1] */
-    if (!filter || !sample || !result ||
-        filter->alpha < 0.0f || filter->alpha > 1.0f)
-        return EFW_ERR_INVALID;
+efw_status_t efw_low_pass_run(void *ctx, const void *in, uint16_t in_size, void *out, uint16_t out_size) {
+    efw_low_pass_t *filter = (efw_low_pass_t *)ctx;
+    const float *sample = (const float *)in;
+    float *result = (float *)out;
+    if (!filter || !sample || !result) return EFW_ERR_INVALID;
+    if (in_size < sizeof(float) || out_size < sizeof(float)) return EFW_ERR_RANGE;
+    if (filter->alpha < 0.0f || filter->alpha > 1.0f) return EFW_ERR_INVALID;
 
     /* 首次调用 → 自动初始化为第一个采样值 */
     if (!filter->initialized) efw_low_pass_reset(filter, *sample);

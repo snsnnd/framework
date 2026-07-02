@@ -19,7 +19,7 @@ from studio.qt_compat import (
     QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem,
     QMenu, QMessageBox, QMainWindow, QPlainTextEdit, QPushButton,
     QSplitter, QStackedWidget, QTabBar, QTabWidget, QTableWidget,
-    QTableWidgetItem, QToolBar, QVBoxLayout, QWidget, QToolBox,
+    QTableWidgetItem, QTextEdit, QToolBar, QVBoxLayout, QWidget, QToolBox,
 )
 
 from studio.editor_canvas import (
@@ -150,34 +150,14 @@ class UIBuilderMixin:
         left.setObjectName("NavRail")
         left_layout = QVBoxLayout(left)
         left_layout.setContentsMargins(10, 10, 10, 10)
-        self.workflow_list = QListWidget()
-        workflow_steps = [
-            ("项目总览", "dashboard"),
-            ("模块装配", "assembly"),
-            ("关系视图", "relations"),
-            ("代码补齐", "code"),
-            ("生成发布", "release"),
-        ]
-        role = Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole
-        for label, key in workflow_steps:
-            item = QListWidgetItem(label, self.workflow_list)
-            item.setData(role, key)
-        self.workflow_list.itemClicked.connect(self.switch_workflow_item)
-        left_layout.addWidget(self.workflow_list)
-        self.workflow_hint = QLabel("当前项目：从总览进入，按模块装配组件，最后校验生成。")
-        self.workflow_hint.setWordWrap(True)
-        self.workflow_hint.setStyleSheet("background: #151a24; border: 1px solid #242936; border-radius: 12px; padding: 10px; color: #b8c3d8;")
-        left_layout.addWidget(self.workflow_hint)
-        current_container_btn = QPushButton("进入选中对象")
-        current_container_btn.clicked.connect(self.open_selected_container)
-        left_layout.addWidget(current_container_btn)
-
-        self.palette_label = QLabel("快速添加")
-        left_layout.addWidget(self.palette_label)
+        
+        # Search box
         self.palette_search = QLineEdit()
-        self.palette_search.setPlaceholderText("搜索模板…")
+        self.palette_search.setPlaceholderText("搜索模板… (双击插入)")
         self.palette_search.textChanged.connect(self.filter_palette)
         left_layout.addWidget(self.palette_search)
+        
+        # Template palette
         self.palette = TemplatePalette(self)
         self.palette.itemDoubleClicked.connect(self._on_palette_double_click)
         self._palette_category_visibility: dict[str, bool] = {}
@@ -189,19 +169,31 @@ class UIBuilderMixin:
             header.setForeground(QBrush(QColor("#ffecb3")))
             for node_type in node_types:
                 template_type = NODE_TEMPLATES.get(node_type, {}).get("type", node_type)
-                item = QListWidgetItem(f"  {display_label(node_type)}  ({template_type})", self.palette)
+                item = QListWidgetItem(f"  {display_label(node_type)}", self.palette)
                 item.setData(Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole, node_type)
                 item.setData(Qt.ItemDataRole.UserRole + 1 if hasattr(Qt, "ItemDataRole") else Qt.UserRole + 1, category)
                 theme = node_theme(template_type)
                 item.setBackground(QBrush(QColor(theme["bg"])))
                 item.setForeground(QBrush(QColor("#f4fbff")))
         left_layout.addWidget(self.palette)
-        add_btn = QPushButton("添加到当前页面")
+        
+        # Quick action buttons (compact)
+        btn_row = QHBoxLayout()
+        add_btn = QPushButton("+ 添加")
+        add_btn.setToolTip("添加选中模板到画布 (Ctrl+M)")
         add_btn.clicked.connect(self.add_selected_card)
-        left_layout.addWidget(add_btn)
-        backdrop_btn = QPushButton("创建分组区域")
+        btn_row.addWidget(add_btn)
+        
+        backdrop_btn = QPushButton("□ 分组")
+        backdrop_btn.setToolTip("创建分组区域 (Ctrl+Shift+B)")
         backdrop_btn.clicked.connect(self.create_backdrop_from_selection)
-        left_layout.addWidget(backdrop_btn)
+        btn_row.addWidget(backdrop_btn)
+        
+        flip_btn = QPushButton("↔ 翻转")
+        flip_btn.setToolTip("翻转选中卡片接口 (F)")
+        flip_btn.clicked.connect(self.flip_selected_node_ports)
+        btn_row.addWidget(flip_btn)
+        left_layout.addLayout(btn_row)
         # Hint: double-click canvas or press Tab to quick-add node
 
         self.left_dock = QDockWidget("资源管理器", self)
@@ -304,6 +296,7 @@ class UIBuilderMixin:
         self.bottom_tabs.addTab(self._build_validation_tab(), "实时校验")
         self.bottom_tabs.addTab(self._build_release_tab(), "生成日志")
         self.bottom_tabs.addTab(self._build_schedule_tab(), "任务调度")
+        self.bottom_tabs.addTab(self._build_debug_tab(), "运行分析")
         self.bottom_tabs.setTabPosition(QTabWidget.TabPosition.South if hasattr(QTabWidget, "TabPosition") else QTabWidget.South)
         self.bottom_dock = QDockWidget("输出 / 日志", self)
         self.bottom_dock.setObjectName("BottomDock")
@@ -430,9 +423,11 @@ class UIBuilderMixin:
         self.quick_add_popup.hide()
         self.add_card_from_template(str(node_type), self._quick_add_scene_pos)
 
-    def rebuild_inspector_nav(self) -> None:
+    def rebuild_inspector_nav(self, hidden_tabs: set[str] | None = None) -> None:
         if not hasattr(self, "inspector_nav") or not hasattr(self, "right_tabs"):
             return
+        if hidden_tabs is None:
+            hidden_tabs = set()
         role = Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole
         current_index = self.right_tabs.currentIndex() if hasattr(self.right_tabs, "currentIndex") else 0
         self.inspector_nav.blockSignals(True)
@@ -441,7 +436,11 @@ class UIBuilderMixin:
         row = 0
         for index in range(self.right_tabs.count()):
             title = self.right_tabs.tabText(index)
+            # Skip advanced tabs if not enabled
             if not self._advanced_inspector_enabled and title in self._advanced_tab_titles:
+                continue
+            # Skip hidden tabs based on node type
+            if title in hidden_tabs:
                 continue
             item = QListWidgetItem(title.replace("高级 · ", ""), self.inspector_nav)
             item.setData(role, index)
@@ -509,9 +508,10 @@ class UIBuilderMixin:
     def _build_release_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        # Release
-        self.release_output = QPlainTextEdit()
+        # Release - use QTextEdit for HTML support
+        self.release_output = QTextEdit()
         self.release_output.setReadOnly(True)
+        self.release_output.setStyleSheet("QTextEdit { background-color: #0B101A; border: 1px solid #242D40; border-radius: 4px; padding: 8px; }")
         layout.addWidget(self.release_output)
         buttons = QHBoxLayout()
         validate_btn = QPushButton("刷新检查")
@@ -534,9 +534,6 @@ class UIBuilderMixin:
         self.dev_mode_btn.clicked.connect(self.toggle_property_dev_mode)
         title_row.addWidget(self.dev_mode_btn)
         layout.addLayout(title_row)
-        self.ports_label = QLabel("端口：未选择")
-        self.ports_label.setWordWrap(True)
-        layout.addWidget(self.ports_label)
 
         self.property_stack = QStackedWidget()
         form_page = QWidget()
@@ -546,17 +543,15 @@ class UIBuilderMixin:
         self.property_tables_by_section = {}
         section_defs = [
             ("basic", "基础信息", True),
-            ("parameters", "核心参数", True),
-            ("contracts", "接口契约", False),
-            ("advanced", "高级设置", False),
+            ("parameters", "参数", True),
         ]
         for key, title, _expanded in section_defs:
             section = QWidget()
             section_layout = QVBoxLayout(section)
             section_layout.setContentsMargins(4, 4, 4, 4)
-            table = QTableWidget(0, 4)
-            table.setHorizontalHeaderLabels(["属性", "值", "控件类型", "契约"])
-            table.setMinimumHeight(120 if key in {"basic", "parameters"} else 90)
+            table = QTableWidget(0, 3)
+            table.setHorizontalHeaderLabels(["属性", "值", "说明"])
+            table.setMinimumHeight(120)
             section_layout.addWidget(table)
             self.property_tables_by_section[key] = table
             self.property_sections.addItem(section, title)
@@ -675,7 +670,7 @@ class UIBuilderMixin:
         self.validation_list = QListWidget()
         self.validation_list.itemClicked.connect(self.open_validation_item)
         layout.addWidget(self.validation_list)
-        self.validation_output = QPlainTextEdit()
+        self.validation_output = QTextEdit()
         self.validation_output.setReadOnly(True)
         layout.addWidget(self.validation_output)
         run_btn = QPushButton("立即校验")
@@ -712,10 +707,24 @@ class UIBuilderMixin:
     def _build_schedule_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
-        # Schedule
-        self.schedule_output = QPlainTextEdit()
+        # Schedule - use QTextEdit for HTML support
+        self.schedule_output = QTextEdit()
         self.schedule_output.setReadOnly(True)
         layout.addWidget(self.schedule_output)
+        return widget
+
+    def _build_debug_tab(self) -> QWidget:
+        """Build the debug/visualization tab."""
+        # Use DebugMixin's _build_debug_panel if available
+        if hasattr(self, '_build_debug_panel'):
+            return self._build_debug_panel()
+        
+        # Fallback: simple placeholder
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        label = QLabel("运行分析面板 - 请刷新查看可视化")
+        label.setStyleSheet("color: #8F9DB2; padding: 20px;")
+        layout.addWidget(label)
         return widget
 
     def shortcuts_text(self) -> str:
@@ -769,6 +778,35 @@ event.subscriber 仍会生成 `efw_topic_subscribe(...)` 绑定和回调声明�
     def show_shortcuts(self) -> None:
         QMessageBox.information(self, "快捷键", self.shortcuts_text())
 
+    def show_welcome_guide(self) -> None:
+        """Show welcome guide for first-time users."""
+        guide_text = """<h2>欢迎使用 EFW Studio</h2>
+
+<p><b>快速开始：</b></p>
+<ol>
+<li><b>左侧模板库</b> - 双击卡片插入到画布</li>
+<li><b>拖拽连接</b> - 从端口圆点拖线到另一个端口</li>
+<li><b>F 键</b> - 翻转选中卡片的接口方向</li>
+<li><b>Tab 键</b> - 快速搜索插入卡片</li>
+<li><b>Ctrl+Shift+G</b> - 一键生成代码</li>
+</ol>
+
+<p><b>常用操作：</b></p>
+<ul>
+<li>Ctrl+S 保存 | Ctrl+Z 撤销 | Ctrl+Y 重做</li>
+<li>Delete 删除选中 | Ctrl+M 添加卡片</li>
+<li>鼠标滚轮缩放画布</li>
+</ul>
+
+<p><b>提示：</b>按 <code>F1</code> 随时查看快捷键</p>"""
+        
+        msg = QMessageBox(self)
+        msg.setWindowTitle("EFW Studio 使用指南")
+        msg.setTextFormat(Qt.TextFormat.RichText if hasattr(Qt, "TextFormat") else Qt.RichText)
+        msg.setText(guide_text)
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok if hasattr(QMessageBox, "StandardButton") else QMessageBox.Ok)
+        msg.exec()
+
     def _build_code_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
@@ -793,6 +831,11 @@ event.subscriber 仍会生成 `efw_topic_subscribe(...)` 绑定和回调声明�
         self.code_editor.setTabStopDistance(QFontMetrics(code_font).horizontalAdvance("  "))
         self.code_editor.setStyleSheet("background: #0b1020; color: #dce7ff; border: 1px solid #242936; border-radius: 12px; padding: 10px;")
         self.code_editor.textChanged.connect(self.on_code_editor_text_changed)
+        
+        # Add syntax highlighter
+        from studio.c_highlighter import CHighlighter
+        self.code_highlighter = CHighlighter(self.code_editor.document())
+        
         row.addWidget(self.code_editor, 3)
         layout.addLayout(row)
         controls = QHBoxLayout()
@@ -818,8 +861,8 @@ event.subscriber 仍会生成 `efw_topic_subscribe(...)` 绑定和回调声明�
         controls.addWidget(stub_btn)
         controls.addWidget(cond_btn)
         layout.addLayout(controls)
-        # Callback list
-        self.callback_gap_output = QPlainTextEdit()
+        # Callback list - use QTextEdit for HTML support
+        self.callback_gap_output = QTextEdit()
         self.callback_gap_output.setReadOnly(True)
         layout.addWidget(self.callback_gap_output)
 

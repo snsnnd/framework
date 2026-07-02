@@ -18,6 +18,7 @@
 #include <string.h>
 #include "efw/core/config.h"
 #include "efw/core/diagnostic.h"
+#include "efw/core/registry.h"
 #include "efw/hal/hal.h"
 
 #if EFW_ENABLE_HAL  /**< 编译开关：0 时整个文件被跳过 */
@@ -27,13 +28,6 @@ static const efw_hal_ops_t *g_hal_default_pool[EFW_MAX_HALS];
 static const efw_hal_ops_t **g_hals = g_hal_default_pool;
 static size_t g_hal_cap = EFW_MAX_HALS;
 static size_t g_hal_n;
-
-/**
- * @brief 安全字符串比较：两串非空且内容相同 → 1，否则 → 0
- */
-static int same_name(const char *a, const char *b) {
-    return a && b && strcmp(a, b) == 0;
-}
 
 /* ====== 初始化：计数归零即清空 ====== */
 
@@ -47,33 +41,50 @@ efw_status_t efw_hal_registry_init_pool(const efw_hal_ops_t **pool, size_t capac
 
 efw_status_t efw_hal_register(const efw_hal_ops_t *ops) {
     if (!ops || !ops->name) { efw_diag_set(EFW_ERR_INVALID, "hal", 0, "invalid ops"); return EFW_ERR_INVALID; }
-    for (size_t i = 0; i < g_hal_n; ++i)                     /* ② 名称冲突检查 */
-        if (same_name(g_hals[i]->name, ops->name))
+    for (size_t i = 0; i < g_hal_n; ++i)
+        if (efw_name_eq(g_hals[i]->name, ops->name))
             { efw_diag_set(EFW_ERR_ALREADY_EXISTS, "hal", ops->name, "duplicate name"); return EFW_ERR_ALREADY_EXISTS; }
     if (g_hal_n >= g_hal_cap) { efw_diag_set(EFW_ERR_FULL, "hal", ops->name, "pool full"); return EFW_ERR_FULL; }
-    g_hals[g_hal_n++] = ops;                                  /* ④ 存入数组尾部 */
+    g_hals[g_hal_n++] = ops;
     return EFW_OK;
 }
 
-/* ====== 查找：遍历 g_hals[]，strcmp 匹配，通过 out_ops 传出指针 ====== */
+/* ====== 查找 + 统计 ====== */
 
 efw_status_t efw_hal_get(const char *name, const efw_hal_ops_t **out_ops) {
-    if (!name || !out_ops) return EFW_ERR_INVALID;          /* 参数校验 */
+    if (!name || !out_ops) return EFW_ERR_INVALID;
     for (size_t i = 0; i < g_hal_n; ++i)
-        if (same_name(g_hals[i]->name, name)) {
-            *out_ops = g_hals[i];                            /* 找到 → 输出指针 */
+        if (efw_name_eq(g_hals[i]->name, name)) {
+            *out_ops = g_hals[i];
             return EFW_OK;
         }
-    return EFW_ERR_NOT_FOUND;                                /* 未找到 */
+    return EFW_ERR_NOT_FOUND;
 }
 
-/* ====== 按类型统计 ====== */
+efw_status_t efw_hal_unregister(const char *name) {
+    for (size_t i = 0; i < g_hal_n; ++i) {
+        if (efw_name_eq(g_hals[i]->name, name)) {
+            g_hals[i] = g_hals[--g_hal_n];
+            return EFW_OK;
+        }
+    }
+    return EFW_ERR_NOT_FOUND;
+}
+
+size_t efw_hal_count(void) { return g_hal_n; }
 
 size_t efw_hal_count_by_type(efw_hal_type_t type) {
     size_t n = 0;
     for (size_t i = 0; i < g_hal_n; ++i)
         if (g_hals[i]->type == type) ++n;
     return n;
+}
+
+void efw_hal_enumerate(efw_hal_enumerate_fn fn, void *user) {
+    if (!fn) return;
+    for (size_t i = 0; i < g_hal_n; ++i) {
+        fn(g_hals[i], user);
+    }
 }
 
 /* ====== 便捷操作：查找 + 调用回调 ====== */

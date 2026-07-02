@@ -2,7 +2,7 @@
 """Chip database and wizard for EFW Studio.
 
 Provides:
-- Built-in chip database with common MCU configurations
+- Chip database loaded from data/mcu/ directory
 - Chip selection wizard with vendor/series/model hierarchy
 - Import from CubeMX .ioc, ESP-IDF sdkconfig, and other formats
 """
@@ -15,252 +15,102 @@ from pathlib import Path
 from typing import Any
 
 
-# ─── Built-in Chip Database ──────────────────────────────────────────────────
+# ─── Data Directory ──────────────────────────────────────────────────────────
 
-CHIP_DATABASE: dict[str, dict[str, Any]] = {
-    # ── STM32 Series ──────────────────────────────────────────────────────
-    "stm32f103c8": {
-        "vendor": "ST",
-        "series": "STM32F1",
-        "model": "STM32F103C8",
-        "label": "STM32F103C8T6 (Blue Pill)",
-        "package": "LQFP48",
-        "flash_kb": 64,
-        "ram_kb": 20,
-        "clock_mhz": 72,
-        "ports": ["A", "B", "C"],
-        "pins_per_port": 16,
-        "timers": [1, 2, 3, 4],
-        "pwm_channels": [1, 2, 3, 4],
-        "uart": [1, 2, 3],
-        "i2c": [1, 2],
-        "spi": [1, 2],
-        "adc": [1],
-        "notes": "经典入门MCU，适合学习和小型项目。",
-    },
-    "stm32f103rct6": {
-        "vendor": "ST",
-        "series": "STM32F1",
-        "model": "STM32F103RCT6",
-        "label": "STM32F103RCT6 (中容量)",
-        "package": "LQFP64",
-        "flash_kb": 256,
-        "ram_kb": 48,
-        "clock_mhz": 72,
-        "ports": ["A", "B", "C", "D"],
-        "pins_per_port": 16,
-        "timers": [1, 2, 3, 4, 5, 6, 7, 8],
-        "pwm_channels": [1, 2, 3, 4],
-        "uart": [1, 2, 3, 4, 5],
-        "i2c": [1, 2],
-        "spi": [1, 2, 3],
-        "adc": [1, 2, 3],
-        "notes": "中容量MCU，引脚和资源更丰富。",
-    },
-    "stm32f407vgt6": {
-        "vendor": "ST",
-        "series": "STM32F4",
-        "model": "STM32F407VGT6",
-        "label": "STM32F407VGT6 (Discovery)",
-        "package": "LQFP100",
-        "flash_kb": 1024,
-        "ram_kb": 192,
-        "clock_mhz": 168,
-        "ports": ["A", "B", "C", "D", "E"],
-        "pins_per_port": 16,
-        "timers": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14],
-        "pwm_channels": [1, 2, 3, 4],
-        "uart": [1, 2, 3, 4, 5, 6],
-        "i2c": [1, 2, 3],
-        "spi": [1, 2, 3],
-        "adc": [1, 2, 3],
-        "notes": "高性能MCU，带FPU和DSP指令，适合电机控制和信号处理。",
-    },
-    "stm32g431cb": {
-        "vendor": "ST",
-        "series": "STM32G4",
-        "model": "STM32G431CB",
-        "label": "STM32G431CB (Nucleo-64)",
-        "package": "LQFP48",
-        "flash_kb": 128,
-        "ram_kb": 32,
-        "clock_mhz": 170,
-        "ports": ["A", "B", "C"],
-        "pins_per_port": 16,
-        "timers": [1, 2, 3, 4, 5, 6, 7, 8, 15, 16, 17, 20],
-        "pwm_channels": [1, 2, 3, 4, 5],
-        "uart": [1, 2, 3, 4, 5],
-        "i2c": [1, 2, 3, 4],
-        "spi": [1, 2, 3, 4],
-        "adc": [1, 2, 3, 4, 5],
-        "notes": "电机控制专用MCU，带高精度ADC和高级定时器。",
-    },
-    "stm32h743vit6": {
-        "vendor": "ST",
-        "series": "STM32H7",
-        "model": "STM32H743VIT6",
-        "label": "STM32H743VIT6 (高性能)",
-        "package": "LQFP100",
-        "flash_kb": 2048,
-        "ram_kb": 1024,
-        "clock_mhz": 480,
-        "ports": ["A", "B", "C", "D", "E"],
-        "pins_per_port": 16,
-        "timers": [1, 2, 3, 4, 5, 6, 7, 8, 12, 13, 14, 15, 16, 17],
-        "pwm_channels": [1, 2, 3, 4],
-        "uart": [1, 2, 3, 4, 5, 6, 7, 8],
-        "i2c": [1, 2, 3, 4],
-        "spi": [1, 2, 3, 4, 5, 6],
-        "adc": [1, 2, 3],
-        "notes": "超高性能MCU，适合复杂算法和高速通信。",
-    },
+DATA_DIR = Path(__file__).parent.parent.parent / "data"
+MCU_DIR = DATA_DIR / "mcu"
 
-    # ── ESP32 Series ──────────────────────────────────────────────────────
-    "esp32": {
-        "vendor": "Espressif",
-        "series": "ESP32",
-        "model": "ESP32",
-        "label": "ESP32 (经典双核)",
-        "package": "QFN48",
-        "flash_kb": 4096,
-        "ram_kb": 520,
-        "clock_mhz": 240,
-        "ports": ["GPIO"],
-        "pins_per_port": 34,
-        "timers": [0, 1, 2, 3],
-        "pwm_channels": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-        "uart": [0, 1, 2],
-        "i2c": [0, 1],
-        "spi": [1, 2, 3],
-        "adc": [1, 2],
-        "wifi": True,
-        "bluetooth": True,
-        "notes": "经典WiFi+蓝牙MCU，适合IoT项目。",
-    },
-    "esp32s3": {
-        "vendor": "Espressif",
-        "series": "ESP32-S",
-        "model": "ESP32-S3",
-        "label": "ESP32-S3 (AI增强)",
-        "package": "QFN56",
-        "flash_kb": 8192,
-        "ram_kb": 512,
-        "clock_mhz": 240,
-        "ports": ["GPIO"],
-        "pins_per_port": 45,
-        "timers": [0, 1, 2, 3],
-        "pwm_channels": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-        "uart": [0, 1, 2],
-        "i2c": [0, 1],
-        "spi": [0, 1, 2, 3],
-        "adc": [1, 2],
-        "wifi": True,
-        "bluetooth": True,
-        "usb": True,
-        "notes": "带AI加速和USB OTG，适合AIoT项目。",
-    },
-    "esp32c3": {
-        "vendor": "Espressif",
-        "series": "ESP32-C",
-        "model": "ESP32-C3",
-        "label": "ESP32-C3 (低功耗)",
-        "package": "QFN32",
-        "flash_kb": 4096,
-        "ram_kb": 400,
-        "clock_mhz": 160,
-        "ports": ["GPIO"],
-        "pins_per_port": 22,
-        "timers": [0, 1],
-        "pwm_channels": [0, 1, 2, 3, 4, 5],
-        "uart": [0, 1],
-        "i2c": [0],
-        "spi": [0, 1],
-        "adc": [1],
-        "wifi": True,
-        "bluetooth": True,
-        "notes": "RISC-V架构，低功耗低成本。",
-    },
 
-    # ── MSPM0 Series ──────────────────────────────────────────────────────
-    "mspm0g3507": {
-        "vendor": "TI",
-        "series": "MSPM0",
-        "model": "MSPM0G3507",
-        "label": "MSPM0G3507 (LaunchPad)",
-        "package": "LQFP48",
-        "flash_kb": 128,
-        "ram_kb": 32,
-        "clock_mhz": 80,
-        "ports": ["A", "B"],
-        "pins_per_port": 16,
-        "timers": [0, 1, 2, 3],
-        "pwm_channels": [0, 1, 2, 3],
-        "uart": [0, 1, 2],
-        "i2c": [0, 1],
-        "spi": [0, 1],
-        "adc": [0, 1],
-        "notes": "TI低功耗MCU，适合电池供电项目。",
-    },
-    "mspm0l1306": {
-        "vendor": "TI",
-        "series": "MSPM0",
-        "model": "MSPM0L1306",
-        "label": "MSPM0L1306 (超低功耗)",
-        "package": "SOP16",
-        "flash_kb": 32,
-        "ram_kb": 4,
-        "clock_mhz": 32,
-        "ports": ["A", "B"],
-        "pins_per_port": 8,
-        "timers": [0, 1],
-        "pwm_channels": [0, 1],
-        "uart": [0],
-        "i2c": [0],
-        "spi": [0],
-        "adc": [0],
-        "notes": "超低功耗MCU，适合传感器节点。",
-    },
+# ─── Chip Database Loader ───────────────────────────────────────────────────
 
-    # ── Arduino Series ────────────────────────────────────────────────────
-    "arduino_nano": {
-        "vendor": "Arduino",
-        "series": "AVR",
-        "model": "ATmega328P",
-        "label": "Arduino Nano (ATmega328P)",
-        "package": "TQFP32",
-        "flash_kb": 32,
-        "ram_kb": 2,
-        "clock_mhz": 16,
-        "ports": ["D", "B", "C"],
-        "pins_per_port": 8,
-        "timers": [0, 1, 2],
-        "pwm_channels": [3, 5, 6, 9, 10, 11],
-        "uart": [0],
-        "i2c": [0],
-        "spi": [0],
-        "adc": [0, 1, 2, 3, 4, 5, 6, 7],
-        "notes": "经典入门开发板，适合学习和原型验证。",
-    },
-    "arduino_mega": {
-        "vendor": "Arduino",
-        "series": "AVR",
-        "model": "ATmega2560",
-        "label": "Arduino Mega (ATmega2560)",
-        "package": "TQFP100",
-        "flash_kb": 256,
-        "ram_kb": 8,
-        "clock_mhz": 16,
-        "ports": ["A", "B", "C", "D", "E", "F", "G", "H", "J", "K", "L"],
-        "pins_per_port": 8,
-        "timers": [0, 1, 2, 3, 4, 5],
-        "pwm_channels": [2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 44, 45, 46],
-        "uart": [0, 1, 2, 3],
-        "i2c": [0],
-        "spi": [0],
-        "adc": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
-        "notes": "资源丰富的开发板，适合大型项目。",
-    },
-}
+def _load_chip_database() -> dict[str, dict[str, Any]]:
+    """Load chip database from data/mcu/ directory."""
+    database = {}
+    
+    index_path = MCU_DIR / "index.json"
+    if not index_path.exists():
+        return database
+    
+    with open(index_path, "r", encoding="utf-8") as f:
+        index = json.load(f)
+    
+    for chip_name, chip_index in index.items():
+        chip_path = MCU_DIR / chip_index['path']
+        if not chip_path.exists():
+            continue
+        
+        with open(chip_path, "r", encoding="utf-8") as f:
+            chip_data = json.load(f)
+        
+        # 转换为 Studio 格式
+        chip_id = chip_name.lower().replace('-', '_').replace('(', '_').replace(')', '')
+        
+        # 提取端口列表
+        ports = []
+        for pin_name in chip_data.get('gpio_pins', []):
+            port = re.match(r'P([A-Z])', pin_name)
+            if port and port.group(1) not in ports:
+                ports.append(port.group(1))
+        
+        # 提取定时器列表
+        timers = set()
+        for tim in chip_data.get('peripherals', {}).get('pwm', {}).get('outputs', {}).keys():
+            match = re.match(r'TIM(\d+)', tim)
+            if match:
+                timers.add(int(match.group(1)))
+        
+        # 提取 UART 列表
+        uart_ports = []
+        for uart in chip_data.get('peripherals', {}).get('uart', {}).get('ports', {}).keys():
+            match = re.match(r'UART(\d+)', uart)
+            if match:
+                uart_ports.append(int(match.group(1)))
+        
+        # 提取 I2C 列表
+        i2c_ports = []
+        for i2c in chip_data.get('peripherals', {}).get('i2c', {}).get('ports', {}).keys():
+            match = re.match(r'I2C(\d+)', i2c)
+            if match:
+                i2c_ports.append(int(match.group(1)))
+        
+        # 提取 SPI 列表
+        spi_ports = []
+        for spi in chip_data.get('peripherals', {}).get('spi', {}).get('ports', {}).keys():
+            match = re.match(r'SPI(\d+)', spi)
+            if match:
+                spi_ports.append(int(match.group(1)))
+        
+        database[chip_id] = {
+            "vendor": "ST",
+            "series": chip_data.get('family', ''),
+            "model": chip_name,
+            "label": f"{chip_name} ({chip_data.get('board', '')})",
+            "package": chip_data.get('package', ''),
+            "flash_kb": chip_data.get('flash_kb', 0),
+            "ram_kb": chip_data.get('ram_kb', 0),
+            "clock_mhz": chip_data.get('frequency_mhz', 0),
+            "core": chip_data.get('core', ''),
+            "ports": ports,
+            "pins_per_port": 16,
+            "gpio_count": chip_data.get('gpio_count', 0),
+            "gpio_pins": chip_data.get('gpio_pins', []),
+            "timers": sorted(timers),
+            "pwm_channels": list(chip_data.get('peripherals', {}).get('pwm', {}).get('outputs', {}).keys()),
+            "uart": sorted(uart_ports),
+            "i2c": sorted(i2c_ports),
+            "spi": sorted(spi_ports),
+            "adc_channels": chip_data.get('peripherals', {}).get('adc', {}).get('channels', {}),
+            "peripherals": chip_data.get('peripherals', {}),
+            "pins": chip_data.get('pins', {}),
+            "board": chip_data.get('board', ''),
+            "path": chip_index['path'],
+        }
+    
+    return database
+
+
+# 加载数据库
+CHIP_DATABASE = _load_chip_database()
 
 
 # ─── Chip Query Functions ────────────────────────────────────────────────────
@@ -294,6 +144,17 @@ def get_chip_info(chip_id: str) -> dict[str, Any] | None:
     return CHIP_DATABASE.get(chip_id)
 
 
+def get_all_chips() -> dict[str, dict[str, Any]]:
+    """Get all chips in database."""
+    return CHIP_DATABASE.copy()
+
+
+def reload_database() -> None:
+    """Reload chip database from disk."""
+    global CHIP_DATABASE
+    CHIP_DATABASE = _load_chip_database()
+
+
 def chip_to_board_profile(chip_id: str) -> dict[str, Any] | None:
     """Convert chip info to EFW board profile format."""
     chip = get_chip_info(chip_id)
@@ -306,6 +167,8 @@ def chip_to_board_profile(chip_id: str) -> dict[str, Any] | None:
         "pins_per_port": chip["pins_per_port"],
         "timers": chip["timers"],
         "pwm_channels": chip["pwm_channels"],
+        "gpio_pins": chip.get("gpio_pins", []),
+        "peripherals": chip.get("peripherals", {}),
         "notes": chip.get("notes", ""),
         "_chip_info": {
             "vendor": chip["vendor"],
@@ -315,12 +178,66 @@ def chip_to_board_profile(chip_id: str) -> dict[str, Any] | None:
             "flash_kb": chip.get("flash_kb", 0),
             "ram_kb": chip.get("ram_kb", 0),
             "clock_mhz": chip.get("clock_mhz", 0),
+            "core": chip.get("core", ""),
             "uart": chip.get("uart", []),
             "i2c": chip.get("i2c", []),
             "spi": chip.get("spi", []),
-            "adc": chip.get("adc", []),
+            "adc_channels": chip.get("adc_channels", {}),
         }
     }
+
+
+def get_pin_functions(chip_id: str, pin_name: str) -> dict[str, Any] | None:
+    """Get available functions for a specific pin."""
+    chip = get_chip_info(chip_id)
+    if not chip:
+        return None
+    
+    pins = chip.get("pins", {})
+    return pins.get(pin_name)
+
+
+def get_adc_pins(chip_id: str) -> dict[str, str]:
+    """Get ADC channel to pin mapping."""
+    chip = get_chip_info(chip_id)
+    if not chip:
+        return {}
+    return chip.get("adc_channels", {})
+
+
+def get_pwm_pins(chip_id: str) -> dict[str, str]:
+    """Get PWM output to pin mapping."""
+    chip = get_chip_info(chip_id)
+    if not chip:
+        return {}
+    return chip.get("peripherals", {}).get("pwm", {}).get("outputs", {})
+
+
+def get_uart_pins(chip_id: str, port: int) -> dict[str, list[str]]:
+    """Get UART TX/RX pins."""
+    chip = get_chip_info(chip_id)
+    if not chip:
+        return {}
+    uart_ports = chip.get("peripherals", {}).get("uart", {}).get("ports", {})
+    return uart_ports.get(f"UART{port}", {"tx": [], "rx": []})
+
+
+def get_i2c_pins(chip_id: str, port: int) -> dict[str, list[str]]:
+    """Get I2C SDA/SCL pins."""
+    chip = get_chip_info(chip_id)
+    if not chip:
+        return {}
+    i2c_ports = chip.get("peripherals", {}).get("i2c", {}).get("ports", {})
+    return i2c_ports.get(f"I2C{port}", {"sda": [], "scl": []})
+
+
+def get_spi_pins(chip_id: str, port: int) -> dict[str, list[str]]:
+    """Get SPI MOSI/MISO/SCK/NSS pins."""
+    chip = get_chip_info(chip_id)
+    if not chip:
+        return {}
+    spi_ports = chip.get("peripherals", {}).get("spi", {}).get("ports", {})
+    return spi_ports.get(f"SPI{port}", {"mosi": [], "miso": [], "sck": [], "nss": []})
 
 
 # ─── Import Functions ────────────────────────────────────────────────────────

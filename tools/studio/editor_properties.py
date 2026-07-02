@@ -41,12 +41,8 @@ class PropertyMixin:
             table.setRowCount(0)
 
     def property_section(self, node: dict[str, Any], key: str, role: str) -> str:
-        if key in {"display_name", "id", "type", "description"}:
+        if key in {"display_name", "id", "description"}:
             return "basic"
-        if role == "数据契约" or key in {"input_contract", "output_contract", "input_type", "output_type", "payload_type", "data_type", "output_desc", "input_size", "output_size", "input_align", "output_align", "size_expr", "data_expr"}:
-            return "contracts"
-        if key in {"priority", "timeout_ms", "interval_ms", "ctx", "ctx_name", "bus_id", "topic_id", "max_iterations", "anti_windup", "binary_mode", "enabled", "user"}:
-            return "advanced"
         return "parameters"
 
     def property_widget_kind(self, node: dict[str, Any], key: str, value: Any, choices: list[str]) -> str:
@@ -103,9 +99,25 @@ class PropertyMixin:
     def populate_property_form(self, node: dict[str, Any]) -> None:
         self.clear_property_tables()
         node_type = str(node.get("type", ""))
-        ordered_keys = ["display_name", "id", "type", "description"]
-        ordered_keys.extend(key for key in PROPERTY_FIELD_ORDER.get(str(node.get("type")), []) if key not in ordered_keys)
-        ordered_keys.extend(key for key in node if key not in ordered_keys)
+        
+        # Hide these fields - they are fixed or auto-generated
+        hidden_fields = {
+            "type", "schema_version", "kind",
+            # Type-related fields that are set at creation
+            "sensor_type", "actuator_type", "hal_type", "algo_type", "module_type",
+            "output_type", "input_type", "payload_type", "data_type",
+        }
+        
+        ordered_keys = ["display_name", "id", "description"]
+        # Add fields from PROPERTY_FIELD_ORDER, but skip hidden fields
+        for key in PROPERTY_FIELD_ORDER.get(node_type, []):
+            if key not in ordered_keys and key not in hidden_fields:
+                ordered_keys.append(key)
+        # Add remaining fields from node, but skip hidden fields
+        for key in node:
+            if key not in ordered_keys and key not in hidden_fields:
+                ordered_keys.append(key)
+        
         for key in ordered_keys:
             if key == "name" and not self._uses_legacy_name_field(node_type):
                 continue
@@ -156,21 +168,15 @@ class PropertyMixin:
                     if node.get("type") == "state.transition" and key == "condition" and not str(value).strip():
                         item.setText("<必填：条件函数名>")
                 table.setItem(row, 1, item)
-            type_item = QTableWidgetItem(kind)
+            
+            # Description column - show role or issue
+            desc = issue if issue else role
+            desc_item = QTableWidgetItem(desc)
             if issue:
-                type_item.setBackground(QBrush(QColor("#5b1f24")))
-                type_item.setForeground(QBrush(QColor("#ffb3b3")))
-                type_item.setToolTip(issue)
-            table.setItem(row, 2, type_item)
-            role_item = QTableWidgetItem(role)
-            role_item.setToolTip(self.property_role_tooltip(node, str(key), role))
-            if role in {"必填", "至少一项", "回调"}:
-                role_item.setForeground(QBrush(QColor("#ffecb3")))
-            elif role == "引用":
-                role_item.setForeground(QBrush(QColor("#b3e5fc")))
-            elif role in {"显示", "主键", "数据契约"}:
-                role_item.setForeground(QBrush(QColor("#c7d4e8")))
-            table.setItem(row, 3, role_item)
+                desc_item.setForeground(QBrush(QColor("#ffb3b3")))
+            elif role in {"必填", "回调"}:
+                desc_item.setForeground(QBrush(QColor("#ffecb3")))
+            table.setItem(row, 2, desc_item)
 
     def property_role_tooltip(self, node: dict[str, Any], key: str, role: str) -> str:
         contract = NODE_CONTRACTS.get(str(node.get("type")), {})
