@@ -35,6 +35,8 @@ typedef struct {
     uint32_t elapsed_ms;
 } efw_sm_context_t;
 
+typedef void (*efw_sm_enumerate_fn)(efw_sm_context_t *ctx, void *user);
+
 efw_status_t efw_sm_init(efw_sm_context_t *ctx, const char *name,
                           const efw_state_def_t *initial,
                           const efw_sm_transition_t *transitions, uint8_t count);
@@ -51,5 +53,6 @@ efw_status_t efw_sm_register(efw_sm_context_t *ctx);
 efw_status_t efw_sm_get(const char *name, efw_sm_context_t **out_ctx);
 efw_status_t efw_sm_unregister(const char *name);
 size_t efw_sm_count(void);
+void efw_sm_enumerate(efw_sm_enumerate_fn fn, void *user);
 
 #endif

@@ -99,6 +99,8 @@ python3 tools/efw.py project simulate demo --duration 1000
 
 `project graph` 只提供读取、导出和格式化能力。Graph 的结构化编辑由 Studio 或 `tools.api.graph` 内部 API 完成；用户也可以直接编辑 `graph.json`。
 
+手写 Graph JSON 时先看标准格式协议：`docs/graph_json_format.md`。它说明顶层字段、节点类型、连线、数据契约、custom_files、board_adapters 和校验流程。
+
 底层 `codegen` 仍可直接使用：
 
 ```bash
@@ -106,6 +108,12 @@ python3 tools/efw.py codegen examples/graphs/generic_embedded_app.json -o /tmp/e
 ```
 
 真实项目可把 STM32 HAL、ESP-IDF、MSPM0 DriverLib 或自有 BSP glue 放进 `board_adapters`。生成代码调用 board adapter，不再伪装真实硬件 mock。
+
+在线调试的 UART/USB CDC 传输适配文件可由工具生成：
+
+```bash
+python3 tools/efw.py debug transport-template litetune --transport uart -o board_adapters/efw_litetune_transport_port.c
+```
 
 ## 可视化工具环境
 代码生成器只依赖 Python 标准库；PyQt 可视化编辑器和项目管理界面需要安装 Qt 绑定：

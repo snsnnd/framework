@@ -49,6 +49,13 @@ efw_status_t efw_algo_unregister(const char *name) {
 
 size_t efw_algo_count(void) { return g_algo_n; }
 
+void efw_algo_enumerate(efw_algo_enumerate_fn fn, void *user) {
+    if (!fn) return;
+    for (size_t i = 0; i < g_algo_n; ++i) {
+        if (g_algos[i]) fn(g_algos[i], user);
+    }
+}
+
 efw_status_t efw_algo_run(const char *name, const void *in, uint16_t in_size, void *out, uint16_t out_size) {
     const efw_algo_ops_t *ops;
     efw_status_t s = efw_algo_get(name, &ops);

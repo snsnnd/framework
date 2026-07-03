@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import os
 import socket
+import struct
 import subprocess
 import sys
 import time
@@ -298,6 +299,29 @@ class DebugCollector:
         
         self._debug_points = {p["name"]: p for p in debug_points}
         return debug_points
+
+    def read_debug_stats(self) -> dict[str, Any]:
+        """Read EFW debug module statistics through LiteTune command path."""
+        if not self.connected:
+            raise ConnectionError("未连接到 MCU")
+
+        result = self._run_lt("cmd", "debug.stats")
+        if not result.get("ok"):
+            raise ProtocolError(f"读取调试统计失败: {result}")
+
+        payload_hex = result.get("cmd", {}).get("payload_hex", "")
+        raw = bytes.fromhex(payload_hex)
+        if len(raw) < 14:
+            raise ProtocolError(f"debug.stats 响应长度错误: {len(raw)}")
+
+        total, efw_points, custom_points, update_count, error_count = struct.unpack("<HHHII", raw[:14])
+        return {
+            "total_points": total,
+            "efw_points": efw_points,
+            "custom_points": custom_points,
+            "update_count": update_count,
+            "error_count": error_count,
+        }
     
     def get_schema(self) -> dict:
         """获取 MCU 完整 schema

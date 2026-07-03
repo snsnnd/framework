@@ -15,6 +15,12 @@ register_capability("device.list", "List device debug points")
 register_capability("device.record", "Record device debug stream")
 register_capability("device.analyze", "Analyze recorded debug logs")
 register_capability("device.panel", "Open debug panel")
+register_capability("device.transport_template", "Install LiteTune debug transport template")
+
+
+def install_debug_transport_template(output: str | Path, *, protocol: str = "litetune", transport: str = "uart", force: bool = False):
+    from tools.debug.transport import install_transport_template
+    return install_transport_template(output, protocol=protocol, transport=transport, force=force)
 
 
 def run_device_action(project_ref: str | Path, action: str, *, port: str | None = None, baud: int = 115200, output: str | None = None, log_file: str | None = None, interval: int | None = None, max_count: int | None = None, analyze_action: str = "summary") -> int:

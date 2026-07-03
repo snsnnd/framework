@@ -1,14 +1,14 @@
 /**
  * @file    efw_debug.h
- * @brief   EFW 在线调试模块 - 通过 LiteTune 协议实现 MCU 数据采集
+ * @brief   EFW 在线调试模块 - MCU 监控点表与 LiteTune 集成基础
  *
- * 本模块将 EFW 框架内部数据（HAL/传感器/算法/模块/状态机）映射为
- * LiteTune 协议参数，使 Host 端工具可以实时读取和监控。
+ * 本模块维护 EFW 框架内部数据（HAL/传感器/算法/模块/状态机）和用户
+ * 自定义变量的监控点表。LiteTune 参数描述和传输由集成层显式接入。
  *
  * 功能特性：
  *   - 自动采集 EFW 注册表数据
  *   - 支持用户自定义监控点
- *   - 与 LiteTune 协议无缝集成
+ *   - 提供 LiteTune 集成所需的遍历和快照基础
  *   - 零动态内存分配，适合裸机环境
  *
  * 使用流程：
@@ -16,7 +16,7 @@
  *   ② 调用 efw_debug_register_efw_*() 注册 EFW 框架数据
  *   ③ 调用 efw_debug_register_custom() 注册自定义监控点
  *   ④ 在主循环中调用 efw_debug_update() 更新数据
- *   ⑤ LiteTune 协议会自动将数据上报给 Host
+ *   ⑤ 由 LiteTune 集成层或应用代码导出快照/上报给 Host
  */
 
 #ifndef EFW_DEBUG_H
@@ -111,7 +111,8 @@ typedef void (*efw_debug_point_iter_fn)(const efw_debug_point_t *point, void *us
 /**
  * @brief 初始化调试模块
  *
- * 必须在 efw_init() 之后调用。会自动初始化 LiteTune 协议栈。
+ * 必须在 efw_init() 之后调用。此函数只初始化 EFW 调试表，不初始化
+ * LiteTune 协议栈。
  *
  * @return EFW_OK 成功，其他值表示失败
  */
@@ -120,7 +121,8 @@ efw_status_t efw_debug_init(void);
 /**
  * @brief 更新所有监控点数据
  *
- * 应在主循环中定期调用，将 EFW 框架最新数据同步到 LiteTune 参数表。
+ * 应在主循环中定期调用，检查已注册监控点仍可读取并更新统计信息。
+ * LiteTune 参数同步由集成层负责。
  * 调用频率取决于应用需求，通常 10ms~100ms 调用一次。
  *
  * @return EFW_OK 成功，其他值表示失败
@@ -211,7 +213,8 @@ int efw_debug_register_all_efw(void);
 /**
  * @brief 注册自定义监控点
  *
- * 将用户定义的变量注册为监控点，Host 端可通过 LiteTune 读取。
+ * 将用户定义的变量注册为监控点，Host 端可通过快照导出或 LiteTune
+ * 集成层读取。
  *
  * @param name      监控点名称（全局唯一）
  * @param type      数据类型

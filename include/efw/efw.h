@@ -14,6 +14,14 @@
 #include "efw/core/scheduler.h"
 #endif
 
+#if EFW_ENABLE_DEBUG
+#include "efw/debug/efw_debug.h"
+#endif
+
+#if EFW_ENABLE_DEBUG && EFW_ENABLE_LITETUNE
+#include "efw/debug/efw_debug_litetune.h"
+#endif
+
 #if EFW_ENABLE_HAL
 #include "efw/hal/hal.h"
 #endif

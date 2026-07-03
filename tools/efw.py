@@ -231,6 +231,7 @@ SVD 数据导入与启动/链接文件生成。
   snapshot            获取当前状态快照
   record              录制运行数据
   analyze             分析录制数据
+  transport-template  生成调试协议传输适配模板
 
 选项:
   --port PORT         串口设备（如 /dev/ttyUSB0 或 COM3）
@@ -240,7 +241,8 @@ SVD 数据导入与启动/链接文件生成。
 
 示例:
   python3 tools/efw.py debug snapshot --port /dev/ttyUSB0
-  python3 tools/efw.py debug record --port /dev/ttyUSB0 -o log.jsonl --duration 60""",
+  python3 tools/efw.py debug record --port /dev/ttyUSB0 -o log.jsonl --duration 60
+  python3 tools/efw.py debug transport-template litetune --transport uart -o board_adapters/efw_litetune_transport_port.c""",
         
         "flash": """用法: python3 tools/efw.py flash [options]
 
@@ -745,6 +747,37 @@ def cmd_debug(argv: list[str]) -> int:
     
     if subcmd in {"help", "-h", "--help"}:
         print_command_help("debug")
+        return 0
+
+    if subcmd == "transport-template":
+        protocol = "litetune"
+        transport = "uart"
+        output_path = Path("board_adapters/efw_litetune_transport_port.c")
+        force = False
+        i = 0
+        if rest and not rest[0].startswith("-"):
+            protocol = rest[0]
+            i = 1
+        while i < len(rest):
+            if rest[i] in {"-o", "--output"} and i + 1 < len(rest):
+                output_path = Path(rest[i + 1])
+                i += 2
+            elif rest[i] == "--transport" and i + 1 < len(rest):
+                transport = rest[i + 1]
+                i += 2
+            elif rest[i] == "--force":
+                force = True
+                i += 1
+            else:
+                i += 1
+        from debug.transport import install_transport_template
+        try:
+            result = install_transport_template(output_path, protocol=protocol, transport=transport, force=force)
+        except Exception as e:
+            print(f"错误: {e}")
+            return 1
+        print(f"已生成 {result.protocol}({result.transport}) 传输适配文件: {result.output}")
+        print("只需要修改其中的 app_debug_transport_write_bytes() 绑定 UART/USB CDC。")
         return 0
     
     port = None

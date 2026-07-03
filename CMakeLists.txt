@@ -25,7 +25,8 @@ option(EFW_ENABLE_ALGO_ATTITUDE_COMPLEMENTARY "Enable complementary attitude est
 option(EFW_ENABLE_STATE_MACHINE "Enable state machine registry" ON)
 option(EFW_ENABLE_EVENT "Enable lightweight topic event" ON)
 option(EFW_ENABLE_SCHEDULER "Enable multi-period task scheduler" ON)
-option(EFW_ENABLE_DEBUG "Enable online debug module" ON)
+option(EFW_ENABLE_DEBUG "Enable online debug module" OFF)
+option(EFW_ENABLE_LITETUNE "Enable LiteTune backend for online debug" OFF)
 
 set(EFW_SOURCES src/core/init.c src/core/diagnostic.c src/app/runtime.c)
 
@@ -108,7 +109,11 @@ if(EFW_ENABLE_STATE_MACHINE)
 endif()
 
 if(EFW_ENABLE_DEBUG)
-    list(APPEND EFW_SOURCES src/debug/efw_debug.c src/debug/efw_debug_litetune.c)
+    list(APPEND EFW_SOURCES src/debug/efw_debug.c)
+endif()
+
+if(EFW_ENABLE_DEBUG AND EFW_ENABLE_LITETUNE)
+    list(APPEND EFW_SOURCES src/debug/efw_debug_litetune.c)
 endif()
 
 add_library(efw STATIC ${EFW_SOURCES})
@@ -117,6 +122,12 @@ target_link_libraries(efw PUBLIC m)
 target_include_directories(efw PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+if(EFW_ENABLE_DEBUG AND EFW_ENABLE_LITETUNE)
+    target_include_directories(efw PUBLIC
+        ${CMAKE_CURRENT_SOURCE_DIR}/lite-tune/src/litetune
+    )
+endif()
 
 target_compile_features(efw PUBLIC c_std_99)
 
@@ -143,6 +154,7 @@ target_compile_definitions(efw PUBLIC
     EFW_ENABLE_EVENT=$<BOOL:${EFW_ENABLE_EVENT}>
     EFW_ENABLE_SCHEDULER=$<BOOL:${EFW_ENABLE_SCHEDULER}>
     EFW_ENABLE_DEBUG=$<BOOL:${EFW_ENABLE_DEBUG}>
+    EFW_ENABLE_LITETUNE=$<BOOL:${EFW_ENABLE_LITETUNE}>
 )
 
 if(EFW_BUILD_APPLICATIONS)

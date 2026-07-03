@@ -14,6 +14,10 @@
 #include "core/event.c"
 #endif
 
+#if EFW_ENABLE_SCHEDULER
+#include "core/scheduler.c"
+#endif
+
 #if EFW_ENABLE_HAL
 #define same_name efw_hal_same_name
 #include "hal/hal_registry.c"
@@ -100,4 +104,12 @@
 #define same_name efw_state_machine_same_name
 #include "state/state_machine_registry.c"
 #undef same_name
+#endif
+
+#if EFW_ENABLE_DEBUG
+#include "debug/efw_debug.c"
+#endif
+
+#if EFW_ENABLE_DEBUG && EFW_ENABLE_LITETUNE
+#include "debug/efw_debug_litetune.c"
 #endif

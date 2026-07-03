@@ -96,6 +96,23 @@ def cmd_list_points(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_stats(args: argparse.Namespace) -> int:
+    """读取 EFW debug 模块统计"""
+    from .collector import DebugCollector
+
+    try:
+        with DebugCollector(port=args.port, baud=args.baud) as collector:
+            stats = collector.read_debug_stats()
+            if args.pretty:
+                print(json.dumps(stats, indent=2, ensure_ascii=False))
+            else:
+                print(json.dumps(stats, ensure_ascii=False))
+        return 0
+    except Exception as e:
+        print(f"错误: {e}", file=sys.stderr)
+        return 1
+
+
 def cmd_record(args: argparse.Namespace) -> int:
     """持续记录数据"""
     from .collector import DebugCollector
@@ -265,6 +282,20 @@ def cmd_panel(args: argparse.Namespace) -> int:
         return 1
 
 
+def cmd_transport_template(args: argparse.Namespace) -> int:
+    """安装调试协议传输适配模板"""
+    from .transport import install_transport_template
+
+    try:
+        result = install_transport_template(args.output, protocol=args.protocol, transport=args.transport, force=args.force)
+        print(f"已生成 {result.protocol}({result.transport}) 传输适配文件: {result.output}")
+        print("只需要修改其中的 app_debug_transport_write_bytes() 绑定 UART/USB CDC。")
+        return 0
+    except Exception as e:
+        print(f"错误: {e}", file=sys.stderr)
+        return 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     """构建命令行解析器"""
     parser = argparse.ArgumentParser(
@@ -297,6 +328,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", required=True, help="串口设备路径")
     p.add_argument("--baud", type=int, default=115200, help="波特率")
     p.set_defaults(func=cmd_list_points)
+
+    # stats 命令
+    p = subparsers.add_parser("stats", help="读取 EFW debug 模块统计")
+    p.add_argument("--port", required=True, help="串口设备路径")
+    p.add_argument("--baud", type=int, default=115200, help="波特率")
+    p.add_argument("--pretty", action="store_true", help="美化输出")
+    p.set_defaults(func=cmd_stats)
     
     # record 命令
     p = subparsers.add_parser("record", help="持续记录数据")
@@ -332,6 +370,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--port", help="串口设备路径")
     p.add_argument("--baud", type=int, default=115200, help="波特率")
     p.set_defaults(func=cmd_panel)
+
+    # transport-template 命令
+    p = subparsers.add_parser("transport-template", help="生成调试协议传输适配模板")
+    p.add_argument("protocol", nargs="?", default="litetune", choices=["litetune"], help="调试协议")
+    p.add_argument("--transport", default="uart", choices=["uart", "usb-cdc"], help="承载传输")
+    p.add_argument("-o", "--output", default="board_adapters/efw_litetune_transport_port.c", help="输出路径")
+    p.add_argument("--force", action="store_true", help="覆盖已存在文件")
+    p.set_defaults(func=cmd_transport_template)
     
     return parser
 

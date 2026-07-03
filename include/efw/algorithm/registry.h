@@ -64,6 +64,8 @@ typedef struct {
     efw_status_t (*run)(void *ctx, const void *in, uint16_t in_size, void *out, uint16_t out_size);
 } efw_algo_ops_t;
 
+typedef void (*efw_algo_enumerate_fn)(const efw_algo_ops_t *ops, void *user);
+
 efw_status_t efw_algo_registry_init(void);
 efw_status_t efw_algo_registry_init_pool(const efw_algo_ops_t **pool, size_t capacity);
 efw_status_t efw_algo_register(const efw_algo_ops_t *ops);
@@ -71,5 +73,6 @@ efw_status_t efw_algo_get(const char *name, const efw_algo_ops_t **out_ops);
 efw_status_t efw_algo_unregister(const char *name);
 efw_status_t efw_algo_run(const char *name, const void *in, uint16_t in_size, void *out, uint16_t out_size);
 size_t efw_algo_count(void);
+void efw_algo_enumerate(efw_algo_enumerate_fn fn, void *user);
 
 #endif

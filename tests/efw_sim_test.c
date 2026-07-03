@@ -13,7 +13,12 @@
 #include <string.h>
 #include <math.h>
 #include "efw/efw.h"
+#if EFW_ENABLE_DEBUG
 #include "efw/debug/efw_debug.h"
+#endif
+#if EFW_ENABLE_DEBUG && EFW_ENABLE_LITETUNE
+#include "efw/debug/efw_debug_litetune.h"
+#endif
 
 static int g_run = 0, g_pass = 0, g_fail = 0;
 
@@ -667,6 +672,7 @@ static void test_diag_history(void) {
     PASS();
 }
 
+#if EFW_ENABLE_DEBUG
 static uint32_t g_debug_iter_count;
 static void debug_iter_count_cb(const efw_debug_point_t *point, void *user) {
     (void)point;
@@ -685,6 +691,39 @@ static void test_debug_foreach_point(void) {
     ASSERT_OK(efw_debug_unregister("test.value"));
     PASS();
 }
+
+#if EFW_ENABLE_LITETUNE
+static uint16_t g_litetune_sent_bytes;
+
+static efw_status_t litetune_test_send(const void *data, uint16_t len) {
+    (void)data;
+    g_litetune_sent_bytes = (uint16_t)(g_litetune_sent_bytes + len);
+    return EFW_OK;
+}
+
+static void test_debug_litetune_init_and_stats(void) {
+    TEST("L1/Debug: LiteTune registry and command stats");
+    uint32_t value = 123;
+    uint8_t response[16];
+    efw_debug_litetune_config_t cfg = {
+        .send = litetune_test_send,
+        .next_frame_id = 0,
+        .device_name = "efw-test",
+        .features = 0,
+        .telemetry_period_ms = 10,
+    };
+
+    ASSERT_OK(efw_debug_init());
+    ASSERT_OK(efw_debug_register_custom("lt.value", EFW_DEBUG_TYPE_U32, &value));
+    ASSERT_OK(efw_debug_litetune_init(&cfg));
+    CHECK(efw_debug_litetune_is_ready() == 1u, "LiteTune bridge should be ready for discovery");
+    ASSERT_OK(efw_debug_handle_command("debug.stats", 0, 0, response, sizeof(response)));
+    CHECK(response[0] >= 1u, "stats should report registered points");
+    ASSERT_OK(efw_debug_unregister("lt.value"));
+    PASS();
+}
+#endif
+#endif
 
 /* ========================================================================
  *  L1: 单元测试 — 数据结构
@@ -1138,7 +1177,12 @@ int main(void) {
     test_event_queue_process_limited();
     test_diag_basic();
     test_diag_history();
+#if EFW_ENABLE_DEBUG
     test_debug_foreach_point();
+#if EFW_ENABLE_LITETUNE
+    test_debug_litetune_init_and_stats();
+#endif
+#endif
     test_ringbuf_push_pop();
     test_ringbuf_bulk_write_read();
     test_ringbuf_partial_write();

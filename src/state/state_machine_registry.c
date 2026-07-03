@@ -84,6 +84,13 @@ efw_status_t efw_sm_unregister(const char *name) {
 
 size_t efw_sm_count(void) { return g_sm_n; }
 
+void efw_sm_enumerate(efw_sm_enumerate_fn fn, void *user) {
+    if (!fn) return;
+    for (size_t i = 0; i < g_sm_n; ++i) {
+        if (g_sm_pool[i]) fn(g_sm_pool[i], user);
+    }
+}
+
 efw_status_t efw_sm_init(efw_sm_context_t *ctx, const char *name,
                           const efw_state_def_t *initial,
                           const efw_sm_transition_t *transitions, uint8_t count) {

@@ -98,23 +98,16 @@ static efw_status_t register_point(const char *name, efw_debug_source_t source,
 }
 
 /**
- * @brief 读取监控点当前值到 LiteTune 参数
+ * @brief 验证监控点可读取
  *
- * 此函数需要与 LiteTune 协议栈集成。在独立模式下，仅更新内部缓存。
+ * 当前 MCU 端实现提供本地监控点表和快照导出；真正的 LiteTune 参数注册
+ * 由 efw_debug_litetune.c 的集成层负责，不能在这里假装已写入协议栈。
  */
-static efw_status_t sync_point_to_litetune(const efw_debug_point_t *point)
+static efw_status_t validate_point_readable(const efw_debug_point_t *point)
 {
     if (!point || !point->value_ptr) {
         return EFW_ERR_INVALID;
     }
-
-    /* 注意：实际实现需要调用 LiteTune 的 lt_param_set_value() 函数
-     * 这里提供框架代码，具体集成时需要包含 LiteTune 头文件
-     *
-     * 示例：
-     * lt_param_set_value(point->param_id, point->value_ptr, point->type);
-     */
-
     return EFW_OK;
 }
 
@@ -240,12 +233,6 @@ efw_status_t efw_debug_init(void)
     g_debug.update_count = 0;
     g_debug.error_count = 0;
 
-    /* 注意：这里应该初始化 LiteTune 协议栈
-     * 示例：
-     * lt_init();
-     * lt_register_debug_params();  // 注册调试参数描述
-     */
-
     g_debug.initialized = 1;
 
     return EFW_OK;
@@ -260,13 +247,13 @@ efw_status_t efw_debug_update(void)
     uint16_t synced = 0;
     uint16_t errors = 0;
 
-    /* 同步所有已注册的监控点到 LiteTune */
+    /* 检查所有已注册监控点仍可读取。LiteTune 上报由集成层显式调用。 */
     for (uint16_t i = 0; i < EFW_MAX_DEBUG_POINTS; i++) {
         if (!g_debug.points[i].registered) {
             continue;
         }
 
-        efw_status_t ret = sync_point_to_litetune(&g_debug.points[i]);
+        efw_status_t ret = validate_point_readable(&g_debug.points[i]);
         if (ret == EFW_OK) {
             synced++;
         } else {
@@ -357,11 +344,7 @@ int efw_debug_register_efw_algorithms(void)
 {
 #if EFW_ENABLE_ALGORITHM
     int count = 0;
-    /* 注意：efw_algo_enumerate() 函数需要在算法注册表中实现
-     * 如果不存在，需要添加此函数
-     */
-    // efw_algo_enumerate(algo_register_callback, &count);
-    (void)algo_register_callback;  /* 避免未使用警告 */
+    efw_algo_enumerate(algo_register_callback, &count);
     return count;
 #else
     return 0;
@@ -371,9 +354,11 @@ int efw_debug_register_efw_algorithms(void)
 int efw_debug_register_efw_state_machines(void)
 {
 #if EFW_ENABLE_STATE_MACHINE
-    /* 注意：需要遍历状态机注册表
-     * 这里提供框架代码，具体实现取决于状态机注册表的遍历接口
+    /* 状态机当前状态是计算值；这里只提供遍历入口，具体快照字段
+     * 需要后续引入动态 reader 后再自动注册。
      */
+    (void)sm_state_reader;
+    (void)efw_sm_enumerate;
     return 0;
 #else
     return 0;

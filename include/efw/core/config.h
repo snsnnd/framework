@@ -128,6 +128,14 @@
 #define EFW_ENABLE_SCHEDULER 1
 #endif
 
+#ifndef EFW_ENABLE_DEBUG
+#define EFW_ENABLE_DEBUG 0
+#endif
+
+#ifndef EFW_ENABLE_LITETUNE
+#define EFW_ENABLE_LITETUNE 0
+#endif
+
 
 /* ==================================================================
  *  第2级：各注册表最大容量
