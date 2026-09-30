@@ -1,0 +1,14 @@
+node_modules/
+dist/
+release/
+build/
+backend-bin/
+__pycache__/
+*.pyc
+.venv/
+test-results/
+playwright-report/
+*.tsbuildinfo
+examples/*/generated/
+examples/*/.efw/generated.json
+examples/*/.efw/backups/
