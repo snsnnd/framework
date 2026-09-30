@@ -22,6 +22,69 @@
     ],
     "notes": "适合主机编译验证和无板卡演示。"
   },
+  "stm32f103c8": {
+    "label": "STM32F103C8T6 (Blue Pill)",
+    "ports": [
+      "A",
+      "B",
+      "C"
+    ],
+    "pins_per_port": 16,
+    "timers": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "pwm_channels": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "uart": [1, 2, 3],
+    "i2c": [1, 2],
+    "spi": [1, 2],
+    "adc": [1],
+    "flash_kb": 64,
+    "ram_kb": 20,
+    "clock_mhz": 72,
+    "notes": "经典入门MCU，Blue Pill开发板，适合学习和小型项目。"
+  },
+  "stm32f103rct6": {
+    "label": "STM32F103RCT6 (中容量)",
+    "ports": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "pins_per_port": 16,
+    "timers": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "pwm_channels": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "uart": [1, 2, 3, 4, 5],
+    "i2c": [1, 2],
+    "spi": [1, 2, 3],
+    "adc": [1, 2, 3],
+    "flash_kb": 256,
+    "ram_kb": 48,
+    "clock_mhz": 72,
+    "notes": "中容量MCU，引脚和资源更丰富，适合中型项目。"
+  },
   "stm32-basic": {
     "label": "STM32 基础板卡",
     "ports": [

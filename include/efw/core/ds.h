@@ -82,22 +82,37 @@ static inline efw_status_t efw_ringbuf_pop(efw_ringbuf_t *rb, uint8_t *out) {
 
 static inline size_t efw_ringbuf_write(efw_ringbuf_t *rb, const void *data, size_t len) {
     const uint8_t *bytes = (const uint8_t *)data;
-    size_t written = 0u;
-    if (!rb || !bytes) return 0u;
-    while (written < len && efw_ringbuf_push(rb, bytes[written]) == EFW_OK) {
-        written++;
+    if (!rb || !bytes || !rb->buffer) return 0u;
+    size_t avail = rb->capacity - rb->size;
+    if (len > avail) len = avail;
+    if (len == 0u) return 0u;
+    size_t to_end = rb->capacity - rb->head;
+    if (len <= to_end) {
+        memcpy(rb->buffer + rb->head, bytes, len);
+    } else {
+        memcpy(rb->buffer + rb->head, bytes, to_end);
+        memcpy(rb->buffer, bytes + to_end, len - to_end);
     }
-    return written;
+    rb->head = (rb->head + len) % rb->capacity;
+    rb->size += len;
+    return len;
 }
 
 static inline size_t efw_ringbuf_read(efw_ringbuf_t *rb, void *out, size_t len) {
     uint8_t *bytes = (uint8_t *)out;
-    size_t read = 0u;
-    if (!rb || !bytes) return 0u;
-    while (read < len && efw_ringbuf_pop(rb, &bytes[read]) == EFW_OK) {
-        read++;
+    if (!rb || !bytes || !rb->buffer) return 0u;
+    if (len > rb->size) len = rb->size;
+    if (len == 0u) return 0u;
+    size_t to_end = rb->capacity - rb->tail;
+    if (len <= to_end) {
+        memcpy(bytes, rb->buffer + rb->tail, len);
+    } else {
+        memcpy(bytes, rb->buffer + rb->tail, to_end);
+        memcpy(bytes + to_end, rb->buffer, len - to_end);
     }
-    return read;
+    rb->tail = (rb->tail + len) % rb->capacity;
+    rb->size -= len;
+    return len;
 }
 
 static inline efw_status_t efw_queue_init(efw_queue_t *q, void *buffer, size_t item_size, size_t capacity) {

@@ -1,0 +1,727 @@
+{
+  "kind": "efw.project",
+  "schema_version": 1,
+  "name": "generic_embedded_app",
+  "description": "EFW Studio 项目文件。它保存项目说明、Graph 路径、输出目录和目标板卡配置。",
+  "graph_path": "examples/graphs/generic_embedded_app.json",
+  "output_dir": "application/generated_generic_embedded_app",
+  "board_profile": "stm32f103c8",
+  "notes": "Use the graph editor to edit cards/code, then generate application/. Put board-specific glue in graph.board_adapters.",
+  "workflow": [
+    "双击最近项目或打开 .efw_project.json 后，先检查项目名、Graph JSON、输出目录和 Board Profile。",
+    "点击“打开当前项目”进入项目装配，编辑卡片、关系和 custom_files。",
+    "回到项目页执行实时校验，通过后生成 application。"
+  ],
+  "project": {
+    "name": "stm32f1_line_tracking_car",
+    "tick_ms": 1,
+    "board_profile": "stm32f103c8"
+  },
+  "board": {
+    "profile": "stm32f103c8",
+    "pin_plan": [
+      {
+        "node": "line_input",
+        "usage": "GPIO输入[0]",
+        "port": "A",
+        "pin": 0
+      },
+      {
+        "node": "line_input",
+        "usage": "GPIO输入[1]",
+        "port": "A",
+        "pin": 1
+      },
+      {
+        "node": "line_input",
+        "usage": "GPIO输入[2]",
+        "port": "A",
+        "pin": 2
+      },
+      {
+        "node": "line_input",
+        "usage": "GPIO输入[3]",
+        "port": "A",
+        "pin": 3
+      },
+      {
+        "node": "line_input",
+        "usage": "GPIO输入[4]",
+        "port": "A",
+        "pin": 4
+      },
+      {
+        "node": "ultrasonic",
+        "usage": "TRIG",
+        "port": "B",
+        "pin": 5
+      },
+      {
+        "node": "ultrasonic",
+        "usage": "ECHO",
+        "port": "B",
+        "pin": 6
+      },
+      {
+        "node": "left_motor",
+        "usage": "PWM",
+        "timer": 1,
+        "channel": 1
+      },
+      {
+        "node": "left_motor",
+        "usage": "DIR",
+        "port": "B",
+        "pin": 0
+      },
+      {
+        "node": "right_motor",
+        "usage": "PWM",
+        "timer": 1,
+        "channel": 2
+      },
+      {
+        "node": "right_motor",
+        "usage": "DIR",
+        "port": "B",
+        "pin": 1
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "id": "system_module",
+      "type": "project.module",
+      "display_name": "系统模块",
+      "description": "主系统模块，包含所有子系统"
+    },
+    {
+      "id": "line_input",
+      "type": "hal.gpio_line_input",
+      "module": "system_module",
+      "display_name": "5路循迹输入",
+      "description": "5路红外循迹传感器GPIO输入",
+      "channels": 5,
+      "pins": [
+        {
+          "port": "A",
+          "pin": 0
+        },
+        {
+          "port": "A",
+          "pin": 1
+        },
+        {
+          "port": "A",
+          "pin": 2
+        },
+        {
+          "port": "A",
+          "pin": 3
+        },
+        {
+          "port": "A",
+          "pin": 4
+        }
+      ]
+    },
+    {
+      "id": "line_sensor",
+      "type": "sensor.line_tracking",
+      "module": "system_module",
+      "display_name": "循迹传感器",
+      "description": "5路循迹传感器中间层",
+      "input": "line_input",
+      "active_value": 1,
+      "binary_mode": true
+    },
+    {
+      "id": "ultrasonic",
+      "type": "sensor.custom",
+      "module": "system_module",
+      "display_name": "超声波传感器",
+      "description": "HC-SR04超声波测距传感器",
+      "sensor_type": "ultrasonic",
+      "output_type": "float",
+      "output_desc": "距离(cm)",
+      "channel_count": 1,
+      "read": "app_ultrasonic_read",
+      "output_contract": "float"
+    },
+    {
+      "id": "line_pid",
+      "type": "algorithm.pid",
+      "module": "system_module",
+      "display_name": "循迹PID",
+      "description": "循迹偏差PID控制器",
+      "kp": 18.0,
+      "ki": 0.01,
+      "kd": 2.5,
+      "kff": 0.0,
+      "integral_min": -20.0,
+      "integral_max": 20.0,
+      "out_min": -60.0,
+      "out_max": 60.0,
+      "anti_windup": true
+    },
+    {
+      "id": "left_motor",
+      "type": "actuator.motor",
+      "module": "system_module",
+      "display_name": "左电机",
+      "description": "左侧直流电机",
+      "pwm": {
+        "timer": 1,
+        "channel": 1
+      },
+      "dir_pin": {
+        "port": "B",
+        "pin": 0
+      }
+    },
+    {
+      "id": "right_motor",
+      "type": "actuator.motor",
+      "module": "system_module",
+      "display_name": "右电机",
+      "description": "右侧直流电机",
+      "pwm": {
+        "timer": 1,
+        "channel": 2
+      },
+      "dir_pin": {
+        "port": "B",
+        "pin": 1
+      }
+    },
+    {
+      "id": "battery_sensor",
+      "type": "sensor.custom",
+      "module": "system_module",
+      "display_name": "电池电压",
+      "description": "ADC采集电池电压",
+      "sensor_type": "adc",
+      "output_type": "float",
+      "output_desc": "电压(V)",
+      "channel_count": 1,
+      "read": "app_battery_read"
+    },
+    {
+      "id": "status_led",
+      "type": "actuator.custom",
+      "module": "system_module",
+      "display_name": "状态LED",
+      "description": "系统状态指示灯",
+      "actuator_type": "led",
+      "write": "app_status_led_write",
+      "input_contract": "float",
+      "input_type": "float"
+    },
+    {
+      "id": "car_sm",
+      "type": "state.machine",
+      "module": "system_module",
+      "display_name": "小车状态机",
+      "description": "控制小车运行状态",
+      "initial": "state_idle"
+    },
+    {
+      "id": "state_idle",
+      "type": "state.state",
+      "machine": "car_sm",
+      "display_name": "空闲状态",
+      "on_enter": "app_state_idle_enter",
+      "on_update": "app_state_idle_update"
+    },
+    {
+      "id": "state_tracking",
+      "type": "state.state",
+      "machine": "car_sm",
+      "display_name": "循迹状态",
+      "on_enter": "app_state_tracking_enter",
+      "on_update": "app_state_tracking_update"
+    },
+    {
+      "id": "state_avoiding",
+      "type": "state.state",
+      "machine": "car_sm",
+      "display_name": "避障状态",
+      "on_enter": "app_state_avoiding_enter",
+      "on_update": "app_state_avoiding_update"
+    },
+    {
+      "id": "state_stopped",
+      "type": "state.state",
+      "machine": "car_sm",
+      "display_name": "停止状态",
+      "on_enter": "app_state_stopped_enter"
+    },
+    {
+      "id": "trans_idle_to_tracking",
+      "type": "state.transition",
+      "machine": "car_sm",
+      "from": "state_idle",
+      "to": "state_tracking",
+      "condition": "app_can_start_tracking",
+      "priority": 10
+    },
+    {
+      "id": "trans_tracking_to_avoiding",
+      "type": "state.transition",
+      "machine": "car_sm",
+      "from": "state_tracking",
+      "to": "state_avoiding",
+      "condition": "app_detect_obstacle",
+      "priority": 20
+    },
+    {
+      "id": "trans_avoiding_to_tracking",
+      "type": "state.transition",
+      "machine": "car_sm",
+      "from": "state_avoiding",
+      "to": "state_tracking",
+      "condition": "app_obstacle_cleared",
+      "priority": 10,
+      "timeout_ms": 3000
+    },
+    {
+      "id": "trans_any_to_stopped",
+      "type": "state.transition",
+      "machine": "car_sm",
+      "from": "state_tracking",
+      "to": "state_stopped",
+      "condition": "app_battery_low",
+      "priority": 100
+    },
+    {
+      "id": "topic_battery",
+      "type": "event.topic",
+      "display_name": "电池电压Topic",
+      "topic_id": 1,
+      "payload_type": "float"
+    },
+    {
+      "id": "publish_battery",
+      "type": "event.publisher",
+      "topic": "topic_battery",
+      "source": "battery_sensor",
+      "interval_ms": 1000,
+      "display_name": "发布电池电压"
+    },
+    {
+      "id": "subscribe_battery",
+      "type": "event.subscriber",
+      "topic": "topic_battery",
+      "callback": "app_on_battery_update",
+      "display_name": "订阅电池电压"
+    },
+    {
+      "id": "task_10ms",
+      "type": "task.periodic",
+      "display_name": "10ms控制任务",
+      "period_ms": 10,
+      "call": "app_control_loop_10ms"
+    },
+    {
+      "id": "task_100ms",
+      "type": "task.periodic",
+      "display_name": "100ms状态更新",
+      "period_ms": 100,
+      "call": "app_status_update_100ms"
+    },
+    {
+      "id": "distance_processor",
+      "type": "processor.custom",
+      "module": "system_module",
+      "display_name": "距离处理器",
+      "description": "处理超声波距离数据",
+      "process": "app_process_distance",
+      "input_contract": "float",
+      "output_contract": "float",
+      "input_type": "float",
+      "output_type": "float",
+      "primary_input_port": "sensor",
+      "input_ports": {
+        "sensor": {
+          "contract": "float",
+          "type": "float"
+        }
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e1",
+      "from": "line_input",
+      "to": "line_sensor",
+      "from_port": "out",
+      "to_port": "in",
+      "kind": "hardware_dependency"
+    },
+    {
+      "id": "e2",
+      "from": "line_sensor",
+      "to": "line_pid",
+      "from_port": "out",
+      "to_port": "in",
+      "kind": "data_flow"
+    },
+    {
+      "id": "e3",
+      "from": "line_pid",
+      "to": "left_motor",
+      "from_port": "out",
+      "to_port": "in",
+      "kind": "data_flow"
+    },
+    {
+      "id": "e4",
+      "from": "line_pid",
+      "to": "right_motor",
+      "from_port": "out",
+      "to_port": "in",
+      "kind": "data_flow"
+    },
+    {
+      "id": "e5",
+      "from": "battery_sensor",
+      "to": "publish_battery",
+      "from_port": "out",
+      "to_port": "event_source",
+      "kind": "data_flow"
+    },
+    {
+      "id": "e6",
+      "from": "ultrasonic",
+      "to": "state_tracking",
+      "from_port": "out",
+      "to_port": "sensor",
+      "kind": "data_flow"
+    },
+    {
+      "id": "e7",
+      "from": "ultrasonic",
+      "to": "distance_processor",
+      "from_port": "out",
+      "to_port": "sensor",
+      "kind": "data_flow"
+    },
+    {
+      "id": "e8",
+      "from": "distance_processor",
+      "to": "status_led",
+      "from_port": "out",
+      "to_port": "in",
+      "kind": "data_flow"
+    }
+  ],
+  "flows": [
+    {
+      "id": "line_follower",
+      "type": "control.line_follower",
+      "sensor": "line_sensor",
+      "pid": "line_pid",
+      "left_motor": "left_motor",
+      "right_motor": "right_motor",
+      "weights": [
+        -2.0,
+        -1.0,
+        0.0,
+        1.0,
+        2.0
+      ],
+      "base_speed": 65.0,
+      "min_speed": 0.0,
+      "max_speed": 100.0,
+      "dt": 0.001,
+      "active_value": 1,
+      "binary_mode": true
+    }
+  ],
+  "tasks": [
+    {
+      "id": "task_battery_sample",
+      "period_ms": 100,
+      "call": "app_battery_sample_100ms"
+    },
+    {
+      "id": "task_status_report",
+      "period_ms": 500,
+      "call": "app_status_report_500ms"
+    }
+  ],
+  "custom_files": [
+    {
+      "path": "app_custom.c",
+      "content": "/**\n * @file    app_custom.c\n * @brief   STM32F1 循迹车用户代码\n *\n * 本文件包含所有用户自定义的回调函数实现。\n * 生成的代码框架会自动调用这些函数。\n */\n\n#include \"efw/efw.h\"\n#include \"app_board_config.h\"\n\n/* ========================================================================\n *  超声波传感器\n * ======================================================================== */\n\nstatic float g_distance_cm = 0.0f;\n\nefw_status_t app_ultrasonic_read(void *ctx, void *out, uint16_t out_size) {\n    (void)ctx;\n    if (!out) return EFW_ERR_INVALID;\n    \n    /* TODO: 实现超声波测距\n     * 1. 发送10us TRIG脉冲\n     * 2. 测量ECHO高电平时间\n     * 3. 计算距离: distance = time_us / 58.0f\n     */\n    *(float *)out = g_distance_cm;\n    return EFW_OK;\n}\n\n/* ========================================================================\n *  电池电压\n * ======================================================================== */\n\nstatic float g_battery_voltage = 7.4f;\n\nefw_status_t app_battery_read(void *ctx, void *out, uint16_t out_size) {\n    (void)ctx;\n    if (!out) return EFW_ERR_INVALID;\n    \n    /* TODO: 实现ADC采集\n     * 1. 读取ADC通道\n     * 2. 转换为电压值\n     */\n    *(float *)out = g_battery_voltage;\n    return EFW_OK;\n}\n\n/* ========================================================================\n *  状态LED\n * ======================================================================== */\n\nefw_status_t app_status_led_write(void *ctx, const void *cmd, uint16_t cmd_size) {\n    (void)ctx;\n    const efw_actuator_cmd_t *led_cmd = (const efw_actuator_cmd_t *)cmd;\n    if (!led_cmd) return EFW_ERR_INVALID;\n    \n    /* TODO: 实现LED控制\n     * led_cmd->value > 0.5f -> LED ON\n     * led_cmd->value <= 0.5f -> LED OFF\n     */\n    return EFW_OK;\n}\n\n/* ========================================================================\n *  状态机回调\n * ======================================================================== */\n\nefw_status_t app_state_idle_enter(void *ctx) {\n    (void)ctx;\n    /* 停止电机 */\n    efw_motor_set_diff(\"left_motor\", \"right_motor\", 0.0f, 0.0f);\n    return EFW_OK;\n}\n\nefw_status_t app_state_idle_update(void *ctx) {\n    (void)ctx;\n    return EFW_OK;\n}\n\nefw_status_t app_state_tracking_enter(void *ctx) {\n    (void)ctx;\n    /* 启动循迹 */\n    return EFW_OK;\n}\n\nefw_status_t app_state_tracking_update(void *ctx) {\n    (void)ctx;\n    /* 循迹逻辑在line_follower flow中自动执行 */\n    return EFW_OK;\n}\n\nefw_status_t app_state_avoiding_enter(void *ctx) {\n    (void)ctx;\n    /* 后退并转向 */\n    efw_motor_set_diff(\"left_motor\", \"right_motor\", -30.0f, 30.0f);\n    return EFW_OK;\n}\n\nefw_status_t app_state_avoiding_update(void *ctx) {\n    (void)ctx;\n    return EFW_OK;\n}\n\nefw_status_t app_state_stopped_enter(void *ctx) {\n    (void)ctx;\n    /* 紧急停止 */\n    efw_motor_stop(\"left_motor\");\n    efw_motor_stop(\"right_motor\");\n    return EFW_OK;\n}\n\n/* ========================================================================\n *  状态机条件函数\n * ======================================================================== */\n\nint app_can_start_tracking(void) {\n    /* 检测到黑线时开始循迹 */\n    float value = 0.0f;\n    efw_sensor_read(\"line_sensor\", &value, sizeof(value));\n    return value > 0.0f;\n}\n\nint app_detect_obstacle(void) {\n    /* 距离小于20cm时检测到障碍物 */\n    return g_distance_cm < 20.0f && g_distance_cm > 0.0f;\n}\n\nint app_obstacle_cleared(void) {\n    /* 距离大于30cm时障碍物已清除 */\n    return g_distance_cm > 30.0f || g_distance_cm <= 0.0f;\n}\n\nint app_battery_low(void) {\n    /* 电压低于6.5V时电池低电量 */\n    return g_battery_voltage < 6.5f;\n}\n\n/* ========================================================================\n *  事件回调\n * ======================================================================== */\n\nvoid app_on_battery_update(uint16_t topic_id, const void *data, uint16_t size, void *user) {\n    (void)topic_id;\n    (void)size;\n    (void)user;\n    if (data) {\n        g_battery_voltage = *(const float *)data;\n    }\n}\n\n/* ========================================================================\n *  周期任务\n * ======================================================================== */\n\nefw_status_t app_battery_sample_100ms(void) {\n    /* 定期采样电池电压 */\n    efw_sensor_read(\"battery_sensor\", &g_battery_voltage, sizeof(g_battery_voltage));\n    return EFW_OK;\n}\n\nefw_status_t app_status_report_500ms(void) {\n    /* 定期报告状态 */\n    /* TODO: 通过UART发送状态信息 */\n    return EFW_OK;\n}\n\n/* ========================================================================\n *  10ms控制循环\n * ======================================================================== */\n\nefw_status_t app_control_loop_10ms(void) {\n    /* 读取超声波距离 */\n    efw_sensor_read(\"ultrasonic\", &g_distance_cm, sizeof(g_distance_cm));\n    return EFW_OK;\n}\n\n/* ========================================================================\n *  100ms状态更新任务\n * ======================================================================== */\n\nefw_status_t app_status_update_100ms(void) {\n    /* TODO: 实现状态更新逻辑 */\n    return EFW_OK;\n}\n\n/* ========================================================================\n *  距离处理器\n * ======================================================================== */\n\nefw_status_t app_process_distance(void *ctx, const efw_app_multi_input_t *in, void *out) {\n    (void)ctx;\n    if (!in || !out) return EFW_ERR_INVALID;\n    \n    float distance = *(const float *)in;\n    float *led_value = (float *)out;\n    \n    /* 距离越近，LED越亮 */\n    if (distance < 10.0f) {\n        *led_value = 1.0f;  /* 很近，全亮 */\n    } else if (distance < 30.0f) {\n        *led_value = 0.5f;  /* 较近，半亮 */\n    } else {\n        *led_value = 0.0f;  /* 较远，灭 */\n    }\n    \n    return EFW_OK;\n}\n"
+    },
+    {
+      "path": "board_adapters/stm32f1_hal.c",
+      "content": "/**\n * @file    stm32f1_hal.c\n * @brief   STM32F1 HAL适配层\n *\n * 本文件包含STM32F1特定的硬件操作实现。\n * 用户需要根据实际硬件连接修改以下函数。\n */\n\n#include \"efw/efw.h\"\n#include \"app_board_config.h\"\n\n/* STM32 HAL头文件 */\n/* #include \"stm32f1xx_hal.h\" */\n\n/* ========================================================================\n *  GPIO操作\n * ======================================================================== */\n\n/*\n * 根据APP_PINPLAN_xxx宏定义实现GPIO读写\n * \n * 示例:\n * HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0)\n * HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET)\n */\n\n/* ========================================================================\n *  PWM操作\n * ======================================================================== */\n\n/*\n * 根据APP_PINPLAN_xxx_PWM宏定义实现PWM输出\n *\n * 示例:\n * __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle)\n */\n\n/* ========================================================================\n *  ADC操作\n * ======================================================================== */\n\n/*\n * 实现ADC采集用于电池电压检测\n *\n * 示例:\n * HAL_ADC_Start(&hadc1);\n * HAL_ADC_PollForConversion(&hadc1, 100);\n * uint32_t adc_value = HAL_ADC_GetValue(&hadc1);\n */\n\n/* ========================================================================\n *  超声波操作\n * ======================================================================== */\n\n/*\n * 实现HC-SR04超声波测距\n *\n * 1. TRIG引脚输出10us高电平\n * 2. 测量ECHO引脚高电平持续时间\n * 3. 计算距离: distance_cm = time_us / 58.0f\n */\n"
+    }
+  ],
+  "ui": {
+    "positions": {
+      "system_module": [
+        0,
+        0
+      ],
+      "line_input": [
+        -300,
+        -200
+      ],
+      "line_sensor": [
+        -300,
+        -50
+      ],
+      "ultrasonic": [
+        -300,
+        100
+      ],
+      "line_pid": [
+        0,
+        -50
+      ],
+      "left_motor": [
+        300,
+        -100
+      ],
+      "right_motor": [
+        300,
+        50
+      ],
+      "battery_sensor": [
+        -300,
+        250
+      ],
+      "status_led": [
+        300,
+        200
+      ],
+      "car_sm": [
+        0,
+        200
+      ],
+      "state_idle": [
+        -100,
+        350
+      ],
+      "state_tracking": [
+        100,
+        350
+      ],
+      "state_avoiding": [
+        300,
+        350
+      ],
+      "state_stopped": [
+        500,
+        350
+      ],
+      "trans_idle_to_tracking": [
+        0,
+        350
+      ],
+      "trans_tracking_to_avoiding": [
+        200,
+        350
+      ],
+      "trans_avoiding_to_tracking": [
+        200,
+        400
+      ],
+      "trans_any_to_stopped": [
+        400,
+        350
+      ],
+      "topic_battery": [
+        0,
+        450
+      ],
+      "publish_battery": [
+        -150,
+        500
+      ],
+      "subscribe_battery": [
+        150,
+        500
+      ],
+      "task_10ms": [
+        -300,
+        400
+      ],
+      "task_100ms": [
+        -300,
+        500
+      ],
+      "distance_processor": [
+        0,
+        100
+      ]
+    },
+    "positions_by_page": {
+      "root": {
+        "system_module": [
+          40,
+          40
+        ]
+      },
+      "module:system_module": {
+        "line_input": [
+          -300,
+          -200
+        ],
+        "line_sensor": [
+          -300,
+          -50
+        ],
+        "ultrasonic": [
+          -300,
+          100
+        ],
+        "line_pid": [
+          0,
+          -50
+        ],
+        "left_motor": [
+          300,
+          -100
+        ],
+        "right_motor": [
+          300,
+          50
+        ],
+        "battery_sensor": [
+          -300,
+          250
+        ],
+        "status_led": [
+          300,
+          200
+        ],
+        "car_sm": [
+          0,
+          200
+        ],
+        "state_idle": [
+          -100,
+          350
+        ],
+        "state_tracking": [
+          100,
+          350
+        ],
+        "state_avoiding": [
+          300,
+          350
+        ],
+        "state_stopped": [
+          500,
+          350
+        ],
+        "topic_battery": [
+          0,
+          450
+        ],
+        "publish_battery": [
+          -150,
+          500
+        ],
+        "subscribe_battery": [
+          150,
+          500
+        ],
+        "task_10ms": [
+          -300,
+          400
+        ],
+        "task_100ms": [
+          -300,
+          500
+        ],
+        "distance_processor": [
+          0,
+          100
+        ]
+      }
+    },
+    "backdrops": [
+      {
+        "id": "bd_sensors",
+        "title": "传感器",
+        "rect": [
+          -400,
+          -300,
+          250,
+          450
+        ],
+        "node_ids": [
+          "line_input",
+          "line_sensor",
+          "ultrasonic",
+          "battery_sensor"
+        ]
+      },
+      {
+        "id": "bd_control",
+        "title": "控制",
+        "rect": [
+          -100,
+          -150,
+          250,
+          200
+        ],
+        "node_ids": [
+          "line_pid"
+        ]
+      },
+      {
+        "id": "bd_actuators",
+        "title": "执行器",
+        "rect": [
+          200,
+          -200,
+          250,
+          350
+        ],
+        "node_ids": [
+          "left_motor",
+          "right_motor",
+          "status_led"
+        ]
+      },
+      {
+        "id": "bd_state",
+        "title": "状态机",
+        "rect": [
+          -200,
+          150,
+          800,
+          250
+        ],
+        "node_ids": [
+          "car_sm",
+          "state_idle",
+          "state_tracking",
+          "state_avoiding",
+          "state_stopped"
+        ]
+      },
+      {
+        "id": "bd_events",
+        "title": "事件",
+        "rect": [
+          -250,
+          400,
+          550,
+          150
+        ],
+        "node_ids": [
+          "topic_battery",
+          "publish_battery",
+          "subscribe_battery"
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,11 @@
+.plan/
+.agent/
+__pycache__/
+*.py[cod]
+
+# LiteTune generated runtime artifacts
+src/litetune-skill/runtime/daemon.json
+src/litetune-skill/runtime/litetune.log*
+src/litetune-skill/runtime/daemon.stdout.log*
+src/litetune-skill/runtime/*.sock
+!src/litetune-skill/runtime/.gitkeep

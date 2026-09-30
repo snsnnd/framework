@@ -1,5 +1,17 @@
 build/
+build*/
+Testing/
 __pycache__/
+**/__pycache__/
 *.py[cod]
 .efw_studio_autosave.json
+.efw_studio_guide_shown
+.efw_projects/
+.pytest_cache/
 dist/
+.venv/
+application/generated_*/
+examples/**/build/
+*.elf
+*.hex
+*.bin

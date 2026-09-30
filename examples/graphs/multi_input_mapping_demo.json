@@ -1,0 +1,75 @@
+{
+  "project": {"name": "multi_input_mapping_demo", "tick_ms": 1},
+  "board": {"profile": "generic-mock", "pin_plan": []},
+  "nodes": [
+    {"id": "sensor_input", "type": "sensor.custom", "read": "app_read_sensor", "output_type": "float"},
+    {
+      "id": "processor_mapper",
+      "type": "processor.custom",
+      "primary_input_port": "sensor",
+      "trigger_policy": "primary_only",
+      "output_contract": "efw_pid_input_t",
+      "output_type": "efw_pid_input_t",
+      "output_size": 16,
+      "output_align": 4,
+      "output_mode": "assemble_struct",
+      "process_mode": "mapping_only",
+      "field_mappings": [
+        {"field": "setpoint", "source": "const", "value": 0.0, "transform": "identity", "required": true},
+        {"field": "feedback", "source": "sensor", "path": "", "transform": "identity", "required": true},
+        {"field": "dt", "source": "const", "value": 0.01, "transform": "identity", "required": true},
+        {"field": "feedforward", "source": "const", "value": 0.0, "transform": "identity", "required": true}
+      ]
+    },
+    {
+      "id": "algorithm_mapper",
+      "type": "algorithm.custom",
+      "primary_input_port": "processor",
+      "trigger_policy": "primary_only",
+      "output_contract": "efw_pid_output_t",
+      "output_type": "efw_pid_output_t",
+      "output_size": 12,
+      "output_align": 4,
+      "output_mode": "assemble_struct",
+      "process_mode": "mapping_then_custom",
+      "field_mappings": [
+        {"field": "output", "source": "processor", "path": "feedback", "transform": "identity", "required": true},
+        {"field": "error", "source": "const", "value": 0.0, "transform": "identity", "required": true},
+        {"field": "feedforward", "source": "const", "value": 0.0, "transform": "identity", "required": true}
+      ],
+      "run": "app_run_algo"
+    },
+    {
+      "id": "service_module",
+      "type": "module.custom",
+      "poll": "app_poll_module",
+      "input_ports": {"module_input": {"contract": "float", "type": "float", "size": 4, "align": 4}},
+      "output_contract": "float",
+      "output_type": "float",
+      "output_size": 4,
+      "output_mode": "scalar_compute",
+      "process_mode": "mapping_only",
+      "field_mappings": [
+        {"field": "", "source": "module_input", "path": "", "transform": "identity", "required": true}
+      ]
+    },
+    {"id": "topic_evt", "type": "event.topic", "topic_id": 21, "payload_type": "float"},
+    {"id": "publish_evt", "type": "event.publisher", "topic": "topic_evt", "source": "service_module"}
+  ],
+  "edges": [
+    {"id": "e1", "from": "sensor_input", "to": "processor_mapper", "from_port": "sensor", "to_port": "sensor", "kind": "data_flow"},
+    {"id": "e2", "from": "processor_mapper", "to": "algorithm_mapper", "from_port": "processor", "to_port": "processor", "kind": "data_flow"},
+    {"id": "e3", "from": "sensor_input", "to": "service_module", "from_port": "sensor", "to_port": "module_input", "kind": "data_flow"},
+    {"id": "e4", "from": "service_module", "to": "publish_evt", "from_port": "event_source", "to_port": "event_source", "kind": "event"},
+    {"id": "e5", "from": "topic_evt", "to": "publish_evt", "from_port": "topic", "to_port": "topic", "kind": "event"}
+  ],
+  "flows": [],
+  "tasks": [],
+  "custom_files": [
+    {
+      "path": "app_custom.c",
+      "content": "#include \"efw/efw.h\"\n\nefw_status_t app_read_sensor(void *ctx, void *out, uint16_t out_size){EFW_UNUSED(ctx); if(out) *(float*)out = 1.0f; return EFW_OK;}\nefw_status_t app_run_algo(void *ctx, const efw_app_multi_input_t *in, void *out){EFW_UNUSED(ctx); EFW_UNUSED(in); EFW_UNUSED(out); return EFW_OK;}\nefw_status_t app_poll_module(void *ctx, const efw_app_multi_input_t *in){EFW_UNUSED(ctx); EFW_UNUSED(in); return EFW_OK;}\n"
+    }
+  ],
+  "ui": {"positions": {}}
+}

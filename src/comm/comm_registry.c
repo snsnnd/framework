@@ -30,21 +30,25 @@
 
 #include <string.h>
 #include "efw/core/config.h"
+#include "efw/core/diagnostic.h"
+#include "efw/core/registry.h"
 #include "efw/comm/comm.h"
 
 #if EFW_ENABLE_COMM  /**< 编译开关：0 时整个文件被跳过 */
 
 /** COMM 注册表——全局静态指针数组 */
-static const efw_comm_ops_t *g_comms[EFW_MAX_COMMS]; /**< COMM ops 指针数组 */
+static const efw_comm_ops_t *g_comm_default_pool[EFW_MAX_COMMS];
+static const efw_comm_ops_t **g_comms = g_comm_default_pool; /**< COMM ops 指针数组 */
+static size_t g_comm_cap = EFW_MAX_COMMS;
 static size_t g_comm_n;                              /**< 已注册 COMM 数量 */
-
-static int same_name(const char *a, const char *b) {
-    return a && b && strcmp(a, b) == 0;
-}
 
 /* ====== 初始化 ====== */
 
-efw_status_t efw_comm_registry_init(void) { g_comm_n = 0; return EFW_OK; }
+efw_status_t efw_comm_registry_init(void) { g_comms = g_comm_default_pool; g_comm_cap = EFW_MAX_COMMS; g_comm_n = 0; return EFW_OK; }
+efw_status_t efw_comm_registry_init_pool(const efw_comm_ops_t **pool, size_t capacity) {
+    if (!pool || capacity == 0) { efw_diag_set(EFW_ERR_INVALID, "comm", 0, "invalid pool"); return EFW_ERR_INVALID; }
+    g_comms = pool; g_comm_cap = capacity; g_comm_n = 0; return EFW_OK;
+}
 
 /* ====== 注册 (含 HAL 绑定校验) ====== */
 
@@ -63,9 +67,9 @@ efw_status_t efw_comm_register(const efw_comm_ops_t *ops) {
     }
 
     for (size_t i = 0; i < g_comm_n; ++i)
-        if (same_name(g_comms[i]->name, ops->name))
+        if (efw_name_eq(g_comms[i]->name, ops->name))
             return EFW_ERR_ALREADY_EXISTS;                    /* 名称冲突 */
-    if (g_comm_n >= EFW_MAX_COMMS) return EFW_ERR_FULL;     /* 容量已满 */
+    if (g_comm_n >= g_comm_cap) return EFW_ERR_FULL;     /* 容量已满 */
     g_comms[g_comm_n++] = ops;                                /* 存入 */
     return EFW_OK;
 }
@@ -75,7 +79,7 @@ efw_status_t efw_comm_register(const efw_comm_ops_t *ops) {
 efw_status_t efw_comm_get(const char *name, const efw_comm_ops_t **out_ops) {
     if (!name || !out_ops) return EFW_ERR_INVALID;
     for (size_t i = 0; i < g_comm_n; ++i)
-        if (same_name(g_comms[i]->name, name)) {
+        if (efw_name_eq(g_comms[i]->name, name)) {
             *out_ops = g_comms[i];
             return EFW_OK;
         }

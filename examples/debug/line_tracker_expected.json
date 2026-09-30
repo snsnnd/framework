@@ -1,0 +1,75 @@
+{
+    "version": "1.0",
+    "description": "循迹车示例预期配置",
+    "params": {
+        "motor_speed_left": {
+            "min": 0,
+            "max": 100,
+            "unit": "%",
+            "description": "左电机速度"
+        },
+        "motor_speed_right": {
+            "min": 0,
+            "max": 100,
+            "unit": "%",
+            "description": "右电机速度"
+        },
+        "pid_kp": {
+            "min": 0,
+            "max": 10,
+            "description": "PID 比例系数"
+        },
+        "pid_ki": {
+            "min": 0,
+            "max": 5,
+            "description": "PID 积分系数"
+        },
+        "pid_kd": {
+            "min": 0,
+            "max": 2,
+            "description": "PID 微分系数"
+        },
+        "line_sensor_0": {
+            "enum": [0, 1],
+            "description": "循迹传感器 0 (二值化)"
+        },
+        "line_sensor_1": {
+            "enum": [0, 1],
+            "description": "循迹传感器 1 (二值化)"
+        },
+        "line_sensor_2": {
+            "enum": [0, 1],
+            "description": "循迹传感器 2 (二值化)"
+        },
+        "line_sensor_3": {
+            "enum": [0, 1],
+            "description": "循迹传感器 3 (二值化)"
+        },
+        "line_sensor_4": {
+            "enum": [0, 1],
+            "description": "循迹传感器 4 (二值化)"
+        },
+        "state_machine_main": {
+            "enum": ["IDLE", "RUNNING", "STOPPED", "ERROR"],
+            "description": "主状态机状态"
+        },
+        "battery_voltage": {
+            "min": 6.0,
+            "max": 8.4,
+            "unit": "V",
+            "description": "电池电压"
+        },
+        "encoder_left": {
+            "min": -10000,
+            "max": 10000,
+            "unit": "pulse",
+            "description": "左编码器计数"
+        },
+        "encoder_right": {
+            "min": -10000,
+            "max": 10000,
+            "unit": "pulse",
+            "description": "右编码器计数"
+        }
+    }
+}

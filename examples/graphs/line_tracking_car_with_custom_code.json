@@ -135,7 +135,7 @@
   "custom_files": [
     {
       "path": "app_custom.c",
-      "content": "/**\n * @file    app_custom.c\n * @brief   Example custom code generated beside visual cards.\n */\n\n#include \"efw/efw.h\"\n\nefw_status_t app_custom_algo_run(void *ctx, const void *in, void *out) {\n    EFW_UNUSED(ctx);\n    EFW_UNUSED(in);\n    EFW_UNUSED(out);\n    return EFW_OK;\n}\n\nefw_status_t app_custom_module_init(void *ctx) {\n    EFW_UNUSED(ctx);\n    return EFW_OK;\n}\n\nefw_status_t app_custom_module_poll(void *ctx) {\n    EFW_UNUSED(ctx);\n    return EFW_OK;\n}\n\nefw_status_t app_custom_task_10ms(void) {\n    return EFW_OK;\n}\n\nefw_status_t app_custom_task_20ms(void) {\n    return EFW_OK;\n}\n"
+      "content": "/**\n * @file    app_custom.c\n * @brief   Example custom code generated beside visual cards.\n */\n\n#include \"efw/efw.h\"\n\nefw_status_t app_custom_algo_run(void *ctx, const efw_app_multi_input_t *in, void *out) {\n    EFW_UNUSED(ctx);\n    EFW_UNUSED(in);\n    EFW_UNUSED(out);\n    return EFW_OK;\n}\n\nefw_status_t app_custom_module_init(void *ctx) {\n    EFW_UNUSED(ctx);\n    return EFW_OK;\n}\n\nefw_status_t app_custom_module_poll(void *ctx) {\n    EFW_UNUSED(ctx);\n    return EFW_OK;\n}\n\nefw_status_t app_custom_task_10ms(void) {\n    return EFW_OK;\n}\n\nefw_status_t app_custom_task_20ms(void) {\n    return EFW_OK;\n}\n"
     }
   ],
   "board": {

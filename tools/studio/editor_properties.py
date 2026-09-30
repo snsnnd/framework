@@ -9,16 +9,13 @@ from typing import Any
 
 import importlib.util
 
-if importlib.util.find_spec("PyQt6") is not None:
-    from PyQt6.QtCore import Qt
-    from PyQt6.QtGui import QBrush, QColor
-    from PyQt6.QtWidgets import QCheckBox, QComboBox, QMessageBox, QPushButton, QPlainTextEdit, QTableWidgetItem, QVBoxLayout, QWidget, QLabel, QHBoxLayout
-elif importlib.util.find_spec("PyQt5") is not None:
-    from PyQt5.QtCore import Qt
-    from PyQt5.QtGui import QBrush, QColor
-    from PyQt5.QtWidgets import QCheckBox, QComboBox, QMessageBox, QPushButton, QPlainTextEdit, QTableWidgetItem, QVBoxLayout, QWidget, QLabel, QHBoxLayout
-else:
-    Qt = QBrush = QColor = QCheckBox = QComboBox = QMessageBox = QPushButton = QPlainTextEdit = QTableWidgetItem = QVBoxLayout = QWidget = QLabel = QHBoxLayout = object
+from studio.qt_compat import (
+    Qt,
+    QBrush, QColor,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
+    QMessageBox, QPushButton, QPlainTextEdit, QSpinBox, QTableWidget,
+    QTableWidgetItem, QVBoxLayout, QWidget, QLabel, QHBoxLayout,
+)
 
 from codegen import c_ident
 from codegen.graph import NODE_CONTRACTS, callback_signature
@@ -29,8 +26,24 @@ from studio.model import BOARD_PROFILES, GENERATED_APPLICATION_TREE, NODE_GENERA
 
 
 class PropertyMixin:
+    PROPERTY_SECTIONS = ("basic", "parameters", "contracts", "advanced")
+
     def property_choices(self, node: dict[str, Any], key: str) -> list[str]:
         return core_property_choices(self.graph, node, key, NODE_TEMPLATES)
+
+    def property_tables(self) -> list[Any]:
+        if hasattr(self, "property_tables_by_section"):
+            return [table for table in self.property_tables_by_section.values() if table is not None]
+        return [self.property_table] if hasattr(self, "property_table") else []
+
+    def clear_property_tables(self) -> None:
+        for table in self.property_tables():
+            table.setRowCount(0)
+
+    def property_section(self, node: dict[str, Any], key: str, role: str) -> str:
+        if key in {"display_name", "id", "description"}:
+            return "basic"
+        return "parameters"
 
     def property_widget_kind(self, node: dict[str, Any], key: str, value: Any, choices: list[str]) -> str:
         if choices:
@@ -49,8 +62,10 @@ class PropertyMixin:
 
     def property_contract_role(self, node: dict[str, Any], key: str) -> str:
         contract = NODE_CONTRACTS.get(str(node.get("type")), {})
-        if key in {"name", "display_name", "description"}:
+        if key in {"display_name", "description"}:
             return "显示"
+        if key == "name":
+            return "兼容"
         if key == "id":
             return "主键"
         if key in {"input_type", "output_type", "payload_type", "data_type", "output_desc"}:
@@ -82,24 +97,50 @@ class PropertyMixin:
         return None
 
     def populate_property_form(self, node: dict[str, Any]) -> None:
-        self.property_table.setRowCount(0)
-        ordered_keys = ["id", "type", "name", "description"]
-        ordered_keys.extend(key for key in PROPERTY_FIELD_ORDER.get(str(node.get("type")), []) if key not in ordered_keys)
-        ordered_keys.extend(key for key in node if key not in ordered_keys)
+        self.clear_property_tables()
+        node_type = str(node.get("type", ""))
+        
+        # Hide these fields - they are fixed or auto-generated
+        hidden_fields = {
+            "type", "schema_version", "kind",
+            # Type-related fields that are set at creation
+            "sensor_type", "actuator_type", "hal_type", "algo_type", "module_type",
+            "output_type", "input_type", "payload_type", "data_type",
+        }
+        
+        ordered_keys = ["display_name", "id", "description"]
+        # Add fields from PROPERTY_FIELD_ORDER, but skip hidden fields
+        for key in PROPERTY_FIELD_ORDER.get(node_type, []):
+            if key not in ordered_keys and key not in hidden_fields:
+                ordered_keys.append(key)
+        # Add remaining fields from node, but skip hidden fields
+        for key in node:
+            if key not in ordered_keys and key not in hidden_fields:
+                ordered_keys.append(key)
+        
         for key in ordered_keys:
+            if key == "name" and not self._uses_legacy_name_field(node_type):
+                continue
             value = node.get(key, "")
-            row = self.property_table.rowCount()
-            self.property_table.insertRow(row)
             choices = self.property_choices(node, str(key))
             kind = self.property_widget_kind(node, str(key), value, choices)
             issue = self.property_issue(node, str(key), value, choices)
             role = self.property_contract_role(node, str(key))
+            section = self.property_section(node, str(key), role)
+            table = getattr(self, "property_tables_by_section", {}).get(section)
+            if table is None:
+                fallback_tables = self.property_tables()
+                if not fallback_tables:
+                    continue
+                table = fallback_tables[0]
+            row = table.rowCount()
+            table.insertRow(row)
             key_item = QTableWidgetItem(str(key))
             if issue:
                 key_item.setBackground(QBrush(QColor("#5b1f24")))
                 key_item.setForeground(QBrush(QColor("#ffb3b3")))
                 key_item.setToolTip(issue)
-            self.property_table.setItem(row, 0, key_item)
+            table.setItem(row, 0, key_item)
             if choices:
                 combo = QComboBox()
                 combo.addItems([str(item) for item in choices])
@@ -108,37 +149,34 @@ class PropertyMixin:
                 combo.setCurrentText(str(value))
                 if issue:
                     combo.setToolTip(issue)
-                self.property_table.setCellWidget(row, 1, combo)
+                table.setCellWidget(row, 1, combo)
             elif kind == "布尔开关":
                 check = QCheckBox()
                 check.setChecked(bool(value) if not isinstance(value, str) else value.lower() in {"1", "true", "yes", "on"})
                 if issue:
                     check.setToolTip(issue)
-                self.property_table.setCellWidget(row, 1, check)
+                table.setCellWidget(row, 1, check)
             else:
                 item = QTableWidgetItem(form_value_text(value))
+                if key == "id":
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable if hasattr(Qt, "ItemFlag") else item.flags())
+                    item.setToolTip("id 由 display_name 自动生成，仅用于查看。")
                 if issue:
                     item.setBackground(QBrush(QColor("#5b1f24")))
                     item.setForeground(QBrush(QColor("#ffb3b3")))
                     item.setToolTip(issue)
                     if node.get("type") == "state.transition" and key == "condition" and not str(value).strip():
                         item.setText("<必填：条件函数名>")
-                self.property_table.setItem(row, 1, item)
-            type_item = QTableWidgetItem(kind)
+                table.setItem(row, 1, item)
+            
+            # Description column - show role or issue
+            desc = issue if issue else role
+            desc_item = QTableWidgetItem(desc)
             if issue:
-                type_item.setBackground(QBrush(QColor("#5b1f24")))
-                type_item.setForeground(QBrush(QColor("#ffb3b3")))
-                type_item.setToolTip(issue)
-            self.property_table.setItem(row, 2, type_item)
-            role_item = QTableWidgetItem(role)
-            role_item.setToolTip(self.property_role_tooltip(node, str(key), role))
-            if role in {"必填", "至少一项", "回调"}:
-                role_item.setForeground(QBrush(QColor("#ffecb3")))
-            elif role == "引用":
-                role_item.setForeground(QBrush(QColor("#b3e5fc")))
-            elif role in {"显示", "主键", "数据契约"}:
-                role_item.setForeground(QBrush(QColor("#c7d4e8")))
-            self.property_table.setItem(row, 3, role_item)
+                desc_item.setForeground(QBrush(QColor("#ffb3b3")))
+            elif role in {"必填", "回调"}:
+                desc_item.setForeground(QBrush(QColor("#ffecb3")))
+            table.setItem(row, 2, desc_item)
 
     def property_role_tooltip(self, node: dict[str, Any], key: str, role: str) -> str:
         contract = NODE_CONTRACTS.get(str(node.get("type")), {})
@@ -147,6 +185,10 @@ class PropertyMixin:
             return f"用户代码需要实现该回调，签名：{callback_signature(callbacks[key])}"
         if key == "id":
             return "卡片主键。用于连线、页面、归属和 codegen 引用；创建时自动分配，修改时必须保持唯一。"
+        if key == "event_trigger":
+            return "状态机事件触发器。必须写成 topic:<event.topic节点id> 或 event:<事件名>。topic: 前缀表示按 topic_id/payload 触发；event: 前缀表示按自定义事件名触发。"
+        if key == "interval_ms":
+            return "自动发布最小间隔（毫秒）。0 表示不额外节流；如果 payload 没变化，系统仍会自动跳过重复发布。"
         if role == "数据契约":
             return "Studio 层的数据说明，用来表达输入/输出/payload 是 float、int、struct、enum 或自定义类型。"
         if role == "必填":
@@ -168,17 +210,14 @@ class PropertyMixin:
         new_period = updated.get("period_ms")
         if old_period == new_period or new_period in (None, ""):
             return
-        old_id = str(old_node.get("id", "custom_task_10ms"))
         old_call = str(old_node.get("call", "app_custom_task_10ms"))
-        old_name = str(old_node.get("name", old_id))
+        old_display_name = str(old_node.get("display_name", old_node.get("id", "custom_task_10ms")))
         old_token = f"{old_period}ms"
         new_token = f"{new_period}ms"
-        if old_token in old_id:
-            updated["id"] = old_id.replace(old_token, new_token)
         if old_token in old_call:
             updated["call"] = old_call.replace(old_token, new_token)
-        if old_token in old_name:
-            updated["name"] = old_name.replace(old_token, new_token)
+        if old_token in old_display_name:
+            updated["display_name"] = old_display_name.replace(old_token, new_token)
 
     def apply_property_form(self) -> None:
         if not self.current_node_id:
@@ -188,26 +227,28 @@ class PropertyMixin:
             return
         old_id = str(node.get("id", self.current_node_id))
         updated: dict[str, Any] = {}
-        for row in range(self.property_table.rowCount()):
-            key_item = self.property_table.item(row, 0)
-            value_item = self.property_table.item(row, 1)
-            value_widget = self.property_table.cellWidget(row, 1)
-            if not key_item:
-                continue
-            key = key_item.text().strip()
-            if not key:
-                continue
-            if isinstance(value_widget, QComboBox):
-                value = parse_form_value(value_widget.currentText())
-            elif isinstance(value_widget, QCheckBox):
-                value = value_widget.isChecked()
-            else:
-                raw_value = value_item.text() if value_item else ""
-                if raw_value == "<必填：条件函数名>":
-                    raw_value = ""
-                value = parse_form_value(raw_value)
-            updated[key] = value
-        new_id = str(updated.get("id", old_id))
+        for table in self.property_tables():
+            for row in range(table.rowCount()):
+                key_item = table.item(row, 0)
+                value_item = table.item(row, 1)
+                value_widget = table.cellWidget(row, 1)
+                if not key_item:
+                    continue
+                key = key_item.text().strip()
+                if not key:
+                    continue
+                if isinstance(value_widget, QComboBox):
+                    value = parse_form_value(value_widget.currentText())
+                elif isinstance(value_widget, QCheckBox):
+                    value = value_widget.isChecked()
+                else:
+                    raw_value = value_item.text() if value_item else ""
+                    if raw_value == "<必填：条件函数名>":
+                        raw_value = ""
+                    value = parse_form_value(raw_value)
+                updated[key] = value
+        updated["id"] = old_id
+        new_id = old_id
         if new_id != c_ident(new_id):
             QMessageBox.warning(self, "ID 无效", "id 必须是合法 C 标识符：只能包含字母、数字、下划线，且不能以数字开头。")
             return

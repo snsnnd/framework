@@ -103,3 +103,24 @@ Studio 会帮你完成建模、校验和生成，但不会自动替你完成以�
 - 业务算法细节
 
 这些通常仍然由你在 `board_adapters` 或 `custom_files` 中补齐。
+
+## 通信与状态机现在能生成什么
+
+通信层现在不再只是关系说明：
+
+- `event.publisher` 会生成 `app_publish_xxx(...)` 包装函数
+- 如果 payload 类型明确，还会生成 `app_publish_xxx_typed(...)` 和标量版 `app_publish_xxx_value(...)`
+- `event.subscriber` 会生成 `efw_topic_subscribe(...)` 绑定
+
+状态机层现在也不再只是页面组织：
+
+- 会生成 `app_sm_xxx_tick()`
+- 会生成 `app_sm_xxx_dispatch_event(...)`
+- 会生成 `app_sm_xxx_transition_to(...)`
+- 会生成 `app_sm_xxx_current_state()`
+- 还会生成系统级 `app_dispatch_event(...)`、`app_poll_forever()`、`app_main()`
+
+其中 `state.transition.event_trigger` 现在必须写成明确格式：
+
+- `topic:<event.topic节点id>`
+- `event:<事件名>`

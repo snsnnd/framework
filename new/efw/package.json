@@ -1,0 +1,87 @@
+{
+  "name": "efw-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Local-first C application assembly workbench",
+  "author": "EFW",
+  "type": "module",
+  "main": "desktop/main.mjs",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "start": "electron .",
+    "test:backend": "uv run python -m unittest discover -s tests -p test_*.py",
+    "test:bridge": "node --test tests/bridge.test.mjs",
+    "test:e2e": "playwright test",
+    "package:backend": "uv run --group packaging python scripts/package_backend.py",
+    "package": "npm run build && npm run package:backend && electron-builder --dir",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@monaco-editor/react": "^4.7.0",
+    "@phosphor-icons/react": "^2.1.10",
+    "@radix-ui/react-dialog": "^1.1.15",
+    "@xyflow/react": "^12.8.0",
+    "monaco-editor": "^0.52.2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.56.0",
+    "@types/node": "^22.15.0",
+    "@types/react": "^19.1.0",
+    "@types/react-dom": "^19.1.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "electron": "^44.4.5",
+    "electron-builder": "^26.0.12",
+    "typescript": "~5.9.3",
+    "vite": "^7.3.0"
+  },
+  "build": {
+    "appId": "dev.efw.studio",
+    "productName": "EFW Studio",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "desktop/**",
+      "dist/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "backend-bin",
+        "to": "backend-bin"
+      },
+      {
+        "from": "runtime",
+        "to": "runtime"
+      },
+      {
+        "from": "examples",
+        "to": "examples",
+        "filter": [
+          "**/*",
+          "!**/generated/**",
+          "!**/.efw/generated.json",
+          "!**/.efw/backups/**"
+        ]
+      },
+      {
+        "from": "docs",
+        "to": "docs"
+      }
+    ],
+    "linux": {
+      "target": "dir",
+      "category": "Development"
+    },
+    "win": {
+      "target": "dir"
+    },
+    "mac": {
+      "target": "dir",
+      "category": "public.app-category.developer-tools"
+    }
+  }
+}

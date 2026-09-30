@@ -138,7 +138,7 @@ typedef struct {
     efw_status_t (*init)(void *ctx);            /**< 初始化回调 (可空) */
     efw_status_t (*enable)(void *ctx);          /**< 使能回调 (可空) */
     efw_status_t (*disable)(void *ctx);         /**< 禁用回调 (可空) */
-    efw_status_t (*write)(void *ctx, const void *cmd); /**< 写入指令回调 (必填) */
+    efw_status_t (*write)(void *ctx, const void *cmd, uint16_t cmd_size); /**< 写入指令回调 (必填, cmd_size=命令数据字节数) */
 } efw_actuator_ops_t;
 
 /* ====== 执行器注册表 API ====== */
@@ -147,12 +147,16 @@ efw_status_t efw_actuator_registry_init(void);
 efw_status_t efw_actuator_registry_init_pool(const efw_actuator_ops_t **pool, size_t capacity);
 efw_status_t efw_actuator_register(const efw_actuator_ops_t *ops);
 efw_status_t efw_actuator_get(const char *name, const efw_actuator_ops_t **out_ops);
+efw_status_t efw_actuator_unregister(const char *name);
+size_t efw_actuator_count(void);
+typedef void (*efw_actuator_enumerate_fn)(const efw_actuator_ops_t *ops, void *user);
+void efw_actuator_enumerate(efw_actuator_enumerate_fn fn, void *user);
 size_t efw_actuator_count_by_type(efw_actuator_type_t type);
 efw_status_t efw_actuator_bind_hal(const char *actuator_name, const efw_hal_ops_t **out_hal);
 efw_status_t efw_actuator_bind_comm(const char *actuator_name, const efw_comm_ops_t **out_comm);
 efw_status_t efw_actuator_init_device(const char *name);
 efw_status_t efw_actuator_enable(const char *name);
 efw_status_t efw_actuator_disable(const char *name);
-efw_status_t efw_actuator_write(const char *name, const void *cmd);
+efw_status_t efw_actuator_write(const char *name, const void *cmd, uint16_t cmd_size);
 
 #endif

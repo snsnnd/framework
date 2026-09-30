@@ -4,6 +4,22 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+try:
+    from ..utils import BUILTIN_CONTRACTS
+except ImportError:  # pragma: no cover - supports legacy top-level codegen imports
+    from codegen.utils import BUILTIN_CONTRACTS
+
+CONTRACT_DEFAULTS = BUILTIN_CONTRACTS
+
+PROCESSOR_INPUT_PORTS = {"sensor", "algorithm", "event", "module_input"}
+ALGORITHM_INPUT_PORTS = {"sensor", "processor", "event"}
+MODULE_INPUT_PORTS = {"module_input", "event"}
+MULTI_INPUT_PORTS = {
+    "processor.custom": PROCESSOR_INPUT_PORTS,
+    "algorithm.custom": ALGORITHM_INPUT_PORTS,
+    "module.custom": MODULE_INPUT_PORTS,
+}
+
 PORT_RULES = {
     # Module/System layer: only public module interfaces and event relationships.
     "project.module": {"in": ["module_input"], "out": ["module_output"]},
@@ -18,7 +34,7 @@ PORT_RULES = {
     "sensor.custom": {"in": ["hal"], "out": ["sensor", "event_source"]},
     "processor.custom": {"in": ["sensor", "algorithm", "event", "module_input"], "out": ["processor", "algorithm", "control", "module_output", "event_source"]},
     "algorithm.pid": {"in": ["sensor", "processor"], "out": ["algorithm"]},
-    "algorithm.custom": {"in": ["sensor", "processor"], "out": ["algorithm"]},
+    "algorithm.custom": {"in": ["sensor", "processor", "event"], "out": ["algorithm"]},
     "actuator.motor": {"in": ["control", "motor_pair"], "out": ["motor_pair"]},
     "actuator.custom": {"in": ["hal", "control"]},
     "module.custom": {"in": ["module_input", "event", "schedule"], "out": ["module", "module_output", "event_source"]},
@@ -29,6 +45,7 @@ PORT_RULES = {
     "data.enum": {"out": ["code"]},
     "data.struct": {"out": ["code"]},
     "custom.code": {"out": ["code"]},
+    "custom.interface_card": {"in": ["any"]},
 }
 
 PORT_COLORS = {
@@ -71,6 +88,7 @@ PORT_LABELS = {
     "transition_from": "状态转出",
     "transition_to": "状态转入",
     "code": "代码实现",
+    "any": "任意输入",
 }
 
 PORT_DESCRIPTIONS = {
@@ -89,6 +107,7 @@ PORT_DESCRIPTIONS = {
     "transition_to": "状态转换终点，只能从 Transition 连接到 State。",
     "schedule": "调度线只表示 Task 周期调度哪个模块、flow 或用户回调。",
     "code": "自定义代码实现关系，回调名称仍在属性中声明。",
+    "any": "接口摘要卡片的通用输入端口，可接收任意上游输出用于展示接口信息。",
 }
 
 
@@ -106,8 +125,86 @@ def _c_ident_fallback(value: Any) -> str:
     return joined
 
 
+def _node_by_id(graph: dict[str, Any] | None, node_id: Any) -> dict[str, Any] | None:
+    if not isinstance(graph, dict):
+        return None
+    for node in graph.get("nodes", []):
+        if isinstance(node, dict) and str(node.get("id", "")) == str(node_id or ""):
+            return node
+    return None
+
+
+def _first_module_contract(node: dict[str, Any], field: str) -> str:
+    values = node.get(field, [])
+    if isinstance(values, list) and len(values) == 1 and values[0]:
+        return str(values[0])
+    return "custom"
+
+
+def _topic_payload_contract(graph: dict[str, Any] | None, topic_id: Any) -> str:
+    topic = _node_by_id(graph, topic_id)
+    if topic and topic.get("type") == "event.topic":
+        return str(topic.get("payload_type") or "custom")
+    return "custom"
+
+
+def _with_contract_defaults(contract: str, c_type: Any = None, size: Any = None, align: Any = None) -> dict[str, Any]:
+    defaults = CONTRACT_DEFAULTS.get(str(contract), {})
+    return {
+        "contract": str(contract or "custom"),
+        "type": str(c_type or defaults.get("type") or contract or "custom"),
+        "size": defaults.get("size") if size in (None, "") else size,
+        "align": defaults.get("align") if align in (None, "") else align,
+    }
+
+
+def _output_contract_spec(node: dict[str, Any], graph: dict[str, Any] | None = None) -> dict[str, Any]:
+    node_type = str(node.get("type", ""))
+    if node_type == "sensor.line_tracking":
+        contract = str(node.get("output_contract") or "efw_line_tracking_data_t")
+        return _with_contract_defaults(contract)
+    if node_type == "algorithm.pid":
+        return _with_contract_defaults("efw_pid_output_t")
+    if node_type == "event.subscriber":
+        contract = _topic_payload_contract(graph, node.get("topic"))
+        return _with_contract_defaults(contract)
+    if node_type == "project.module":
+        contract = _first_module_contract(node, "outputs")
+        return _with_contract_defaults(contract)
+    contract = str(node.get("output_contract") or node.get("output_type") or node.get("payload_type") or "custom")
+    return _with_contract_defaults(contract, node.get("output_type") or node.get("payload_type"), node.get("output_size"), node.get("output_align"))
+
+
+def _set_multi_input_spec(node: dict[str, Any], port: str, spec: dict[str, Any], overwrite: bool) -> None:
+    node_type = str(node.get("type", ""))
+    if port not in MULTI_INPUT_PORTS.get(node_type, set()):
+        return
+    input_ports = node.setdefault("input_ports", {})
+    if not isinstance(input_ports, dict):
+        return
+    port_spec = input_ports.setdefault(port, {})
+    if not isinstance(port_spec, dict):
+        port_spec = {}
+        input_ports[port] = port_spec
+    for src_key, dst_key in [("contract", "contract"), ("type", "type"), ("size", "size"), ("align", "align")]:
+        value = spec.get(src_key)
+        if overwrite or port_spec.get(dst_key) in (None, "", []):
+            port_spec[dst_key] = value
+    primary_port = str(node.get("primary_input_port") or "")
+    if not primary_port:
+        node["primary_input_port"] = port
+        primary_port = port
+    if port == primary_port:
+        for src_key, dst_key in [("contract", "input_contract"), ("type", "input_type"), ("size", "input_size"), ("align", "input_align")]:
+            value = spec.get(src_key)
+            if overwrite or node.get(dst_key) in (None, "", []):
+                node[dst_key] = value
+
+
 def can_connect_ports(src: dict[str, Any], dst: dict[str, Any], from_port: str | None = None, to_port: str | None = None) -> bool:
     """Return whether a visual port connection has a known graph semantic."""
+    if dst.get("type") == "custom.interface_card" and to_port == "any":
+        return True
     if from_port and to_port:
         compatible = {
             ("hal", "hal"),
@@ -130,6 +227,8 @@ def can_connect_ports(src: dict[str, Any], dst: dict[str, Any], from_port: str |
             ("event_source", "event_source"),
             ("event", "event"),
             ("event", "processor"),
+            ("event", "event"),
+            ("event", "algorithm"),
             ("state_machine", "state_machine"),
             ("state_machine", "transition_from"),
             ("transition_from", "transition_from"),
@@ -156,20 +255,21 @@ def pair_has_semantics(src: dict[str, Any], dst: dict[str, Any]) -> bool:
         or (src_type == "project.module" and dst_type == "project.module")
         or (src_type == "event.topic" and dst_type in {"event.publisher", "event.subscriber"})
         or (src_type in {"module.custom", "sensor.custom", "sensor.line_tracking", "processor.custom"} and dst_type == "event.publisher")
-        or (src_type == "event.subscriber" and dst_type in {"module.custom", "processor.custom"})
+        or (src_type == "event.subscriber" and dst_type in {"module.custom", "processor.custom", "algorithm.custom"})
         or (src_type == "state.machine" and dst_type in {"state.state", "state.transition"})
         or (src_type == "state.state" and dst_type == "state.transition")
         or (src_type == "state.transition" and dst_type == "state.state")
         or (src_type in {"sensor.custom", "sensor.line_tracking", "algorithm.pid", "algorithm.custom", "project.module", "event.subscriber"} and dst_type == "processor.custom")
-        or (src_type == "processor.custom" and dst_type in {"algorithm.pid", "algorithm.custom", "actuator.motor", "actuator.custom", "project.module", "event.publisher"})
+        or (src_type == "processor.custom" and dst_type in {"algorithm.pid", "algorithm.custom", "actuator.motor", "actuator.custom", "module.custom", "project.module", "event.publisher"})
         or (src_type == "task.periodic" and dst_type == "module.custom")
         or (src_type == "sensor.line_tracking" and dst_type in {"algorithm.pid", "algorithm.custom"})
         or (src_type == "actuator.motor" and dst_type == "actuator.motor")
         or (src_type == "custom.code" and dst_type in {"sensor.custom", "processor.custom", "algorithm.custom", "module.custom", "actuator.custom", "hal.custom", "task.periodic"})
+        or (dst_type == "custom.interface_card")
     )
 
 
-def apply_pair_semantics(src: dict[str, Any], dst: dict[str, Any], graph: dict[str, Any] | None = None, c_ident_func: Callable[[Any], str] | None = None, overwrite: bool = True) -> bool:
+def apply_pair_semantics(src: dict[str, Any], dst: dict[str, Any], graph: dict[str, Any] | None = None, c_ident_func: Callable[[Any], str] | None = None, overwrite: bool = True, from_port: str | None = None, to_port: str | None = None) -> bool:
     """Apply the same semantic edge rules used by both UI and codegen."""
     c_ident = c_ident_func or _c_ident_fallback
 
@@ -195,8 +295,10 @@ def apply_pair_semantics(src: dict[str, Any], dst: dict[str, Any], graph: dict[s
     if src_type in {"module.custom", "sensor.custom", "sensor.line_tracking", "processor.custom"} and dst_type == "event.publisher":
         set_field(dst, "source", src.get("id"))
         return True
-    if src_type == "event.subscriber" and dst_type in {"module.custom", "processor.custom"}:
+    if src_type == "event.subscriber" and dst_type in {"module.custom", "processor.custom", "algorithm.custom"}:
         set_field(src, "target", dst.get("id"))
+        if to_port:
+            _set_multi_input_spec(dst, str(to_port), _output_contract_spec(src, graph), overwrite)
         return True
     if src_type == "state.machine" and dst_type in {"state.state", "state.transition"}:
         set_field(dst, "machine", src.get("id"))
@@ -209,8 +311,13 @@ def apply_pair_semantics(src: dict[str, Any], dst: dict[str, Any], graph: dict[s
         set_field(src, "to", dst.get("id"))
         set_field(src, "machine", dst.get("machine") or src.get("machine"))
         return True
-    if src_type in {"sensor.custom", "sensor.line_tracking", "algorithm.pid", "algorithm.custom", "project.module", "event.subscriber"} and dst_type == "processor.custom":
-        set_field(dst, "input_contract", src.get("output_type") or src.get("payload_type") or "custom")
+    if src_type in {"sensor.custom", "sensor.line_tracking", "algorithm.pid", "algorithm.custom", "project.module", "event.subscriber"} and dst_type in {"processor.custom", "algorithm.custom"}:
+        port = str(to_port or "")
+        spec = _output_contract_spec(src, graph)
+        if port:
+            _set_multi_input_spec(dst, port, spec, overwrite)
+        elif overwrite or dst.get("input_contract") in (None, "", []):
+            set_field(dst, "input_contract", spec.get("contract") or "custom")
         return True
     if src_type == "processor.custom" and dst_type in {"algorithm.pid", "algorithm.custom", "actuator.motor", "actuator.custom", "project.module", "event.publisher"}:
         if dst_type == "project.module":
@@ -221,7 +328,10 @@ def apply_pair_semantics(src: dict[str, Any], dst: dict[str, Any], graph: dict[s
         elif dst_type == "event.publisher":
             set_field(dst, "source", src.get("id"))
         elif dst_type == "algorithm.custom":
-            set_field(dst, "input_type", src.get("output_contract") or src.get("output_type") or "custom")
+            _set_multi_input_spec(dst, str(to_port or "processor"), _output_contract_spec(src, graph), overwrite)
+        return True
+    if src_type == "processor.custom" and dst_type == "module.custom":
+        _set_multi_input_spec(dst, str(to_port or "module_input"), _output_contract_spec(src, graph), overwrite)
         return True
     if src_type == "task.periodic" and dst_type == "module.custom":
         set_field(src, "call", dst.get("poll"))
@@ -256,6 +366,8 @@ def apply_pair_semantics(src: dict[str, Any], dst: dict[str, Any], graph: dict[s
             set_field(existing, "right_motor", dst.get("id"))
         return True
     if src_type == "custom.code" and dst_type in {"sensor.custom", "processor.custom", "algorithm.custom", "module.custom", "actuator.custom", "hal.custom", "task.periodic"}:
+        return True
+    if dst_type == "custom.interface_card":
         return True
     return False
 

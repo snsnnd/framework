@@ -1,0 +1,18 @@
+{
+  "name": "Nucleo F103RB",
+  "mcu": "STM32F103R(8-B)Tx",
+  "description": "Nucleo F103RB (STM32F103RBT6)",
+  "clock": {
+    "sysclk_mhz": 72,
+    "hclk_mhz": 72,
+    "pclk1_mhz": 18,
+    "pclk2_mhz": 36
+  },
+  "pins": {
+    "led": {},
+    "button": {},
+    "uart_debug": {},
+    "i2c_sensor": {},
+    "spi_display": {}
+  }
+}

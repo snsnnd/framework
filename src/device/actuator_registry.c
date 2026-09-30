@@ -32,20 +32,15 @@
 #include <string.h>
 #include "efw/core/config.h"
 #include "efw/core/diagnostic.h"
+#include "efw/core/registry.h"
 #include "efw/device/actuator.h"
 
-#if EFW_ENABLE_ACTUATOR  /**< 编译开关 */
+#if EFW_ENABLE_ACTUATOR
 
 static const efw_actuator_ops_t *g_actuator_default_pool[EFW_MAX_ACTUATORS];
 static const efw_actuator_ops_t **g_actuators = g_actuator_default_pool;
 static size_t g_actuator_cap = EFW_MAX_ACTUATORS;
 static size_t g_actuator_n;
-
-static int same_name(const char *a, const char *b) {
-    return a && b && strcmp(a, b) == 0;
-}
-
-/* ====== 初始化 + 注册 ====== */
 
 efw_status_t efw_actuator_registry_init(void) { g_actuators = g_actuator_default_pool; g_actuator_cap = EFW_MAX_ACTUATORS; g_actuator_n = 0; return EFW_OK; }
 efw_status_t efw_actuator_registry_init_pool(const efw_actuator_ops_t **pool, size_t capacity) {
@@ -55,8 +50,6 @@ efw_status_t efw_actuator_registry_init_pool(const efw_actuator_ops_t **pool, si
 
 efw_status_t efw_actuator_register(const efw_actuator_ops_t *ops) {
     if (!ops || !ops->name || !ops->write) { efw_diag_set(EFW_ERR_INVALID, "actuator", 0, "invalid ops"); return EFW_ERR_INVALID; }
-
-    /* HAL 绑定校验 */
     if (ops->hal_name) {
 #if EFW_ENABLE_HAL
         const efw_hal_ops_t *hal;
@@ -66,8 +59,6 @@ efw_status_t efw_actuator_register(const efw_actuator_ops_t *ops) {
         return EFW_ERR_INVALID;
 #endif
     }
-
-    /* COMM 绑定校验 */
     if (ops->comm_name) {
 #if EFW_ENABLE_COMM
         const efw_comm_ops_t *comm;
@@ -77,32 +68,48 @@ efw_status_t efw_actuator_register(const efw_actuator_ops_t *ops) {
         return EFW_ERR_INVALID;
 #endif
     }
-
     for (size_t i = 0; i < g_actuator_n; ++i)
-        if (same_name(g_actuators[i]->name, ops->name))
+        if (efw_name_eq(g_actuators[i]->name, ops->name))
             { efw_diag_set(EFW_ERR_ALREADY_EXISTS, "actuator", ops->name, "duplicate name"); return EFW_ERR_ALREADY_EXISTS; }
     if (g_actuator_n >= g_actuator_cap) { efw_diag_set(EFW_ERR_FULL, "actuator", ops->name, "pool full"); return EFW_ERR_FULL; }
-    g_actuators[g_actuator_n++] = ops;                           /* 存入 */
+    g_actuators[g_actuator_n++] = ops;
     return EFW_OK;
 }
-
-/* ====== 查找 + 统计 ====== */
 
 efw_status_t efw_actuator_get(const char *name, const efw_actuator_ops_t **out_ops) {
     if (!name || !out_ops) return EFW_ERR_INVALID;
     for (size_t i = 0; i < g_actuator_n; ++i)
-        if (same_name(g_actuators[i]->name, name)) {
+        if (efw_name_eq(g_actuators[i]->name, name)) {
             *out_ops = g_actuators[i];
             return EFW_OK;
         }
     return EFW_ERR_NOT_FOUND;
 }
 
+efw_status_t efw_actuator_unregister(const char *name) {
+    for (size_t i = 0; i < g_actuator_n; ++i) {
+        if (efw_name_eq(g_actuators[i]->name, name)) {
+            g_actuators[i] = g_actuators[--g_actuator_n];
+            return EFW_OK;
+        }
+    }
+    return EFW_ERR_NOT_FOUND;
+}
+
+size_t efw_actuator_count(void) { return g_actuator_n; }
+
 size_t efw_actuator_count_by_type(efw_actuator_type_t type) {
     size_t n = 0;
     for (size_t i = 0; i < g_actuator_n; ++i)
         if (g_actuators[i]->type == type) ++n;
     return n;
+}
+
+void efw_actuator_enumerate(efw_actuator_enumerate_fn fn, void *user) {
+    if (!fn) return;
+    for (size_t i = 0; i < g_actuator_n; ++i) {
+        fn(g_actuators[i], user);
+    }
 }
 
 /* ====== IO 绑定查询 ====== */
@@ -160,12 +167,12 @@ efw_status_t efw_actuator_disable(const char *name) {  /* disable 可空 */
  * @brief 写入执行器控制指令 ★ 最常用 API
  * cmd 指向控制结构体 (efw_actuator_cmd_t / efw_motor_cmd_t / 自定义)
  */
-efw_status_t efw_actuator_write(const char *name, const void *cmd) {
+efw_status_t efw_actuator_write(const char *name, const void *cmd, uint16_t cmd_size) {
     const efw_actuator_ops_t *ops;
     efw_status_t s = efw_actuator_get(name, &ops);
     if (s != EFW_OK) return s;
     if (!cmd) return EFW_ERR_INVALID;       /* cmd 不能为空——必须指定控制值 */
-    return ops->write(ops->ctx, cmd);
+    return ops->write(ops->ctx, cmd, cmd_size);
 }
 
 #endif /* EFW_ENABLE_ACTUATOR */

@@ -1,0 +1,14 @@
+[project]
+name = "efw-studio-core"
+version = "0.1.0"
+description = "EFW local project service and C application generator"
+requires-python = ">=3.10"
+dependencies = [
+    "pyserial>=3.5",
+]
+
+[dependency-groups]
+packaging = ["pyinstaller>=6.12,<7"]
+
+[tool.uv]
+package = false

@@ -63,6 +63,7 @@ typedef enum {
 typedef struct {
     const char *name;       /**< 全局唯一名称 */
     efw_module_type_t type; /**< 模块类型 */
+    uint8_t priority;       /**< 轮询优先级 (0=最高, 255=最低, 默认0) */
     void *ctx;              /**< 用户私有上下文 */
     efw_status_t (*init)(void *ctx);   /**< 初始化回调 (可空) */
     efw_status_t (*start)(void *ctx);  /**< 启动回调 (可空) */
@@ -76,6 +77,10 @@ efw_status_t efw_module_registry_init(void);
 efw_status_t efw_module_registry_init_pool(const efw_module_ops_t **pool, size_t capacity);
 efw_status_t efw_module_register(const efw_module_ops_t *ops);
 efw_status_t efw_module_get(const char *name, const efw_module_ops_t **out_ops);
+efw_status_t efw_module_unregister(const char *name);
+size_t efw_module_count(void);
+typedef void (*efw_module_enumerate_fn)(const efw_module_ops_t *ops, void *user);
+void efw_module_enumerate(efw_module_enumerate_fn fn, void *user);
 
 /* 单模块操作：按名称操作指定模块 */
 efw_status_t efw_module_init(const char *name);

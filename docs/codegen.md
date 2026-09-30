@@ -2,7 +2,7 @@
 
 `tools/efw.py codegen` 是可视化蓝图系统的代码生成入口：它把 Graph JSON 生成可复制到真实工程的 `application/` 目录。`tools/efw.py studio` 是唯一推荐 GUI 入口：它把项目管理、蓝图编辑、实时校验、属性面板、Code 标签页和一键生成集中在同一个 PyQt 工作台里。
 
-当前生成契约已固化到 `tools/codegen/graph/schema.py` 聚合入口，通用契约位于 `tools/codegen/graph/common.py`，具体节点契约位于 `tools/codegen/graph/node_contracts.py`，包括支持的节点类型、生成等级、回调签名、edge kind 和生成文件清单。Graph 校验逻辑位于 `tools/codegen/validate.py`，渲染/预览/写文件 API 位于 `tools/codegen/generator.py`，CLI 参数入口位于 `tools/codegen/cli.py`。详细边界见 `docs/graph_contract.md`。
+当前生成契约已固化到 `tools/codegen/graph/schema.py` 聚合入口，通用契约位于 `tools/codegen/graph/common.py`，具体节点契约位于 `tools/codegen/graph/node_contracts.py`，包括支持的节点类型、生成等级、回调签名、edge kind 和生成文件清单。Graph 校验逻辑位于 `tools/codegen/validate.py`，渲染/预览/写文件 API 位于 `tools/codegen/generator.py`，CLI 参数入口位于 `tools/codegen/cli.py`。手写 Graph JSON 的用户格式协议见 `docs/graph_json_format.md`，开发者级生成边界见 `docs/graph_contract.md`。
 
 当前版本定位为 **通用嵌入式 application 生成器**，循迹车只是一个内置 flow 示例。生成器现在支持：
 
@@ -78,7 +78,7 @@ examples/projects/generic_embedded_app.efw_project.json
 
 ## Graph JSON 结构
 
-示例文件在 `examples/graphs/generic_embedded_app.json`、`examples/graphs/line_tracking_car.json` 和 `examples/graphs/line_tracking_car_with_custom_code.json`。顶层包含：
+标准格式协议见 `docs/graph_json_format.md`。示例文件在 `examples/graphs/generic_embedded_app.json`、`examples/graphs/line_tracking_car.json` 和 `examples/graphs/line_tracking_car_with_custom_code.json`。顶层包含：
 
 - `project`：项目名和周期等元数据；`tick_ms` 是调度基准。
 - `nodes`：蓝图节点列表，`id` 必须唯一。
@@ -133,6 +133,8 @@ Sensor → algorithm.* → actuator.*
 - 每个参与自动 dataflow 的 contract 必须有 `size`；可在 `contracts[]`、processor `input_size/output_size` 或内置 contract 表中提供。内置表包含 `efw_line_tracking_data_t`、`efw_pid_input_t`、`efw_pid_output_t`、`efw_motor_cmd_t` 和常见标量类型；`sensor.line_tracking` 默认输出 `efw_line_tracking_data_t`。
 - 内置 contract 的 `size/align` 是 codegen 元数据，必须和 EFW C 头文件中的真实 `sizeof()` 同步维护。生成器会在 `app_bootstrap.c` 写入 `typedef char app_contract_size_check_*[(sizeof(type) == size) ? 1 : -1];`，让 C 编译阶段暴露 ABI/布局不一致；仓库中的 `efw_contract_sizes` 主机侧测试也会直接校验内置 contract 的 `sizeof`/对齐；长期应由头文件 metadata 或提取脚本自动生成这些 size。
 - `APP_DATAFLOW_BUFFER_SIZE` 会取 `project.dataflow_buffer_size`、默认 64 和 contract 最大 size 的最大值。
+
+当前自动 dataflow 仍以智能车示例为主：`algorithm.pid` 和 `actuator.motor` 的执行 glue 仍绑定到内置 C 类型与写入策略。它不是完全通用的 contract-to-C-type 生成器。要把它提升为通用框架，需要把每个节点的输入/输出 contract、C 类型、转换函数和执行模板都放入契约表，由生成器按 contract metadata 选择模板，而不是在生成路径中硬编码 PID/Motor 类型。
 - 如果某个 sensor/pid/motor 已经属于 `control.line_follower` flow，默认不会再生成普通 dataflow；除非显式设置 `project.auto_dataflow_include_line_follower=true`。
 
 链路周期取路径中节点 `period_ms` 的最大值，且仍必须是 `project.tick_ms` 的整数倍。与此不同，`processor.custom → project.module`、`project.module → processor.custom`、`event.subscriber → processor.custom`、`processor.custom → event.publisher` 这类连接主要是接口/事件语义：Studio tooltip 会说明“声明模块输入”“事件进入处理器”“发布意图”等效果，不会伪装成模块调用。
@@ -329,7 +331,7 @@ efw_ringbuf_push(&rx_rb, byte);
 - `state.machine`、`state.state`、`state.transition` 已从占位升级为生成轻量状态机 glue：生成状态注册、当前状态索引、`on_enter/on_update/on_exit` 调用以及带 `condition` 的转换判断。
 - 低代码式逻辑卡片已从 Studio 主模型移除；数据格式不匹配改由 `processor.custom` 显式表达 `input_contract → process() → output_contract`。
 - `project.module` 仍然是项目结构分组，但在可视化编辑器中可双击进入子模块页面，根视图/模块视图之间可以切换。
-- Board Profile 数据库位于 `examples/board_profiles/board_profiles.json`，当前内置 `generic-mock`、`stm32-basic`、`esp32-basic`，Pin Planner 会基于 profile 生成默认资源规划草稿并检查冲突。
+- Board Profile 数据库优先来自 `data/board_profiles/` 和 MCU 数据；`generic-mock` 仅作为兼容/Host 演示 profile，真实项目应选择具体板卡或 MCU profile。Pin Planner 会基于 profile 生成默认资源规划草稿并检查冲突。
 - 端口连线现在会先调用统一连接语义，只有合法连接才写入 `graph.edges`；无效连接会高亮并提示。
 - 生成前会展示 create/overwrite/same/preserve 摘要；`--force` 和 UI 覆盖只覆盖生成目标文件，不再清空整个输出目录，因此额外用户文件会保留。
 

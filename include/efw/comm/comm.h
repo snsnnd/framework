@@ -81,6 +81,7 @@ typedef struct {
 /* ====== COMM 注册表 API ====== */
 
 efw_status_t efw_comm_registry_init(void);
+efw_status_t efw_comm_registry_init_pool(const efw_comm_ops_t **pool, size_t capacity);
 efw_status_t efw_comm_register(const efw_comm_ops_t *ops);
 efw_status_t efw_comm_get(const char *name, const efw_comm_ops_t **out_ops);
 size_t efw_comm_count_by_type(efw_comm_type_t type);
