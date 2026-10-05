@@ -22,6 +22,9 @@
 #if EFW_ENABLE_SCHEDULER
 #include "efw/core/scheduler.h"
 #endif
+#if EFW_ENABLE_MSGQ
+#include "efw/core/msgq.h"
+#endif
 
 #if EFW_ENABLE_DEBUG
 #include "efw/debug/efw_debug.h"

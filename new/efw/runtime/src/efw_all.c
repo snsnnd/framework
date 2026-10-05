@@ -23,6 +23,10 @@
 #include "core/scheduler.c"
 #endif
 
+#if EFW_ENABLE_MSGQ
+#include "core/msgq.c"
+#endif
+
 #if EFW_ENABLE_HAL
 #define same_name efw_hal_same_name
 #include "hal/hal_registry.c"

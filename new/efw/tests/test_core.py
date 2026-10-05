@@ -291,6 +291,44 @@ def run_virtual(path, ms, before=(), snap_only=True):
 
 
 @unittest.skipUnless(shutil.which("cc") or shutil.which("gcc"), "需要 C 编译器")
+@unittest.skipUnless(shutil.which("cc") or shutil.which("gcc"), "需要 C 编译器")
+class RuntimeContractTests(Base):
+    """runtime/ 自带契约：聚合头与单编译单元入口必须始终自洽。"""
+
+    def test_aggregate_header_exposes_the_message_queue(self):
+        rt = runtime_dir()
+        prog = self.dir / "main.c"
+        prog.write_text(
+            "#include \"efw/efw.h\"\n"
+            "typedef struct { int v; } item_t;\n"
+            "static efw_msgq_t q;\n"
+            "static item_t pool[4];\n"
+            "int main(void) {\n"
+            "    item_t it = { .v = 7 }, out;\n"
+            "    if (efw_msgq_init(&q, pool, sizeof(item_t), 4, EFW_MSGQ_DROP_OLDEST) != EFW_OK) return 1;\n"
+            "    if (efw_msgq_push(&q, &it) != EFW_OK) return 2;\n"
+            "    if (efw_msgq_count(&q) != 1) return 3;\n"
+            "    if (efw_msgq_pop(&q, &out) != EFW_OK || out.v != 7) return 4;\n"
+            "    return 0;\n"
+            "}\n"
+        )
+        exe = self.dir / "mq"
+        done = subprocess.run([find_cc(), "-std=c99", "-Wall", "-Wextra", "-Werror", f"-I{rt / 'include'}",
+                               str(prog), str(rt / "src" / "core" / "msgq.c"), "-o", str(exe)],
+                              capture_output=True, text=True, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr[-2000:])
+        self.assertEqual(subprocess.run([str(exe)], timeout=30).returncode, 0)
+
+    def test_single_translation_unit_entry_compiles(self):
+        # Keil 用户只加 efw_all.c；消息队列没有开关时也要能编过（无 static 符号冲突）
+        rt = runtime_dir()
+        done = subprocess.run([find_cc(), "-std=c99", "-Wall", "-Wextra", "-Werror", f"-I{rt / 'include'}",
+                               "-c", str(rt / "src" / "efw_all.c"), "-o", str(self.dir / "all.o")],
+                              capture_output=True, text=True, timeout=300)
+        self.assertEqual(done.returncode, 0, done.stderr[-3000:])
+        self.assertTrue((self.dir / "all.o").exists())
+
+
 class BehaviourTests(Base):
     def test_thermostat_closes_the_loop_then_trips_and_recovers(self):
         path = make_project(self.dir, "thermostat")

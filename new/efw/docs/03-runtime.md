@@ -64,6 +64,10 @@ efw_status_t count_fault(void) {
 
 `build_virtual` 把生成文件与可执行文件放在 `.efw/build/<key>/`，`key = 模型哈希 + 全部用户源码摘要`。因此：只改 `src/`/`board/` 或 `efw.json` 会得到新 key；**修改 `codegen.py` 不会让旧缓存失效**，开发调试生成器时要手工删除 `.efw/build/`。最多保留最近 7 份缓存。
 
+## 单编译单元（Keil 等）
+
+不方便维护源文件列表的工程只把 `runtime/src/efw_all.c` 加进编译单元，其余 `.c` 用 `#if EFW_ENABLE_*` 裁剪。消息队列也已纳入聚合：`efw.h` 包含 `efw/core/msgq.h`，`efw_all.c` 包含 `efw/core/msgq.c`，开关是 `EFW_ENABLE_MSGQ`（默认 1）。`msgq.c` 没有 `static` 符号，因此与其他模块放进同一编译单元不会冲突。
+
 ## 真机链路（串口 / TCP）
 
 主机侧用 `SerialTransport`（pyserial，设备 + 波特率）与 `TcpTransport`（主机 + 端口），两者都是 `recv` + 超时循环 + 自行拼行：不要用 `socket.makefile()`，它的 `close()` 会等读到 EOF，而固件不会主动发 EOF，会让“停止调试”永久卡住。目标侧是 `board/observe_port.c`（已带 `EFW USER` 标记），用同一套文本命令协议。主机不接管真机的节拍，因此播放/暂停/单步只对虚拟目标可用。

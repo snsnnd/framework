@@ -130,6 +130,10 @@
 #define EFW_ENABLE_SCHEDULER 1
 #endif
 
+#ifndef EFW_ENABLE_MSGQ
+#define EFW_ENABLE_MSGQ 1           /**< 静态消息队列 (无 malloc, 单生产者单消费者) */
+#endif
+
 #ifndef EFW_ENABLE_DEBUG
 #define EFW_ENABLE_DEBUG 0
 #endif

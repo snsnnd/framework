@@ -11,7 +11,7 @@
 ## 1. 给下个 agent 的最重要八条
 
 1. 端到端可用：`studio_core/` + `ui/` 七个导航页面（总览 / 数据流 / 状态机 / 通信 / 代码 / 调试 / 生成）全部实现；风格规范 `docs/05-ui-style.md`。**下一步主线是“页面内模型编辑”**（见第 7 节），即把浏览页（数据流 / 状态机 / 通信）变成结构化编辑器。
-2. 测试：`32` 个后端测试、`27` 条浏览器回归、`2` 条壳协议测试，全绿。任何改动后按第 8 节跑全套。
+2. 测试：`34` 个后端测试、`27` 条浏览器回归、`2` 条壳协议测试，全绿。任何改动后按第 8 节跑全套。
 3. 只用 `uv` 管理 Python：`uv sync`、`uv run python ...`。唯一第三方依赖是 `pyserial`（真机串口）。
 4. 模型 id 必须匹配 `^[a-z][a-z0-9_]{0,23}$`；中文只出现在 `label` 里。生成的 C 标识符由 id 直接决定，创建后不可改。
 5. 生成器输出只写 `generated/`；`src/`、`board/` 永远由用户拥有。已有“预览 → token → 提交”与手改冲突保护，不要绕过。
@@ -40,6 +40,7 @@
 | 虚拟目标构建缓存 | `debug.build_virtual`（`.efw/build/<key>/`） | 键 = 模型哈希 + 用户源码摘要；改 codegen 后手工删缓存 |
 | JSON Lines 服务 + CLI | `server.py`、`cli.py` | `ServiceTests` 通过 |
 | C 运行库契约 | `tests/msgq_contract.c`、`tests/scheduler_contract.c` | 编译运行通过（cc -std=c99 -Wall -Wextra） |
+| 聚合头与单编译单元（`efw.h` / `efw_all.c`，Keil 用户只加一个 .c） | `runtime/include/efw/efw.h`、`runtime/src/efw_all.c` | `RuntimeContractTests`：聚合头能用消息队列、`efw_all.c` 在 `-Werror` 下编过 |
 | React UI + 开发桥 | `ui/`、`tools/bridge.mjs` | 27 条 Playwright 回归；Monaco/worker 本地打包、无 CDN |
 | Electron 壳 | `desktop/main.mjs`、`desktop/preload.cjs` | `tests/bridge.test.mjs`（协议行解析 + 真实服务往返）、`tests/ui/shell.spec.ts`（渲染层切 IPC）；**本机无显示器，GUI 未做端到端验证** |
 
@@ -53,7 +54,7 @@ new/efw/
   docs/04-debug-and-api.md  调试帧协议、服务方法表、各界面已实现的行为
   docs/05-ui-style.md       界面风格、token、每页交互约定、代码组织
   runtime/                  EFW C 框架副本（唯一沿用旧代码的部分）
-    include/efw/core/msgq.h 静态消息队列（容量/丢包统计/ISR 钩子）
+    include/efw/core/msgq.h 静态消息队列（容量/丢包统计/ISR 钩子）；efw.h 已聚合，开关 EFW_ENABLE_MSGQ
     src/core/msgq.c
     src/core/scheduler.c    tick 参数=绝对毫秒
     include/efw/core/common.h 已补 <stdbool.h>
@@ -84,7 +85,7 @@ new/efw/
   scripts/package_backend.py  PyInstaller 打后端（backend-bin/，已被 .gitignore 忽略）
   tools/bridge.mjs          开发期 RPC/SSE 桥（Vite 中间件）
   tests/bridge.test.mjs     壳协议测试（node --test，package.json 的 test:bridge）
-  tests/test_core.py         32 个测试（模型 / 生成 / 行为 / 项目 / 调试会话 / 真机链路 / 服务）
+  tests/test_core.py         34 个测试（模型 / 生成 / 行为 / 项目 / 调试会话 / 真机链路 / 运行库契约 / 服务）
   tests/ui/*.spec.ts         Playwright 回归（23 条）
   tests/*_contract.c         C 契约测试
   playwright.config.ts       自动启动 Vite；测试自建临时项目并清理
@@ -148,7 +149,6 @@ thermostat 运行窗口 12s→18s；traffic 转换时刻 3001/6002→3000/6000�
 
 ### 6.5 仍未处理的小问题
 
-- `efw.h` 未聚合 `core/msgq.h`，`efw_all.c` 未包含 `core/msgq.c`；Keil 单编译单元用户暂时用不了消息队列。生成应用不受影响。
 - `pyproject.toml` 的 `packaging` 依赖组保留给将来的 PyInstaller 打包，尚未使用。
 - 桌面版 GUI 未在本机验证过（无显示器/xvfb），见 7.3；已验证的是渲染层切 IPC 与协议层。
 - 撤销/重做只覆盖模型编辑（上限 50 步），源码文本靠编辑器自身的 Ctrl+Z；草稿持久化在 localStorage，换浏览器或清理站点数据会丢。
@@ -232,7 +232,7 @@ thermostat 运行窗口 12s→18s；traffic 转换时刻 3001/6002→3000/6000�
 
 ### 测试现状
 
-- 后端 `unittest` 32 条全绿；浏览器 `@playwright/test` 27 条全绿（状态机含编辑与运行时高亮、通信含输入输出、数据流、代码含草稿持久化、调试含真机目标与状态高亮、生成页、总览修复入口、撤销重做、桌面壳）。
+- 后端 `unittest` 34 条全绿；浏览器 `@playwright/test` 27 条全绿（状态机含编辑与运行时高亮、通信含输入输出、数据流、代码含草稿持久化、调试含真机目标与状态高亮、生成页、总览修复入口、撤销重做、桌面壳）。
 - 测试创建临时真实项目（`/tmp`），结束后清理；截图保存在被忽略的 `test-results/`。
 - 全局 `expect.timeout` 放宽到 20 秒（本机负载高时保存一趟要好几秒）。
 - Monaco 按需加载：textarea 出现得比视图早，此时打字会被整段丢弃（草稿仍是“已保存”）。统一用 `tests/ui/helpers.ts` 的 `waitEditorReady` 等到 `.view-lines` 里出现文字并聚焦；`window.monaco` 并未暴露，别依赖它。需要整段重写的地方（如 efw.json）可以安全重试。
