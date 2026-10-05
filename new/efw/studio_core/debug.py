@@ -90,6 +90,13 @@ class ProcTransport:
             self.p.wait(timeout=1)
         except subprocess.TimeoutExpired:
             self.p.kill()
+            self.p.wait(timeout=1)
+        for pipe in (self.p.stdout, self.p.stderr, self.p.stdin):
+            if pipe is not None:
+                try:
+                    pipe.close()
+                except OSError:
+                    pass
 
 
 class SerialTransport:
@@ -133,23 +140,36 @@ class TcpTransport:
             self.sock = socket.create_connection((host, int(port)), timeout=5)
         except OSError as exc:
             raise ServiceError("CONNECT", f"无法连接 {host}:{port}：{exc}") from exc
-        self.sock.settimeout(None)
-        self.f = self.sock.makefile("r", encoding="utf-8", errors="replace", newline="\n")
+        # 与 SerialTransport 一样用 recv 循环：makefile 的 close() 会等读到 EOF，
+        # 而真机不会主动发 EOF，那样“停止调试”会永久卡住。
+        self.sock.settimeout(0.2)
+        self.closed = False
 
     def lines(self) -> Iterator[str]:
-        try:
-            yield from self.f
-        except (OSError, ValueError):
-            return
+        buf = b""
+        while not self.closed:
+            try:
+                chunk = self.sock.recv(256)
+            except socket.timeout:
+                continue
+            except OSError:
+                return
+            if not chunk:
+                return
+            buf += chunk
+            while b"\n" in buf:
+                raw, buf = buf.split(b"\n", 1)
+                yield raw.decode("utf-8", errors="replace")
 
     def write(self, line: str) -> None:
         self.sock.sendall((line + "\n").encode("utf-8"))
 
     def close(self) -> None:
-        for closer in (self.f.close, lambda: self.sock.shutdown(socket.SHUT_RDWR), self.sock.close):
+        self.closed = True
+        for closer in (lambda: self.sock.shutdown(socket.SHUT_RDWR), self.sock.close):
             try:
                 closer()
-            except (OSError, ValueError):
+            except OSError:
                 pass
 
 
@@ -396,7 +416,8 @@ def list_runs(root: Path) -> list[dict]:
     out = []
     for p in sorted(base.glob("*.jsonl"), key=lambda x: x.stat().st_mtime, reverse=True):
         try:
-            first = json.loads(p.open(encoding="utf-8").readline())
+            with p.open(encoding="utf-8") as f:
+                first = json.loads(f.readline())
         except (OSError, json.JSONDecodeError):
             first = {}
         out.append({"name": p.name, "size": p.stat().st_size, "kind": first.get("kind", "?"), "hash": first.get("hash", ""), "started": first.get("started", "")})

@@ -11,7 +11,7 @@
 ## 1. 给下个 agent 的最重要八条
 
 1. 端到端可用：`studio_core/` + `ui/` 七个导航页面（总览 / 数据流 / 状态机 / 通信 / 代码 / 调试 / 生成）全部实现；风格规范 `docs/05-ui-style.md`。**下一步主线是“页面内模型编辑”**（见第 7 节），即把浏览页（数据流 / 状态机 / 通信）变成结构化编辑器。
-2. 测试：`29` 个后端测试全绿、`22` 条浏览器回归全过。任何改动后按第 8 节跑全套。
+2. 测试：`32` 个后端测试全绿、`22` 条浏览器回归全过。任何改动后按第 8 节跑全套。
 3. 只用 `uv` 管理 Python：`uv sync`、`uv run python ...`。唯一第三方依赖是 `pyserial`（真机串口）。
 4. 模型 id 必须匹配 `^[a-z][a-z0-9_]{0,23}$`；中文只出现在 `label` 里。生成的 C 标识符由 id 直接决定，创建后不可改。
 5. 生成器输出只写 `generated/`；`src/`、`board/` 永远由用户拥有。已有“预览 → token → 提交”与手改冲突保护，不要绕过。
@@ -36,6 +36,7 @@
 | 源码模板保护（`EFW USER BEGIN/END`，标记外只读） | `source_template.py` + `file.write` | `test_template_regions_are_protected`、`test_missing_function_is_added_with_protected_template`、代码页回归 |
 | 用户函数缺失/签名不符检测 | `model.find_definitions` + `analyze` | `ModelTests` 通过 |
 | 调试会话：virtual / serial / tcp / replay，录制到 `.efw/runs/*.jsonl` | `debug.py`、`service.debug_start` | `SessionTests`（录制回放、live/hash 不一致、构建错误）+ 调试页回归 |
+| 真机链路实测：TCP 回环监听器、串口伪终端（PTY），不依赖硬件 | `tests/test_core.py` 的 `TcpBoard`/`PtyBoard` | `SessionTests.test_tcp_target_talks_to_a_real_socket` / `test_serial_target_talks_over_a_pseudo_terminal` / `test_serial_and_tcp_report_unreachable_endpoints` |
 | 虚拟目标构建缓存 | `debug.build_virtual`（`.efw/build/<key>/`） | 键 = 模型哈希 + 用户源码摘要；改 codegen 后手工删缓存 |
 | JSON Lines 服务 + CLI | `server.py`、`cli.py` | `ServiceTests` 通过 |
 | C 运行库契约 | `tests/msgq_contract.c`、`tests/scheduler_contract.c` | 编译运行通过（cc -std=c99 -Wall -Wextra） |
@@ -78,7 +79,7 @@ new/efw/
     components/  SourceEditor / CurveChart / DiffView / CellInput
     styles/      tokens.css（唯一颜色来源）+ app.css
   tools/bridge.mjs          开发期 RPC/SSE 桥（Vite 中间件）
-  tests/test_core.py         29 个测试（模型 / 生成 / 行为 / 项目 / 调试会话 / 服务）
+  tests/test_core.py         32 个测试（模型 / 生成 / 行为 / 项目 / 调试会话 / 真机链路 / 服务）
   tests/ui/*.spec.ts         Playwright 回归（22 条）
   tests/*_contract.c         C 契约测试
   playwright.config.ts       自动启动 Vite；测试自建临时项目并清理
@@ -142,10 +143,17 @@ thermostat 运行窗口 12s→18s；traffic 转换时刻 3001/6002→3000/6000�
 
 ### 6.5 仍未处理的小问题
 
-- 测试有 `ResourceWarning: unclosed file`：`ProcTransport.close` 建议同时关 `stdout/stderr`；测试的 `run_virtual` 可用 `with`/try-finally。保持输出干净（见第 8 节）。
 - `efw.h` 未聚合 `core/msgq.h`，`efw_all.c` 未包含 `core/msgq.c`；Keil 单编译单元用户暂时用不了消息队列。生成应用不受影响。
 - `pyproject.toml` 的 `packaging` 依赖组保留给将来的 PyInstaller 打包，尚未使用。
 - 源码草稿只在内存：刷新/崩溃会丢；顶栏没有保存/撤销/重做（代码页的“保存文件”是唯一写盘入口）。
+
+### 6.6 `debug.stop` 在 TCP 上永久卡死（已修）
+
+`TcpTransport` 用 `sock.makefile("r")` 读，停止时先 `self.f.close()`——而 `close()` 会等读到 EOF，真机不会主动发 EOF，于是点“停止”整个界面挂住（连同 Python 服务）。改成和 `SerialTransport` 一样的 `recv` + 超时循环（`settimeout(0.2)`），`close()` 只做 `shutdown` + `close`。**写新传输时永远不要用阻塞式 `makefile().readline()`。**
+
+这个缺陷是补真机链路集成测试时抓到的（`TcpBoard` 停止后卡住），单靠 `FakeTransport` 永远不会暴露。
+
+顺带清掉两个 `ResourceWarning`：`list_runs` 的 `p.open(...).readline()` 漏了句柄（UI 会反复调 `debug.runs`）；`ProcTransport.close` 没关 `stdout/stderr/stdin`。现在 `python -W error::ResourceWarning -m unittest` 干净。
 
 ## 7. 下一步路线（按优先级）
 
@@ -167,14 +175,16 @@ thermostat 运行窗口 12s→18s；traffic 转换时刻 3001/6002→3000/6000�
 
 调试页真机目标也已完成：串口设备+波特率、TCP 主机+端口，复用 `debug.py` 的 `Serial`/`Tcp` 传输；`store.target` 是唯一的目标选择，顶栏“运行”与启动按钮共用；`targetProblem` 在参数不全时禁用按钮并说明缺什么；顺带修掉“启动失败没有 session → 错误无处可看”的缺陷。
 
+真机链路也已用回环监听器与伪终端（PTY）实测，`debug.stop` 的 TCP 卡死问题就是被这组测试抓出来的（见 6.6）。
+
 下一步：
 
-- 真机链路实测：串口用伪终端（socat/pty），TCP 用回环监听器补集成测试；真机验证模型 hash 不一致提示。
+- 硬件在环验证（可选）：真板子上跑 `board/observe_port.c`，看串口丢帧与延迟。
 - 之后是 Electron 壳与打包。
 
 ### 7.2 真机链路
 
-`serial` / `tcp` 传输已实现但未实测。用回环/伪终端（socat、pty）补集成测试；真机验证模型 hash 不一致提示（`SessionTests.test_live_transport_path_and_hash_mismatch` 已覆盖逻辑，缺硬件验证）与 `board/observe_port.c` 模板（已带 `EFW USER` 标记）。
+`serial` / `tcp` 传输已用**真实 socket 与伪终端**测过（见第 2 节表格），不需要硬件就能验证握手、收帧、发命令、哈希不符提醒、录制与停止。仍然缺的只有硬件在环：真机串口吞吐下的丢帧表现、以及把 `board/observe_port.c` 烧进板子后的端到端。写新的传输时照 `TcpBoard`/`PtyBoard` 的做法加测试，别再只靠 `FakeTransport`。
 
 ### 7.3 Electron 壳与打包
 
@@ -211,7 +221,7 @@ thermostat 运行窗口 12s→18s；traffic 转换时刻 3001/6002→3000/6000�
 
 ### 测试现状
 
-- 后端 `unittest` 29 条全绿；浏览器 `@playwright/test` 22 条全绿（状态机含编辑、通信含输入输出、数据流、代码、调试含真机目标、生成页、总览修复入口）。
+- 后端 `unittest` 32 条全绿；浏览器 `@playwright/test` 22 条全绿（状态机含编辑、通信含输入输出、数据流、代码、调试含真机目标、生成页、总览修复入口）。
 - 测试创建临时真实项目（`/tmp`），结束后清理；截图保存在被忽略的 `test-results/`。
 - 全局 `expect.timeout` 放宽到 20 秒（本机负载高时保存一趟要好几秒）；Monaco 按需加载，输入要整段重写并确认草稿变“未保存”，否则首次输入可能被丢弃。
 - 注意：`build_virtual` 缓存键只看模型哈希与用户源码，修改 `codegen.py` 后旧缓存不会失效，开发时手工删 `.efw/build/`。

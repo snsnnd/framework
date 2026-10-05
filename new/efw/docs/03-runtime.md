@@ -64,6 +64,10 @@ efw_status_t count_fault(void) {
 
 `build_virtual` 把生成文件与可执行文件放在 `.efw/build/<key>/`，`key = 模型哈希 + 全部用户源码摘要`。因此：只改 `src/`/`board/` 或 `efw.json` 会得到新 key；**修改 `codegen.py` 不会让旧缓存失效**，开发调试生成器时要手工删除 `.efw/build/`。最多保留最近 7 份缓存。
 
+## 真机链路（串口 / TCP）
+
+主机侧用 `SerialTransport`（pyserial，设备 + 波特率）与 `TcpTransport`（主机 + 端口），两者都是 `recv` + 超时循环 + 自行拼行：不要用 `socket.makefile()`，它的 `close()` 会等读到 EOF，而固件不会主动发 EOF，会让“停止调试”永久卡住。目标侧是 `board/observe_port.c`（已带 `EFW USER` 标记），用同一套文本命令协议。主机不接管真机的节拍，因此播放/暂停/单步只对虚拟目标可用。
+
 ## 可观测性开销
 
 每个数据流一个 `run/miss/over/err/late/us` 统计（来自调度器）；每个队列 `n/push/drop/hw`；快照默认 200 ms 一帧，约 1 KB，115200 波特下约 45% 带宽；可用 `rate` 调整。

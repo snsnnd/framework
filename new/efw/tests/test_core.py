@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 import shutil
+import socket
 import subprocess
 import tempfile
 import threading
 import time
+import tty
 import unittest
 from pathlib import Path
 
@@ -158,6 +161,104 @@ class GeneratedCTests(Base):
         done = subprocess.run([find_cc(), "-std=c99", "-Wall", "-Wextra", "-Werror", "-DAPP_OBSERVE_ENABLE=0", f"-I{self.dir}", f"-I{rt / 'include'}", "-c", str(self.dir / "app_core.c"), "-o", str(self.dir / "o.o")],
                               capture_output=True, text=True)
         self.assertEqual(done.returncode, 0, done.stderr[:1500])
+
+
+class FakeBoard:
+    """按真机协议的最小目标：收到 dump 回 hello，之后补 snap；记录收到的命令。"""
+
+    def __init__(self, model_hash: str, tick: int = 1):
+        self.hash = model_hash
+        self.tick = tick
+        self.received: list[str] = []
+        self.stopped = threading.Event()
+
+    def handle(self, line: str, write) -> None:
+        self.received.append(line)
+        if line.startswith("dump"):
+            write(json.dumps({"e": "hello", "hash": self.hash, "tick": self.tick}) + "\n")
+            write(json.dumps({"e": "snap", "t": 300, "s": {"value": 1.5}}) + "\n")
+        elif line.startswith("stop"):
+            self.stopped.set()
+
+    def serve_lines(self, read_line, write) -> None:
+        while not self.stopped.is_set():
+            raw = read_line()
+            if not raw:
+                return
+            self.handle(raw.decode("utf-8", "replace").strip(), write)
+
+
+class TcpBoard(FakeBoard):
+    """回环监听器：真机通过 TCP 连过来。"""
+
+    def __init__(self, model_hash: str, tick: int = 1):
+        super().__init__(model_hash, tick)
+        self.sock = socket.socket()
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(1)
+        self.port = self.sock.getsockname()[1]
+        self.conn: socket.socket | None = None
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _write(self, text: str) -> None:
+        if self.conn:
+            self.conn.sendall(text.encode("utf-8"))
+
+    def _run(self) -> None:
+        conn, _ = self.sock.accept()
+        self.conn = conn
+        f = conn.makefile("rb")
+        self.serve_lines(f.readline, self._write)
+
+    def close(self) -> None:
+        self.stopped.set()
+        for closer in (lambda: self.conn and self.conn.close(), self.sock.close):
+            try:
+                closer()
+            except OSError:
+                pass
+        self.thread.join(timeout=2)
+
+
+class PtyBoard(FakeBoard):
+    """伪终端：真机用 pyserial 打开从设备端，我们在主端说协议。"""
+
+    def __init__(self, model_hash: str, tick: int = 1):
+        super().__init__(model_hash, tick)
+        self.master, self.slave = os.openpty()
+        tty.setraw(self.master)
+        tty.setraw(self.slave)
+        self.port = os.ttyname(self.slave)
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _write(self, text: str) -> None:
+        os.write(self.master, text.encode("utf-8"))
+
+    def _run(self) -> None:
+        buf = b""
+        while not self.stopped.is_set():
+            try:
+                chunk = os.read(self.master, 256)
+            except OSError:
+                return
+            if not chunk:
+                return
+            buf += chunk
+            while b"\n" in buf:
+                raw, buf = buf.split(b"\n", 1)
+                self.handle(raw.decode("utf-8", "replace").strip(), self._write)
+
+    def close(self) -> None:
+        self.stopped.set()
+        for fd in (self.master, self.slave):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        self.thread.join(timeout=2)
 
 
 def make_project(base: Path, template: str, name="demo") -> str:
@@ -423,6 +524,74 @@ class SessionTests(Base):
             Service().dispatch("debug.start", {"path": path, "target": {"kind": "virtual"}})
         self.assertEqual(ctx.exception.code, "BUILD")
         self.assertIn("oops", str(ctx.exception))
+
+    @unittest.skipUnless(shutil.which("cc") or shutil.which("gcc"), "需要 C 编译器")
+    def test_tcp_target_talks_to_a_real_socket(self):
+        """真机链路之一：TCP。回环监听器应答，主机侧要能收帧、发命令、认出 hash 不一致。"""
+        path = make_project(self.dir, "thermostat")
+        # 故意给一个错的哈希，验证真机固件与项目不一致时界面会提醒
+        board = TcpBoard("deadbeef0000")
+        events: list[dict] = []
+        svc = Service(events.append)
+        try:
+            started = svc.dispatch("debug.start", {"path": path, "target": {"kind": "tcp", "host": "127.0.0.1", "port": board.port}})
+            sid = started["session"]
+            self.assertEqual(started["kind"], "tcp")
+            frames = lambda: [f for e in events if e.get("event") == "debug.frames" for f in e["frames"]]
+            self.assertTrue(self.wait(lambda: "dump" in board.received), board.received)
+            self.assertTrue(self.wait(lambda: any(f.get("e") == "snap" for f in frames())))
+            warned = self.wait(lambda: any(e.get("warning") for e in events))
+            self.assertTrue(warned, "模型哈希不一致应给出提醒")
+            self.assertTrue(any("deadbeef0000" in e.get("message", "") for e in events))
+            svc.dispatch("debug.send", {"session": sid, "line": "set target 42"})
+            self.assertTrue(self.wait(lambda: "set target 42" in board.received), board.received)
+            # 真机目标不接受播放/暂停这类主机侧节拍控制
+            with self.assertRaises(ServiceError):
+                svc.dispatch("debug.control", {"session": sid, "action": "pause"})
+            # 记录照样录到磁盘，回放可用
+            svc.dispatch("debug.stop", {"session": sid})
+            runs = svc.dispatch("debug.runs", {"path": path})
+            self.assertEqual([r["kind"] for r in runs], ["tcp"])
+        finally:
+            svc.stop_all()
+            board.close()
+
+    @unittest.skipUnless(shutil.which("cc") or shutil.which("gcc"), "需要 C 编译器")
+    def test_serial_target_talks_over_a_pseudo_terminal(self):
+        """真机链路之二：串口。用 PTY 代替开发板，不依赖硬件。"""
+        path = make_project(self.dir, "thermostat")
+        model = project.open_project(path)["model"]
+        board = PtyBoard(model_hash(model))
+        events: list[dict] = []
+        svc = Service(events.append)
+        try:
+            started = svc.dispatch("debug.start", {"path": path, "target": {"kind": "serial", "port": board.port, "baud": 115200}})
+            sid = started["session"]
+            self.assertEqual(started["kind"], "serial")
+            frames = lambda: [f for e in events if e.get("event") == "debug.frames" for f in e["frames"]]
+            self.assertTrue(self.wait(lambda: "dump" in board.received), board.received)
+            self.assertTrue(self.wait(lambda: any(f.get("e") == "snap" for f in frames())))
+            svc.dispatch("debug.send", {"session": sid, "line": "fire overheat"})
+            self.assertTrue(self.wait(lambda: "fire overheat" in board.received), board.received)
+            svc.dispatch("debug.stop", {"session": sid})
+        finally:
+            svc.stop_all()
+            board.close()
+
+    def test_serial_and_tcp_report_unreachable_endpoints(self):
+        path = make_project(self.dir, "thermostat")
+        svc = Service()
+        try:
+            with self.assertRaises(ServiceError) as ctx:
+                svc.dispatch("debug.start", {"path": path, "target": {"kind": "tcp", "host": "127.0.0.1", "port": 1}})
+            self.assertEqual(ctx.exception.code, "CONNECT")
+            self.assertIn("127.0.0.1:1", str(ctx.exception))
+            with self.assertRaises(ServiceError) as ctx:
+                svc.dispatch("debug.start", {"path": path, "target": {"kind": "serial", "port": "/dev/efw-no-such-tty", "baud": 115200}})
+            self.assertEqual(ctx.exception.code, "CONNECT")
+            self.assertIn("/dev/efw-no-such-tty", str(ctx.exception))
+        finally:
+            svc.stop_all()
 
     def test_live_transport_path_and_hash_mismatch(self):
         model, _, _ = templates.build("traffic", "x")
