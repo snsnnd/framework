@@ -80,3 +80,48 @@ test('虚拟目标：草稿门禁、运行暂停单步、整定、事件、停�
   expect(await page.locator('.page').evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy();
   await page.screenshot({ path: testInfo.outputPath('debug-light-narrow.png') });
 });
+
+test('调试页选择真机目标：参数不全时不启动，顶栏运行沿用所选目标', async ({ page, request }) => {
+  const path = join(root, 'app');
+  await request.post('/rpc', { data: { method: 'project.create', params: { path, name: '恒温控制', template: 'thermostat' } } });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.addInitScript((p) => localStorage.setItem('efw.lastProject', p), path);
+  await page.goto('/');
+  await page.getByRole('button', { name: '调试', exact: true }).click();
+
+  // 默认虚拟目标，顶栏“运行”随之启动虚拟目标
+  await expect(page.getByRole('button', { name: '虚拟目标', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByRole('button', { name: '启动虚拟目标' })).toBeEnabled();
+
+  // 切到串口：没填设备就不能启动，并说明原因
+  await page.getByRole('button', { name: '串口目标', exact: true }).click();
+  const serial = page.getByRole('button', { name: '连接串口' });
+  await expect(serial).toBeDisabled();
+  await expect(serial).toHaveAttribute('title', '请先填写串口设备，例如 /dev/ttyUSB0 或 COM3');
+  await page.getByLabel('波特率').selectOption('9600');
+
+  // 切到 TCP：主机和端口都要填
+  await page.getByRole('button', { name: 'TCP 目标', exact: true }).click();
+  const tcp = page.getByRole('button', { name: '连接 TCP' });
+  await expect(tcp).toBeDisabled();
+  await expect(tcp).toHaveAttribute('title', '请先填写目标主机或 IP');
+  await page.getByLabel('TCP 主机').fill('192.168.1.20');
+  await expect(tcp).toBeDisabled();
+  await page.getByLabel('TCP 端口').fill('115200');
+  await expect(tcp).toBeEnabled();
+  await page.getByLabel('TCP 端口').fill('');
+  await expect(tcp).toBeDisabled();
+
+  // 顶栏“运行”用同一个目标，不会偷偷启动虚拟目标
+  await page.getByRole('button', { name: '总览', exact: true }).click();
+  await page.getByRole('button', { name: '运行', exact: true }).click();
+  await page.getByRole('button', { name: '调试', exact: true }).click();
+  await expect(page.getByText('请先填写端口号')).toBeVisible();
+  await expect(page.getByText('运行中')).toHaveCount(0);
+
+  // 回连串口时故意写错设备名，后端的连接错误必须如实显示（失败的会话没有 session，只能靠启动卡上的告警）
+  await page.getByRole('button', { name: '串口目标', exact: true }).click();
+  await page.getByLabel('串口设备').fill('/dev/efw-no-such-port');
+  await page.getByRole('button', { name: '连接串口' }).click();
+  await expect(page.getByRole('alert')).toContainText(/efw-no-such-port|pyserial/, { timeout: 30000 });
+});

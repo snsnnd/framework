@@ -4,6 +4,21 @@ import { call, onEvent } from './rpc';
 import type { Analysis, Diagnostic, Manifest, Model, Opened } from './types';
 
 export interface DebugTarget { kind: 'virtual' | 'serial' | 'tcp' | 'replay'; run?: string; port?: string; baud?: number; host?: string }
+
+export const KIND_LABEL: Record<string, string> = {
+  virtual: '虚拟目标', serial: '串口目标', tcp: 'TCP 目标', replay: '记录回放',
+};
+
+
+/** 目标参数没填全时给出可行动的错误，而不是让后端抛 KeyError。 */
+export function targetProblem(target: DebugTarget): string {
+  if (target.kind === 'serial' && !target.port?.trim()) return '请先填写串口设备，例如 /dev/ttyUSB0 或 COM3';
+  if (target.kind === 'serial' && !(target.baud ?? 0)) return '请先填写波特率';
+  if (target.kind === 'tcp' && !target.host?.trim()) return '请先填写目标主机或 IP';
+  if (target.kind === 'tcp' && !(target.port && Number(target.port) > 0)) return '请先填写端口号';
+  if (target.kind === 'replay' && !target.run) return '请先选择一份记录';
+  return '';
+}
 interface DebugStart { session: string; kind: string; manifest: Manifest; state: string }
 
 interface Store {
@@ -15,6 +30,8 @@ interface Store {
   setSourcesDirty: (value: boolean) => void;
   debug: DebugState;
   startDebug: (target: DebugTarget) => Promise<void>;
+  target: DebugTarget;
+  setTarget: (target: DebugTarget) => void;
   stopDebug: () => Promise<void>;
   controlDebug: (action: string, value?: number) => Promise<void>;
   sendDebug: (line: string) => Promise<void>;
@@ -39,6 +56,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const projectRef = useRef<Opened | null>(null);
   projectRef.current = project;
   const chainRef = useRef<Promise<unknown>>(Promise.resolve());
+  // 顶栏“运行”和调试页共用同一个目标选择
+  const [target, setTarget] = useState<DebugTarget>({ kind: 'virtual' });
 
   const applyProject = useCallback(async (p: Opened) => {
     setProject(p);
@@ -115,6 +134,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const startDebug = useCallback(async (target: DebugTarget) => {
     if (!project) return;
+    const problem = targetProblem(target);
+    if (problem) { setDebug({ ...EMPTY_DEBUG, state: 'error', kind: target.kind, message: problem }); return; }
     const previous = sessionRef.current;
     if (previous) {
       sessionRef.current = null;
@@ -159,7 +180,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (last) void open(last);
   }, [open]);
 
-  return <Ctx.Provider value={{ project, analysis, busy, error, sourcesDirty, setSourcesDirty, debug, startDebug, stopDebug, controlDebug, sendDebug, updateModel, open, create, refresh, reload }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ project, analysis, busy, error, sourcesDirty, setSourcesDirty, debug, target, setTarget, startDebug, stopDebug, controlDebug, sendDebug, updateModel, open, create, refresh, reload }}>{children}</Ctx.Provider>;
 }
 
 export function useStore(): Store {

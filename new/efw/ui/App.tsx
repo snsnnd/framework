@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { ArrowsClockwise, Broadcast, Bug, Code as CodeIcon, FlowArrow, Gauge, GitBranch, Package } from '@phosphor-icons/react';
-import { useStore } from './store';
+import { KIND_LABEL, useStore } from './store';
 import { Welcome } from './pages/Welcome';
 import { Overview } from './pages/Overview';
 import { Flows } from './pages/Flows';
@@ -24,7 +24,7 @@ type PageId = (typeof NAV)[number]['id'];
 const READY: PageId[] = ['overview', 'flows', 'machines', 'comm', 'code', 'debug', 'generate'];
 
 export function App() {
-  const { project, analysis, refresh, debug, startDebug, stopDebug, sourcesDirty } = useStore();
+  const { project, analysis, refresh, debug, target, startDebug, stopDebug, sourcesDirty } = useStore();
   const [page, setPage] = useState<PageId>('overview');
   // 总览页“下一步”的修复入口：跳转并让目标页选中出问题的对象
   const [repair, setRepair] = useState<Repair | null>(null);
@@ -43,7 +43,7 @@ export function App() {
   const runTitle = sourcesDirty ? '有未保存的源码草稿，请先在代码页保存'
     : !analysis ? '正在分析模型'
       : !analysis.ok ? '模型有错误，先修复诊断'
-        : running ? '停止调试' : '启动虚拟目标并打开调试页';
+        : running ? '停止调试' : '按调试页选定的目标启动';
 
   return (
     <div className="shell">
@@ -64,7 +64,7 @@ export function App() {
         <button className="btn" onClick={() => void refresh()}><ArrowsClockwise size={14} /> 重新载入</button>
         <button className="btn primary" disabled={blocked && !running} title={runTitle} onClick={() => {
           if (running) { void stopDebug(); return; }
-          void startDebug({ kind: 'virtual' });
+          void startDebug(target);
           setPage('debug');
         }}>{running ? '停止' : debug.state === 'starting' ? '启动中…' : '运行'}</button>
       </header>
@@ -83,7 +83,9 @@ export function App() {
 
       <footer className="status">
         <span className={`dot ${errors ? 'err' : warns ? 'warn' : 'ok'}`}>{errors ? `${errors} 个错误` : warns ? `${warns} 个提醒` : '模型正常'}</span>
-        <span>目标：未连接</span>
+        <span className={`dot ${running ? 'ok' : debug.state === 'error' ? 'err' : ''}`}>
+          目标：{running ? KIND_LABEL[debug.kind] ?? debug.kind : '未连接'}
+        </span>
         <span className="spacer" />
         <span className="id">{analysis?.hash}</span>
       </footer>

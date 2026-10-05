@@ -1,17 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { call } from '../rpc';
-import { useStore } from '../store';
+import { KIND_LABEL, targetProblem, useStore } from '../store';
 import { CurveChart, type Channel } from '../components/CurveChart';
 import type { Run, Tunable } from '../types';
 
 const SPEEDS = [[0.5, '0.5×'], [1, '1×'], [2, '2×'], [4, '4×'], [0, '最快']] as const;
+const CONNECT_LABEL: Record<string, string> = { serial: '连接串口', tcp: '连接 TCP' };
 const STATE_LABEL: Record<string, string> = { idle: '未启动', starting: '启动中', running: '运行中', paused: '已暂停', stopped: '已停止', error: '启动失败', ended: '回放结束' };
 const CHANNELS = ['--s1', '--s2', '--s3', '--s4', '--s5'];
+const BAUDS = [9600, 19200, 38400, 115200, 230400, 460800, 921600];
 const fmt = (v: number | undefined, digits = 3) => (v === undefined || !Number.isFinite(v) ? '—' : String(Number(v.toFixed(digits))));
 const secs = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
 
 export function Debug({ onOpenCode }: { onOpenCode: () => void }) {
-  const { project, analysis, sourcesDirty, debug, startDebug, stopDebug, controlDebug, sendDebug } = useStore();
+  const { project, analysis, sourcesDirty, debug, target, setTarget, startDebug, stopDebug, controlDebug, sendDebug } = useStore();
   const [runs, setRuns] = useState<Run[]>([]);
   const [runName, setRunName] = useState('');
   const [picked, setPicked] = useState<string[]>([]);
@@ -69,17 +71,47 @@ export function Debug({ onOpenCode }: { onOpenCode: () => void }) {
   const tunableValue = (item: Tunable) => draft[item.key] ?? debug.params?.[item.key] ?? item.value;
 
   return <>
-    <div><h1>调试</h1><p className="sub">虚拟目标在电脑上运行，用同一套界面观察曲线、任务和状态；也可以回放已保存的记录。</p></div>
+    <div><h1>调试</h1><p className="sub">虚拟目标在电脑上跑，真机走串口或 TCP，同一套界面看曲线、任务和状态；也可以回放已保存的记录。</p></div>
 
     {(!debug.session || debug.state === 'stopped' || debug.state === 'ended') && <section className="card" aria-label="启动调试">
-      <header><h2>启动调试</h2><span className="sub">虚拟目标模拟硬件输入，不依赖开发板</span></header>
+      <header><h2>启动调试</h2><span className="sub">虚拟目标不需要开发板；真机走串口或 TCP，同一套界面</span></header>
       {sourcesDirty && <div className="diag warn"><div>有未保存的源码草稿。调试运行磁盘上的代码，请先在代码页保存。<button className="btn" onClick={onOpenCode}>去代码页</button></div></div>}
       {analysis && !analysis.ok && <div className="diag error"><div>模型有错误，无法启动调试：{analysis.diagnostics.find((d) => d.level === 'error')?.message}</div></div>}
+      {/* 启动失败时没有 session，下面那张控制卡不会出现，错误必须在这里说清楚 */}
+      {debug.state === 'error' && debug.message && <div className="diag error" role="alert"><div>{debug.message}</div></div>}
       <div className="body debug-start">
         <div className="debug-start-item">
-          <p><strong>虚拟目标</strong></p>
-          <p className="sub">按模型里的仿真输入运行当前项目，可播放、暂停、单步和整定。</p>
-          <button className="btn primary" disabled={blocked} title={blocked ? blockReason : '编译并启动虚拟目标'} onClick={() => void startDebug({ kind: 'virtual' })}>启动虚拟目标</button>
+          <div className="debug-targets" role="group" aria-label="选择调试目标">
+            {(['virtual', 'serial', 'tcp'] as const).map((kind) => <button key={kind} className="btn"
+              aria-pressed={target.kind === kind} onClick={() => setTarget({ ...target, kind })}>{KIND_LABEL[kind]}</button>)}
+          </div>
+          {target.kind === 'virtual' && <p className="sub">按模型里的仿真输入运行当前项目，可播放、暂停、单步和整定。</p>}
+          {target.kind === 'serial' && <div className="row">
+            <label className="field">串口设备
+              <input className="input" aria-label="串口设备" placeholder="/dev/ttyUSB0 或 COM3" value={target.port ?? ''}
+                onChange={(e) => setTarget({ ...target, kind: 'serial', port: e.target.value })} />
+            </label>
+            <label className="field">波特率
+              <select className="input" aria-label="波特率" value={target.baud ?? 115200}
+                onChange={(e) => setTarget({ ...target, kind: 'serial', baud: Number(e.target.value) })}>
+                {BAUDS.map((b) => <option key={b} value={b}>{b}</option>)}
+              </select>
+            </label>
+          </div>}
+          {target.kind === 'tcp' && <div className="row">
+            <label className="field">主机
+              <input className="input" aria-label="TCP 主机" placeholder="192.168.1.20 或 localhost" value={target.host ?? ''}
+                onChange={(e) => setTarget({ ...target, kind: 'tcp', host: e.target.value })} />
+            </label>
+            <label className="field">端口
+              <input className="input" type="number" min={1} max={65535} aria-label="TCP 端口" value={target.port ?? ''}
+                onChange={(e) => setTarget({ ...target, kind: 'tcp', port: e.target.value })} />
+            </label>
+          </div>}
+          {(target.kind === 'serial' || target.kind === 'tcp') && <p className="sub">真机目标由板上的 <span className="id">board/observe_port.c</span> 输出同样的文本协议，模型哈希不一致时界面会提示。</p>}
+          <button className="btn primary" disabled={blocked || !!targetProblem(target)}
+            title={blocked ? blockReason : targetProblem(target) || CONNECT_LABEL[target.kind]}
+            onClick={() => void startDebug(target)}>{target.kind === 'virtual' ? '启动虚拟目标' : CONNECT_LABEL[target.kind]}</button>
         </div>
         <div className="debug-start-item">
           <p><strong>记录回放</strong></p>
@@ -96,11 +128,12 @@ export function Debug({ onOpenCode }: { onOpenCode: () => void }) {
       </div>
     </section>}
 
-    {debug.state === 'starting' && <section className="card"><p className="empty">正在编译并启动虚拟目标…</p></section>}
+    {debug.state === 'starting' && <section className="card"><p className="empty">正在启动{KIND_LABEL[debug.kind] ?? debug.kind}…</p></section>}
 
     {debug.session && <section className="card" aria-label="调试控制">
       <header>
-        <span><strong>{debug.kind === 'replay' ? '记录回放' : '虚拟目标'}</strong> <span className="id sub">{debug.session}</span></span>
+        <span><strong>{KIND_LABEL[debug.kind] ?? debug.kind}</strong> <span className="id sub">{debug.session}</span></span>
+        {debug.kind !== 'replay' && <span className="id sub">{debug.kind === 'serial' ? `设备 ${target.port ?? ''}` : debug.kind === 'tcp' ? `${target.host}:${target.port}` : '用模型里的仿真输入'}</span>}
         <span className={`dot ${debug.state === 'error' ? 'err' : debug.state === 'running' ? 'ok' : 'warn'}`}>{STATE_LABEL[debug.state] ?? debug.state}</span>
       </header>
       <div className="body debug-bar">
@@ -113,7 +146,8 @@ export function Debug({ onOpenCode }: { onOpenCode: () => void }) {
         <select className="input" value={debug.speed} disabled={!active} aria-label="仿真速度" onChange={(e) => void controlDebug('speed', Number(e.target.value))}>
           {SPEEDS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
         </select>
-        <button className="btn" disabled={debug.kind !== 'virtual' || !active} onClick={() => void startDebug({ kind: 'virtual' })}>重新开始</button>
+        <button className="btn" disabled={debug.kind !== 'virtual' || !active} title={debug.kind === 'virtual' ? '重新编译并启动' : '只有虚拟目标可以重新开始'}
+          onClick={() => void startDebug({ kind: 'virtual' })}>重新开始</button>
         <button className="btn" disabled={debug.state === 'stopped'} onClick={() => void stopDebug()}>停止</button>
       </div>
       {debug.message && <p className={`debug-message ${debug.state === 'error' || debug.warning ? 'err-text' : 'sub'}`} role="status">{debug.message}</p>}
