@@ -1,5 +1,5 @@
-import { useRef, useState } from 'react';
-import { ArrowsClockwise, Broadcast, Bug, Code as CodeIcon, FlowArrow, Gauge, GitBranch, Package } from '@phosphor-icons/react';
+import { useEffect, useRef, useState } from 'react';
+import { ArrowCounterClockwise, ArrowClockwise, ArrowsClockwise, Broadcast, Bug, Code as CodeIcon, FlowArrow, Gauge, GitBranch, Package } from '@phosphor-icons/react';
 import { KIND_LABEL, useStore } from './store';
 import { Welcome } from './pages/Welcome';
 import { Overview } from './pages/Overview';
@@ -24,11 +24,24 @@ type PageId = (typeof NAV)[number]['id'];
 const READY: PageId[] = ['overview', 'flows', 'machines', 'comm', 'code', 'debug', 'generate'];
 
 export function App() {
-  const { project, analysis, refresh, debug, target, startDebug, stopDebug, sourcesDirty } = useStore();
+  const { project, analysis, refresh, debug, target, canUndo, canRedo, undoModel, redoModel, startDebug, stopDebug, sourcesDirty } = useStore();
   const [page, setPage] = useState<PageId>('overview');
   // 总览页“下一步”的修复入口：跳转并让目标页选中出问题的对象
   const [repair, setRepair] = useState<Repair | null>(null);
   const repairToken = useRef(0);
+  // 撤销/重做走快捷键；焦点在输入框或编辑器里时交给它们自己处理
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return;
+      const el = document.activeElement;
+      if (el && (el.closest('.monaco-editor') || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) return;
+      e.preventDefault();
+      if (e.shiftKey) void redoModel(); else void undoModel();
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [undoModel, redoModel]);
+
   const goto = (target: RepairTarget) => {
     setRepair({ ...target, token: ++repairToken.current });
     setPage(target.page);
@@ -62,6 +75,10 @@ export function App() {
         <span className="path">{project.path}</span>
         <span className="spacer" />
         <button className="btn" onClick={() => void refresh()}><ArrowsClockwise size={14} /> 重新载入</button>
+        <span className="row">
+          <button className="btn" aria-label="撤销" title="撤销模型编辑（Ctrl+Z）" disabled={!canUndo} onClick={() => void undoModel()}><ArrowCounterClockwise size={14} /></button>
+          <button className="btn" aria-label="重做" title="重做模型编辑（Ctrl+Shift+Z）" disabled={!canRedo} onClick={() => void redoModel()}><ArrowClockwise size={14} /></button>
+        </span>
         <button className="btn primary" disabled={blocked && !running} title={runTitle} onClick={() => {
           if (running) { void stopDebug(); return; }
           void startDebug(target);

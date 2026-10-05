@@ -12,9 +12,27 @@ interface Draft { content: string; saved: string; revision: string | null }
 interface Stub { file: string; header: string; text: string }
 const dirty = (draft: Draft) => draft.revision === null || draft.content !== draft.saved;
 
+/** 草稿只存在 localStorage：刷新或崩溃后还能捡回来；存不下（超配额）时静默跳过。 */
+const draftKey = (projectPath: string) => `efw.drafts:${projectPath}`;
+function readDrafts(projectPath: string): Record<string, Draft> {
+  try {
+    const raw = localStorage.getItem(draftKey(projectPath));
+    const all = raw ? JSON.parse(raw) : {};
+    return all && typeof all === 'object' ? all as Record<string, Draft> : {};
+  } catch { return {}; }
+}
+function writeDrafts(projectPath: string, drafts: Record<string, Draft>): boolean {
+  const pending = Object.fromEntries(Object.entries(drafts).filter(([, d]) => dirty(d)));
+  try {
+    if (Object.keys(pending).length) localStorage.setItem(draftKey(projectPath), JSON.stringify(pending));
+    else localStorage.removeItem(draftKey(projectPath));
+    return true;
+  } catch { return false; }
+}
+
 export function Code({ repair }: { repair: Repair | null }) {
   const { project, analysis, refresh, reload, setSourcesDirty } = useStore();
-  const [drafts, setDrafts] = useState<Record<string, Draft>>({});
+  const [drafts, setDrafts] = useState<Record<string, Draft>>(() => (project ? readDrafts(project.path) : {}));
   const [active, setActive] = useState('');
   const [newName, setNewName] = useState('src/new.c');
   const [staged, setStaged] = useState<Record<string, string>>({});
@@ -23,6 +41,18 @@ export function Code({ repair }: { repair: Repair | null }) {
   const [notice, setNotice] = useState('');
   const hasChanges = Object.values(drafts).some(dirty);
   useEffect(() => { setSourcesDirty(hasChanges); }, [hasChanges, setSourcesDirty]);
+  // 草稿持久化：防刷新与崩溃
+  useEffect(() => {
+    if (!project) return;
+    const timer = window.setTimeout(() => { if (!writeDrafts(project.path, drafts)) setNotice('草稿太大，无法本地保存；请尽快保存文件'); }, 400);
+    return () => window.clearTimeout(timer);
+  }, [drafts, project]);
+  // 只在挂载时提示一次：草稿是上次留下的
+  useEffect(() => {
+    const names = project ? Object.keys(readDrafts(project.path)).filter((name) => dirty(drafts[name] ?? { content: '', saved: '', revision: null })) : [];
+    if (names.length) setNotice(`恢复了未保存草稿：${names.join('、')}`);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project]);
   // 总览页点“缺失的函数”时直接打开对应文件（页面常驻，切页不丢草稿）
   useEffect(() => {
     if (repair?.page !== 'code' || !repair.item) return;

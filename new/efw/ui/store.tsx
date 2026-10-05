@@ -5,6 +5,8 @@ import type { Analysis, Diagnostic, Manifest, Model, Opened } from './types';
 
 export interface DebugTarget { kind: 'virtual' | 'serial' | 'tcp' | 'replay'; run?: string; port?: string; baud?: number; host?: string }
 
+const HISTORY_LIMIT = 50;
+
 export const KIND_LABEL: Record<string, string> = {
   virtual: '虚拟目标', serial: '串口目标', tcp: 'TCP 目标', replay: '记录回放',
 };
@@ -32,6 +34,11 @@ interface Store {
   startDebug: (target: DebugTarget) => Promise<void>;
   target: DebugTarget;
   setTarget: (target: DebugTarget) => void;
+  /** 撤销/重做只覆盖本次打开后的模型编辑；重新载入或换项目即清空。 */
+  canUndo: boolean;
+  canRedo: boolean;
+  undoModel: () => Promise<void>;
+  redoModel: () => Promise<void>;
   stopDebug: () => Promise<void>;
   controlDebug: (action: string, value?: number) => Promise<void>;
   sendDebug: (line: string) => Promise<void>;
@@ -56,10 +63,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const projectRef = useRef<Opened | null>(null);
   projectRef.current = project;
   const chainRef = useRef<Promise<unknown>>(Promise.resolve());
+  const undoRef = useRef<Model[]>([]);
+  const redoRef = useRef<Model[]>([]);
+  const [history, setHistory] = useState({ undo: 0, redo: 0 });
   // 顶栏“运行”和调试页共用同一个目标选择
   const [target, setTarget] = useState<DebugTarget>({ kind: 'virtual' });
 
   const applyProject = useCallback(async (p: Opened) => {
+    // 换项目或从磁盘重新载入 = 新的基线，历史清空
+    undoRef.current = [];
+    redoRef.current = [];
+    setHistory({ undo: 0, redo: 0 });
     setProject(p);
     setAnalysis(await call<Analysis>('project.analyze', { path: p.path, model: p.model }));
     localStorage.setItem(LAST, p.path);
@@ -95,7 +109,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }, [project, load]);
 
 // 串行执行：连续编辑共用一条 revision 链，避免第二次提交撞上旧 revision。
-  const updateModel = useCallback(async (mutate: (model: Model) => Model) => {
+  const updateModel = useCallback(async (mutate: (model: Model) => Model, record = true) => {
     const run = async (): Promise<{ ok: boolean; diagnostics: Diagnostic[] }> => {
       const failure = (message: string) => ({ ok: false, diagnostics: [{ level: 'error', at: 'model', message, hint: '' } as Diagnostic] });
       const current = projectRef.current;
@@ -108,9 +122,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
         const info = await call<Analysis>('project.analyze', { path: current.path, model: candidate });
         if (!info.ok) return { ok: false, diagnostics: info.diagnostics.filter((d) => d.level === 'error') };
         const saved = await call<{ revision: string }>('project.save', { path: current.path, model: candidate, layout: current.layout, rev: current.revision });
+        // 撤销/重做本身不再记历史，否则历史会自我繁殖
+        if (record) {
+          undoRef.current = [...undoRef.current, current.model].slice(-HISTORY_LIMIT);
+          redoRef.current = [];
+        }
         projectRef.current = { ...current, model: candidate, revision: saved.revision };
         setProject(projectRef.current);
         setAnalysis(info);
+        setHistory({ undo: undoRef.current.length, redo: redoRef.current.length });
         return { ok: true, diagnostics: [] };
       } catch (e) {
         return failure((e as Error).message);
@@ -152,6 +172,28 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }, [project]);
 
+  /** 撤销/重做同样走 updateModel 的校验与写盘，界面状态与磁盘始终一致。 */
+  const step = useCallback(async (from: 'undo' | 'redo') => {
+    const fromUndo = from === 'undo';
+    const source = fromUndo ? undoRef.current : redoRef.current;
+    const leaving = projectRef.current?.model;
+    if (!source.length || !leaving) return;
+    const model = source[source.length - 1];
+    const result = await updateModel(() => model, false);
+    if (!result.ok) return;   // 历史里的模型如今不合法就停住，不硬推
+    if (fromUndo) {
+      undoRef.current = undoRef.current.slice(0, -1);
+      redoRef.current = [...redoRef.current, leaving].slice(-HISTORY_LIMIT);
+    } else {
+      redoRef.current = redoRef.current.slice(0, -1);
+      undoRef.current = [...undoRef.current, leaving].slice(-HISTORY_LIMIT);
+    }
+    setHistory({ undo: undoRef.current.length, redo: redoRef.current.length });
+  }, [updateModel]);
+
+  const undoModel = useCallback(() => step('undo'), [step]);
+  const redoModel = useCallback(() => step('redo'), [step]);
+
   const stopDebug = useCallback(async () => {
     const session = sessionRef.current;
     if (!session) return;
@@ -180,7 +222,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (last) void open(last);
   }, [open]);
 
-  return <Ctx.Provider value={{ project, analysis, busy, error, sourcesDirty, setSourcesDirty, debug, target, setTarget, startDebug, stopDebug, controlDebug, sendDebug, updateModel, open, create, refresh, reload }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ project, analysis, busy, error, sourcesDirty, setSourcesDirty, debug, target, setTarget, canUndo: history.undo > 0, canRedo: history.redo > 0, undoModel, redoModel, startDebug, stopDebug, controlDebug, sendDebug, updateModel, open, create, refresh, reload }}>{children}</Ctx.Provider>;
 }
 
 export function useStore(): Store {

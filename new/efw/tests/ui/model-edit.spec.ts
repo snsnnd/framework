@@ -180,3 +180,39 @@ test('通信页：编辑输入的仿真，并让数据流的读取步骤选中�
   await expect(page.getByRole('alert')).toContainText('仍被引用');
   await expect.poll(async () => (await model(path)).inputs.map((i: { id: string }) => i.id)).toContain('pressure');
 });
+
+test('撤销/重做回到磁盘上的模型', async ({ page, request }) => {
+  const path = join(root, 'app');
+  await request.post('/rpc', { data: { method: 'project.create', params: { path, name: '恒温控制', template: 'thermostat' } } });
+  await page.addInitScript((p) => localStorage.setItem('efw.lastProject', p), path);
+  await page.goto('/');
+  await page.getByRole('button', { name: '通信', exact: true }).click();
+  const undo = page.getByRole('button', { name: '撤销' });
+  const redo = page.getByRole('button', { name: '重做' });
+  await expect(undo).toBeDisabled();
+  await expect(redo).toBeDisabled();
+
+  const label = page.getByLabel('温度 名称', { exact: true });
+  await label.fill('室温');
+  await label.press('Enter');
+  await expect.poll(async () => (await model(path)).signals.find((s: { id: string }) => s.id === 'temp').label).toBe('室温');
+  await expect(undo).toBeEnabled();
+
+  await undo.click();
+  await expect.poll(async () => (await model(path)).signals.find((s: { id: string }) => s.id === 'temp').label).toBe('温度');
+  await expect(page.getByLabel('温度 名称', { exact: true })).toHaveValue('温度');
+  await expect(redo).toBeEnabled();
+
+  await redo.click();
+  await expect.poll(async () => (await model(path)).signals.find((s: { id: string }) => s.id === 'temp').label).toBe('室温');
+
+  // 新的编辑会清掉重做分支
+  await undo.click();
+  await expect(redo).toBeEnabled();
+  const again = page.getByLabel('温度 名称', { exact: true });
+  await again.fill('新名字');
+  await again.press('Enter');
+  await expect(page.getByLabel('新名字 名称', { exact: true })).toHaveValue('新名字');
+  await expect.poll(async () => (await model(path)).signals.find((s: { id: string }) => s.id === 'temp').label).toBe('新名字');
+  await expect(redo).toBeDisabled();
+});

@@ -135,3 +135,44 @@ test('efw.json 可编辑，保存后其他页面按新模型刷新', async ({ pa
   await page.getByRole('button', { name: '数据流', exact: true }).click();
   await expect(page.getByLabel('control 周期')).toHaveValue('20');
 });
+
+test('源码草稿在刷新后仍然存在', async ({ page, request }) => {
+  const path = join(root, 'app');
+  await request.post('/rpc', { data: { method: 'project.create', params: { path, name: '恒温控制', template: 'thermostat' } } });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.addInitScript((p) => localStorage.setItem('efw.lastProject', p), path);
+  await page.goto('/');
+  await page.getByRole('button', { name: '代码', exact: true }).click();
+  await page.getByRole('button', { name: 'src/logic.c', exact: true }).click();
+  const input = page.locator('.monaco-editor textarea');
+  await waitEditorReady(page, input);
+  const before = await readFile(join(path, 'src/logic.c'), 'utf8');
+
+  await input.focus();
+  await page.keyboard.press('Control+End');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('ArrowUp');
+  await page.keyboard.press('End');
+  await page.keyboard.insertText('  // 刷新前写的');
+  await expect(page.getByRole('button', { name: '保存文件', exact: true })).toBeEnabled();
+  // 等防抖的草稿写入
+  await expect.poll(async () => page.evaluate((p) => Boolean(localStorage.getItem(`efw.drafts:${p}`)), path)).toBe(true);
+
+  // 刷新：磁盘没变，但草稿回来了
+  await page.reload();
+  await page.getByRole('button', { name: '代码', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('恢复了未保存草稿', { timeout: 30000 });
+  // 文件列表直接标出未保存
+  await expect(page.getByRole('button', { name: /src\/logic\.c 未保存/ })).toBeVisible();
+  await page.getByRole('button', { name: /src\/logic\.c/ }).click();
+  await expect(page.locator('.monaco-editor .view-lines')).toContainText('刷新前写的', { timeout: 30000 });
+  await expect(page.getByRole('button', { name: '保存文件', exact: true })).toBeEnabled();
+  expect(await readFile(join(path, 'src/logic.c'), 'utf8')).toBe(before);
+
+  // 保存后草稿从本地存储里消失
+  await page.getByRole('button', { name: '保存文件', exact: true }).click();
+  await expect(page.getByRole('status')).toContainText('已保存', { timeout: 30000 });
+  await expect.poll(async () => page.evaluate((p) => localStorage.getItem(`efw.drafts:${p}`), path)).toBe(null);
+  expect(await readFile(join(path, 'src/logic.c'), 'utf8')).toContain('刷新前写的');
+});
