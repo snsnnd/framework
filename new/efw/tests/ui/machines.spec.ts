@@ -24,12 +24,12 @@ for (const colorScheme of ['dark', 'light'] as const) {
     await fault.focus();
     await page.keyboard.press('Enter');
     await expect(fault).toHaveAttribute('aria-pressed', 'true');
-    await expect(details).toContainText('强制冷却');
-    await expect(details).toContainText('count_fault()');
+    await expect(page.getByLabel('mode fault 运行 cooldown')).toBeChecked();
+    await expect(page.getByLabel('fault on_enter')).toHaveValue('count_fault');
     const recover = page.getByRole('button', { name: /recover$/ });
     await recover.click();
     await expect(recover).toHaveAttribute('aria-pressed', 'true');
-    await expect(details).toContainText('温度控制');
+    await expect(page.getByLabel('mode running 运行 control')).toBeChecked();
     await expect(page.locator('.machine-edge.is-selected')).toHaveCount(1);
     expect(await page.locator('.page').evaluate((el) => el.scrollWidth <= el.clientWidth)).toBeTruthy();
     await page.screenshot({ path: testInfo.outputPath(`machines-${colorScheme}.png`), fullPage: true });
@@ -68,5 +68,5 @@ test('空项目与多状态机，条件、任意来源、自转换和声明顺�
   await page.getByLabel('状态机', { exact: true }).selectOption('other');
   await expect(page.getByText('还没有转换规则。应用将保持在初始状态。')).toBeVisible();
   await page.getByLabel('状态机', { exact: true }).selectOption('mode');
-  await expect(page.getByRole('region', { name: '状态详情' })).toContainText('temp = 0');
+  await expect(page.getByLabel('idle 设置 temp')).toHaveValue('0');
 });

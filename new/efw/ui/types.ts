@@ -1,6 +1,7 @@
 // 与后端字段一一对应（docs/02、docs/04）。界面只读这些结构，不自行推导。
 export interface Signal { id: string; label: string; type: string; init: number; unit: string; tune: { min: number; max: number } | null }
-export interface IoPoint { id: string; label: string; type: string; unit: string }
+export interface Sim { kind: string; [k: string]: unknown }
+export interface IoPoint { id: string; label: string; type: string; unit: string; sim?: Sim }
 export interface Step { id: string; kind: string; [k: string]: unknown }
 export interface Flow { id: string; label: string; period_ms: number; steps: Step[] }
 export interface State { id: string; label: string; run: string[]; set: Record<string, number>; on_enter?: string; on_exit?: string }
@@ -16,13 +17,21 @@ export interface Model {
 }
 export interface Diagnostic { level: 'error' | 'warn' | 'info'; at: string; message: string; hint: string }
 export interface PlanItem { id: string; label: string; kind: string; period_ms: number; steps: number; controlled_by: string | null }
-export interface FnInfo { name: string; kind: string; role: string; file: string; signature: string; defined: boolean; mismatch: string | null }
+export interface FnInfo { name: string; kind: string; role: string; owner: string; file: string; signature: string; defined: boolean; mismatch: string | null }
 export type UsageRef = { flow: string; step: string } | { machine: string; state: string } | { machine: string; transition: string };
+export interface StepField { name: string; role: 'signal' | 'input' | 'output' | 'event' | 'call' | 'number' | 'enum'; label: string; default?: number; min?: number | null; max?: number | null; options?: string[] }
+export interface StepSpec { kind: string; label: string; fields: StepField[] }
+export interface SimSpec { kind: string; label: string; fields: SimField[] }
+export interface SimField { name: string; role: 'output' | 'number' | 'ms'; label: string; default?: number; min?: number | null; max?: number | null }
 export interface Analysis {
   ok: boolean; hash: string; diagnostics: Diagnostic[]; plan: PlanItem[]; functions: FnInfo[];
+  step_specs?: StepSpec[];
+  sim_specs?: SimSpec[];
   usage: {
     signals?: Record<string, { writers: UsageRef[]; readers: UsageRef[] }>;
     events?: Record<string, { emitters: UsageRef[]; consumers: UsageRef[] }>;
+    inputs?: Record<string, { steps: UsageRef[] }>;
+    outputs?: Record<string, { steps: UsageRef[] }>;
   };
   memory: { total: number; parts: { name: string; bytes: number }[] };
 }

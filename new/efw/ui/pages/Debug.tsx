@@ -117,6 +117,7 @@ export function Debug({ onOpenCode }: { onOpenCode: () => void }) {
         <button className="btn" disabled={debug.state === 'stopped'} onClick={() => void stopDebug()}>停止</button>
       </div>
       {debug.message && <p className={`debug-message ${debug.state === 'error' || debug.warning ? 'err-text' : 'sub'}`} role="status">{debug.message}</p>}
+      {manifest && analysis && manifest.hash !== analysis.hash && <p className="debug-message debug-stale sub" role="status">模型已修改；当前曲线来自上一次构建，点“重新开始”以应用新模型。</p>}
       {debug.ack && <p className="debug-ack sub" role="status">{debug.ack.ok ? '目标已确认' : '目标拒绝'} <span className="id">{debug.ack.command}</span>{debug.ack.message ? ` · ${debug.ack.message}` : ''}</p>}
     </section>}
 

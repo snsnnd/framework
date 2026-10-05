@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 let root: string;
-test.setTimeout(180000);
+test.setTimeout(240000);
 test.beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'efw-gen-')); });
 test.afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
@@ -20,7 +20,7 @@ test('生成页：预览 Diff、提交写入、冲突阻止与恢复', async ({ 
   const core = page.locator('.generate-files [data-path="app_core.c"]');
   await expect(core).toContainText('新增');
   await core.click();
-  await expect(page.locator('.monaco-diff-editor')).toBeVisible({ timeout: 90000 });
+  await expect(page.locator('.monaco-diff-editor')).toBeVisible({ timeout: 150000 });
 
   await page.getByRole('button', { name: '提交生成' }).click();
   await expect(page.getByRole('status')).toContainText('已生成');

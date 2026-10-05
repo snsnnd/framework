@@ -45,8 +45,19 @@ def is_num(v: Any) -> bool:
     return isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v)
 
 
+def _normalize(value: Any) -> Any:
+    """把整值浮点统一成整数，避免 JSON 传输（JS 的 0.0 → 0）改变模型哈希。"""
+    if isinstance(value, float) and value.is_integer() and math.isfinite(value):
+        return int(value)
+    if isinstance(value, dict):
+        return {k: _normalize(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_normalize(v) for v in value]
+    return value
+
+
 def canonical(model: dict) -> str:
-    return json.dumps(model, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return json.dumps(_normalize(model), sort_keys=True, ensure_ascii=False, separators=(",", ":"))
 
 
 def model_hash(model: dict) -> str:
@@ -441,11 +452,77 @@ def normalize_params(params: str) -> list[str]:
     return out
 
 
+def step_specs() -> list[dict[str, Any]]:
+    """步骤类型表供界面渲染：字段、默认值与参数范围都来自 STEPS/PARAM_RANGE。"""
+    out = []
+    for kind, spec in STEPS.items():
+        fields: list[dict[str, Any]] = []
+        if kind == "read":
+            fields.append({"name": "input", "role": "input", "label": "输入"})
+        for field in spec.get("out", []):
+            fields.append({"name": field, "role": "signal", "label": "写入信号"})
+        for field in spec.get("inp", []):
+            role = "signal"
+            label = "读取信号"
+            if kind == "emit" and field == "event":
+                role, label = "event", "事件"
+            elif kind == "custom" and field == "call":
+                role, label = "call", "C 函数"
+            fields.append({"name": field, "role": role, "label": label})
+        if kind == "write":
+            fields.append({"name": "output", "role": "output", "label": "输出"})
+        if kind == "emit":
+            fields.append({"name": "op", "role": "enum", "label": "比较", "options": [">", "<", ">=", "<=", "==", "!="]})
+        for name, default in spec.get("params", {}).items():
+            lo, hi = PARAM_RANGE.get(name, (None, None))
+            fields.append({"name": name, "role": "number", "label": name, "default": default, "min": lo, "max": hi})
+        for name, default in spec.get("static", {}).items():
+            fields.append({"name": name, "role": "number", "label": name, "default": default, "min": None, "max": None})
+        out.append({"kind": kind, "label": spec["label"], "fields": fields})
+    return out
+
+
+SIM_LABELS: dict[str, str] = {
+    "const": "恒定值", "sine": "正弦波", "ramp": "斜坡", "square": "方波", "noise": "带噪声的恒定值",
+    "follow": "跟随某个输出",
+}
+SIM_FIELD_LABELS: dict[str, dict[str, str]] = {
+    "const": {"value": "输出值"},
+    "sine": {"offset": "中心值", "amp": "幅值", "period_ms": "周期（ms）"},
+    "ramp": {"from": "起点值", "to": "终点值", "duration_ms": "过渡时长（ms）"},
+    "square": {"low": "低电平", "high": "高电平", "period_ms": "周期（ms）"},
+    "noise": {"offset": "中心值", "amp": "幅值", "noise": "噪声量（0 表示不加）"},
+    "follow": {"output": "跟随的输出", "base": "基线值", "gain": "增益", "tau_ms": "时间常数（ms）"},
+}
+
+
+def sim_specs() -> list[dict[str, Any]]:
+    """输入仿真类型表供界面渲染：字段与默认值都来自 SIM_KINDS。"""
+    out = []
+    for kind, fields in SIM_KINDS.items():
+        labels = SIM_FIELD_LABELS.get(kind, {})
+        specs = []
+        for field, default in fields.items():
+            if field == "output":
+                specs.append({"name": field, "role": "output", "label": labels.get(field, field)})
+            else:
+                role = "ms" if field.endswith("_ms") else "number"
+                specs.append({"name": field, "role": role, "label": labels.get(field, field), "default": default,
+                              "min": 1 if role == "ms" else None, "max": None})
+        if kind == "noise":
+            specs.append({"name": "noise", "role": "number", "label": labels["noise"], "default": 0.0,
+                          "min": 0.0, "max": None})
+        out.append({"kind": kind, "label": SIM_LABELS[kind], "fields": specs})
+    return out
+
+
 def analyze(model: dict, sources: dict[str, str]) -> dict:
     diags = validate(model)
     ok = not any(x["level"] == "error" for x in diags)
     result: dict[str, Any] = {"ok": ok, "diagnostics": diags, "hash": model_hash(model) if isinstance(model, dict) else "",
-                              "functions": [], "plan": [], "usage": {}, "memory": {"total": 0, "parts": []}}
+                              "functions": [], "plan": [], "usage": {}, "step_specs": step_specs(),
+                              "sim_specs": sim_specs(),
+                              "memory": {"total": 0, "parts": []}}
     if not isinstance(model, dict):
         return result
     if ok or isinstance(model.get("inputs"), list):
@@ -479,11 +556,13 @@ def analyze(model: dict, sources: dict[str, str]) -> dict:
     if items(model, "machines") or items(model, "events"):
         result["plan"].append({"id": "_modes", "label": "状态机与事件处理", "kind": "system", "period_ms": tick, "steps": 0, "controlled_by": None})
 
-    usage: dict[str, dict] = {"signals": {}, "events": {}}
+    usage: dict[str, dict] = {"signals": {}, "events": {}, "inputs": {}, "outputs": {}}
     def sig(x: str) -> dict:
         return usage["signals"].setdefault(x, {"writers": [], "readers": []})
     def ev(x: str) -> dict:
         return usage["events"].setdefault(x, {"emitters": [], "consumers": []})
+    def io(x: str, key: str) -> dict:
+        return usage[key].setdefault(x, {"steps": []})
     for f in items(model, "flows"):
         for s in items(f, "steps"):
             ref = {"flow": f["id"], "step": s["id"]}
@@ -492,6 +571,10 @@ def analyze(model: dict, sources: dict[str, str]) -> dict:
                 sig(s[fld])["writers"].append(ref)
             for fld in spec.get("inp", []):
                 sig(s[fld])["readers"].append(ref)
+            if s["kind"] == "read":
+                io(s["input"], "inputs")["steps"].append(ref)
+            if s["kind"] == "write":
+                io(s["output"], "outputs")["steps"].append(ref)
             for x in s.get("writes", []) if s["kind"] == "custom" else []:
                 sig(x)["writers"].append(ref)
             for x in s.get("reads", []) if s["kind"] == "custom" else []:

@@ -1,7 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
 import { applyDebugEvent, EMPTY_DEBUG, type DebugState } from './debug';
 import { call, onEvent } from './rpc';
-import type { Analysis, Manifest, Opened } from './types';
+import type { Analysis, Diagnostic, Manifest, Model, Opened } from './types';
 
 export interface DebugTarget { kind: 'virtual' | 'serial' | 'tcp' | 'replay'; run?: string; port?: string; baud?: number; host?: string }
 interface DebugStart { session: string; kind: string; manifest: Manifest; state: string }
@@ -18,6 +18,7 @@ interface Store {
   stopDebug: () => Promise<void>;
   controlDebug: (action: string, value?: number) => Promise<void>;
   sendDebug: (line: string) => Promise<void>;
+  updateModel: (mutate: (model: Model) => Model) => Promise<{ ok: boolean; diagnostics: Diagnostic[] }>;
   open: (path: string) => Promise<void>;
   create: (path: string, name: string, template: string) => Promise<void>;
   refresh: () => Promise<void>;
@@ -35,6 +36,15 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [sourcesDirty, setSourcesDirty] = useState(false);
   const [debug, setDebug] = useState<DebugState>(EMPTY_DEBUG);
   const sessionRef = useRef<string | null>(null);
+  const projectRef = useRef<Opened | null>(null);
+  projectRef.current = project;
+  const chainRef = useRef<Promise<unknown>>(Promise.resolve());
+
+  const applyProject = useCallback(async (p: Opened) => {
+    setProject(p);
+    setAnalysis(await call<Analysis>('project.analyze', { path: p.path, model: p.model }));
+    localStorage.setItem(LAST, p.path);
+  }, []);
 
   const load = useCallback(async (p: Opened) => {
     const active = sessionRef.current;
@@ -44,10 +54,8 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
     setDebug(EMPTY_DEBUG);
     setSourcesDirty(false);
-    setProject(p);
-    setAnalysis(await call<Analysis>('project.analyze', { path: p.path, model: p.model }));
-    localStorage.setItem(LAST, p.path);
-  }, []);
+    await applyProject(p);
+  }, [applyProject]);
 
   const guard = useCallback(async (work: () => Promise<void>) => {
     setBusy(true); setError(null);
@@ -66,6 +74,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     await load(next);
     return next;
   }, [project, load]);
+
+// 串行执行：连续编辑共用一条 revision 链，避免第二次提交撞上旧 revision。
+  const updateModel = useCallback(async (mutate: (model: Model) => Model) => {
+    const run = async (): Promise<{ ok: boolean; diagnostics: Diagnostic[] }> => {
+      const failure = (message: string) => ({ ok: false, diagnostics: [{ level: 'error', at: 'model', message, hint: '' } as Diagnostic] });
+      const current = projectRef.current;
+      if (!current) return failure('没有打开项目');
+      let candidate: Model;
+      try { candidate = mutate(structuredClone(current.model)); }
+      catch (e) { return failure((e as Error).message); }
+      setBusy(true); setError(null);
+      try {
+        const info = await call<Analysis>('project.analyze', { path: current.path, model: candidate });
+        if (!info.ok) return { ok: false, diagnostics: info.diagnostics.filter((d) => d.level === 'error') };
+        const saved = await call<{ revision: string }>('project.save', { path: current.path, model: candidate, layout: current.layout, rev: current.revision });
+        projectRef.current = { ...current, model: candidate, revision: saved.revision };
+        setProject(projectRef.current);
+        setAnalysis(info);
+        return { ok: true, diagnostics: [] };
+      } catch (e) {
+        return failure((e as Error).message);
+      } finally { setBusy(false); }
+    };
+    const task = chainRef.current.then(run, run);
+    chainRef.current = task.catch(() => undefined);
+    return task;
+  }, []);
 
   useEffect(() => onEvent((event) => {
     const session = typeof event.session === 'string' ? event.session : '';
@@ -124,7 +159,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     if (last) void open(last);
   }, [open]);
 
-  return <Ctx.Provider value={{ project, analysis, busy, error, sourcesDirty, setSourcesDirty, debug, startDebug, stopDebug, controlDebug, sendDebug, open, create, refresh, reload }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ project, analysis, busy, error, sourcesDirty, setSourcesDirty, debug, startDebug, stopDebug, controlDebug, sendDebug, updateModel, open, create, refresh, reload }}>{children}</Ctx.Provider>;
 }
 
 export function useStore(): Store {

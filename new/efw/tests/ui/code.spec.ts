@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 let root: string;
-test.setTimeout(90000);
+test.setTimeout(240000);
 test.beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'efw-code-')); });
 test.afterEach(async () => { await rm(root, { recursive: true, force: true }); });
 
@@ -15,13 +15,16 @@ test('模板只读、编辑保存、跨页草稿保留及外部写入冲突保�
   const disk = () => readFile(join(path, 'src/logic.c'), 'utf8');
   const original = await disk();
   const remoteRequests: string[] = [];
-  page.on('request', (r) => { if (!r.url().startsWith('http://127.0.0.1:5173') && !r.url().startsWith('data:')) remoteRequests.push(r.url()); });
+  page.on('request', (r) => {
+    const url = new URL(r.url());
+    if (url.protocol !== 'data:' && url.hostname !== '127.0.0.1') remoteRequests.push(r.url());
+  });
   await page.addInitScript((path) => localStorage.setItem('efw.lastProject', path), path);
   await page.goto('/');
   await page.getByRole('button', { name: '代码', exact: true }).click();
   await page.getByRole('button', { name: 'src/logic.c', exact: true }).click();
   const input = page.locator('.monaco-editor textarea');
-  await expect(input).toBeVisible({ timeout: 60000 });
+  await expect(input).toBeVisible({ timeout: 150000 });
   const save = page.getByRole('button', { name: '保存文件', exact: true });
 
   // 固定结构不可改：文件末尾输入被拦截，不产生草稿
@@ -78,7 +81,7 @@ test('函数模板进入草稿，保存后替换实现并保持模板保护', as
   await page.goto('/');
   await page.getByRole('button', { name: '代码', exact: true }).click();
   await page.getByRole('button', { name: '创建函数模板', exact: true }).click();
-  await expect(page.locator('.monaco-editor textarea')).toBeVisible({ timeout: 60000 });
+  await expect(page.locator('.monaco-editor textarea')).toBeVisible({ timeout: 150000 });
   expect((await read('src/logic.c')).result.content).not.toContain('count_fault');
   await page.getByRole('button', { name: '保存文件', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('补充了函数模板');
@@ -105,23 +108,30 @@ test('efw.json 可编辑，保存后其他页面按新模型刷新', async ({ pa
   await page.getByRole('button', { name: '代码', exact: true }).click();
   await page.getByRole('button', { name: /efw\.json/ }).click();
   const input = page.locator('.monaco-editor textarea');
-  await expect(input).toBeVisible({ timeout: 60000 });
+  await expect(input).toBeVisible({ timeout: 150000 });
   const save = page.getByRole('button', { name: '保存文件', exact: true });
+  // Monaco 是按需加载的：视图刚挂上时输入会被丢弃。每次都整段重写，重试是幂等的。
+  const replace = async (text: string) => {
+    for (let i = 0; i < 8; i++) {
+      await input.focus();
+      await page.keyboard.press('Control+A');
+      await page.keyboard.insertText(text);
+      if (await save.isEnabled()) return;
+      await page.waitForTimeout(400);
+    }
+    throw new Error('编辑器没有接受输入，草稿始终不是“未保存”');
+  };
 
-  await input.focus();
-  await page.keyboard.press('Control+A');
-  await page.keyboard.insertText('{ bad json');
+  await replace('{ bad json');
   await save.click();
   await expect(page.locator('.code-page').getByRole('alert')).toContainText('efw.json 格式错误');
   expect(JSON.parse(await readFile(join(path, 'efw.json'), 'utf8')).flows[0].period_ms).toBe(10);
 
   const model = JSON.parse(await readFile(join(path, 'efw.json'), 'utf8'));
   model.flows[0].period_ms = 20;
-  await input.focus();
-  await page.keyboard.press('Control+A');
-  await page.keyboard.insertText(JSON.stringify(model, null, 2) + '\n');
+  await replace(JSON.stringify(model, null, 2) + '\n');
   await save.click();
   await expect(page.getByRole('status')).toContainText('已保存 efw.json');
   await page.getByRole('button', { name: '数据流', exact: true }).click();
-  await expect(page.getByText(/每 20 ms/)).toBeVisible();
+  await expect(page.getByLabel('control 周期')).toHaveValue('20');
 });

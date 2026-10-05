@@ -14,7 +14,11 @@ export function efwBridge() {
 
       createInterface({ input: py.stdout }).on('line', (line) => {
         let msg;
-        try { msg = JSON.parse(line); } catch { return; }
+        try { msg = JSON.parse(line); } catch {
+          // 协议行被污染时不能默默丢掉：丢掉响应会让前端的请求永远不返回。
+          process.stderr.write(`[efw-bridge] 忽略非协议输出：${line.slice(0, 200)}\n`);
+          return;
+        }
         if (msg.id != null && pending.has(msg.id)) {
           pending.get(msg.id)(msg);
           pending.delete(msg.id);

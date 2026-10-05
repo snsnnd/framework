@@ -21,19 +21,37 @@
 
 ## 服务协议（JSON Lines over stdio）
 
-请求 `{"id","method","params"}`；响应 `{"id","result"}` / `{"id","error":{"code","message"}}`；通知（无 id）`{"event":"debug.frames","session","frames":[...]}`、`{"event":"debug.status","session","state","t","message"}`。
+请求 `{"id","method","params"}`；响应 `{"id","result"}` / `{"id","error":{"code","message"}}`；通知（无 id）`{"event":"debug.frames","session","frames":[...]}`、`{"event":"debug.status","session","state","t","speed","message","warning?","end?"}`（`end` 仅回放）。
 
 | 方法 | 作用 |
 | --- | --- |
-| `project.create/open/save/analyze` | 项目与模型；`save` 使用 revision 防冲突 |
+| `system.info` / `templates.list` | 服务版本与四个新建模板 |
+| `project.create/open/save/analyze` | 项目与模型；`create` 参数 `{path,name,template}`；`save` 使用 revision 防冲突 |
 | `project.stub` | 为缺失函数生成骨架 |
 | `file.read/write/create` | 用户源码（`src/`、`board/`） |
 | `generate.preview/commit` | 逐文件 Diff → token → 写入 `generated/` |
-| `debug.start/control/send/stop`、`debug.runs` | 调试会话与记录 |
+| `debug.start` | `{path,target,model?}` → `{session,kind,manifest,state}`；目标 `{kind:virtual\|serial\|tcp\|replay, ...}`；模型有错误抛 `VALIDATION` |
+| `debug.control` | `{session,action,value?}`：`play` · `pause` · `step`（仅虚拟且已暂停，`value` 为前进毫秒）· `speed`（1.0 正常，0 为最快）· `reset`（重建会话） |
+| `debug.send/stop`、`debug.runs` | 文本命令、结束会话、列出 `.efw/runs/` 记录 |
 
 状态机只读页消费 `project.open` 的 `model.machines` 与 `project.analyze` 的诊断；未增加协议方法或通知。切换状态机、选择状态、选择转换均为本地浏览操作，不调用 `debug.send`。
 
 通信页消费同一模型与 `project.analyze.usage/memory`，分类、搜索和选择详情均为本地操作。
+
+### 页面内模型编辑
+
+数据流、状态机、通信页可以直接改模型，统一走 `store.updateModel(mutate)`：`structuredClone` 当前模型 → `mutate` 返回新模型 → `project.analyze` 校验（**不通过则不写盘**，返回错误诊断）→ `project.save`（带 revision）→ 就地更新项目与分析结果。所有编辑串行执行（store 内一条 promise 链），连续快速修改共用最新 revision，不会互相冲突。
+
+- 新增对象时校验 id：`^[a-z][a-z0-9_]{0,23}$` 且同类唯一（`ui/model-edit.ts` 的 `idProblem`/`suggestId`）；id 创建后不可修改，界面里只读展示。
+- 删除前用 `project.analyze` 的 `usage` 判断引用：信号看 `writers/readers`，事件看 `emitters/consumers`，输入/输出看 `steps`（被“读取”/“写入”步骤引用）；有引用时拒绝删除并列出位置。队列没有引用分析，允许删除但提示用户 C 代码可能仍在调用。
+- 后端拒绝的编辑（类型不符、容量越界、周期不是节拍整数倍等）保留原模型，输入框回滚到模型值，页面顶部用诊断条显示 `message` 与 `hint`。
+- 编辑模型不会影响正在运行的调试会话；调试页在 `manifest.hash` 与当前 `analysis.hash` 不一致时提示“模型已修改，重新开始以应用新模型”。
+
+状态机页同样可编辑：改状态名、勾选该状态运行的数据流（已被别的状态机控制的下拉禁用并标注）、增删进入时设置的信号、`on_enter`/`on_exit` 钩子、设为初始状态；转换规则可增删、上下调整评估顺序，改起点/终点（起点含“任意状态”）与触发方式（事件 / 超时 / 信号比较 / C 函数）。删除状态前检查是否被转换引用。
+
+数据流页与通信页共用这套编辑：数据流可改周期、展开步骤改字段（信号/输入/输出/事件/数值参数，字段与可选项由后端 `analyze` 返回的 `step_specs` 给出，不在界面硬编码）、上下移动步骤、增删步骤与数据流。新增步骤时必填引用字段会预填默认值，避免新步骤让模型非法而被拒。删除数据流前检查是否有状态机在 `run` 里引用它。
+
+通信页有五个分类：信号、输入、输出、事件、队列。输入/输出可改名称、类型、单位，并可增删；输入另有“虚拟目标里自动产生这个输入”，仿真类型与字段由后端 `analyze.sim_specs`（`const`/`sine`/`ramp`/`square`/`noise`/`follow`，字段名、默认值与正数约束都来自 `SIM_KINDS`）驱动，切换类型时预填默认值（含 `follow` 跟随的第一个输出），否则模型非法会被后端拒绝而无法完成配置。详情区同时列出该输入/输出需要用户实现的 C 函数（`analyze.functions` 里 `owner` 为 `inputs/<id>` 或 `outputs/<id>` 的项，含所在文件与是否已实现）。
 
 ### 源码页使用的现有协议
 
@@ -51,11 +69,11 @@
 
 ## 界面结构
 
-左侧图标导航：总览 · 数据流 · 状态机 · 通信 · 代码 · 调试 · 生成。顶栏：项目名、保存、撤销/重做、“运行”（一键进入虚拟调试）。底部状态栏：诊断计数、目标连接状态、仿真时间。
+左侧图标导航：总览 · 数据流 · 状态机 · 通信 · 代码 · 调试 · 生成。顶栏：项目名与路径、重新载入、运行/停止（启动虚拟目标并跳到调试页，有未保存源码草稿或模型错误时禁用）。底部状态栏：诊断计数、目标连接状态（占位）、模型 hash。撤销/重做尚未实现。
 
 设计语言：示波器式工程界面。中性石墨底 + 单一钴蓝强调色；绿/黄/红只表示状态；等宽字体显示标识符与数值，界面文字用系统中文字体；明暗主题跟随系统；1366×768 下无需横向滚动；所有交互控件有键盘焦点与文字标签。
 
-状态机页已提供：状态机选择器、初始状态标记、有向关系图、状态详情、按声明顺序排列的转换规则。规则可选中以高亮对应路径；状态按钮支持键盘操作。窄窗口下详情移至图下方，大图只在图区域内部滚动。当前为只读模型预览，编辑和调试运行高亮尚未接入。
+状态机页：状态机选择器、初始状态标记、有向关系图、按声明顺序排列的转换规则；图与规则表都可选中，选中状态/规则会互相高亮对应路径。详情区与规则展开区是编辑器（见“页面内模型编辑”）。窄窗口下详情移至图下方，大图只在图区域内部滚动。目标运行时的状态高亮尚未接入。
 
 通信页已提供信号 / 事件 / 队列分类、名称与 id 搜索、配置表、关系详情和相关诊断。代码页支持本地 Monaco 编辑、创建 C/H 草稿、带 revision 保存及缺失函数骨架。Monaco 按需加载，worker 本地打包，无 CDN。
 

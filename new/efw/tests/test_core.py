@@ -13,6 +13,7 @@ from pathlib import Path
 from studio_core import codegen, project, templates
 from studio_core.debug import Session, find_cc, runtime_dir
 from studio_core.fsutil import ServiceError
+from studio_core import model as studio_model
 from studio_core.model import analyze, model_hash, validate
 from studio_core.service import Service
 
@@ -33,6 +34,43 @@ class Base(unittest.TestCase):
 
 
 class ModelTests(Base):
+    def test_hash_ignores_integral_float_spelling(self):
+        model, _, _ = templates.build("thermostat", "x")
+        base = model_hash(model)
+
+        def as_js(value):  # JavaScript 的 JSON.parse 会把 0.0 变成 0
+            if isinstance(value, float) and value.is_integer():
+                return int(value)
+            if isinstance(value, dict):
+                return {k: as_js(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [as_js(v) for v in value]
+            return value
+
+        self.assertEqual(base, model_hash(as_js(model)))
+        self.assertNotEqual(base, model_hash({**model, "tick_ms": 2}))
+
+    def test_step_specs_expose_hardware_points_and_usage_tracks_them(self):
+        model, files, _ = templates.build("thermostat", "x")
+        info = analyze(model, {k: v for k, v in files.items() if k.endswith(".c")})
+        specs = {s["kind"]: {f["name"]: f["role"] for f in s["fields"]} for s in info["step_specs"]}
+        # 界面靠这张表渲染“读取/写入”步骤的硬件选择框，缺了就选不了输入输出
+        self.assertEqual(specs["read"].get("input"), "input")
+        self.assertEqual(specs["write"].get("output"), "output")
+        read_at = {r["step"] for r in info["usage"]["inputs"]["sensor"]["steps"]}
+        self.assertIn("read", read_at)
+        written = {r["step"] for r in info["usage"]["outputs"]["heater"]["steps"]}
+        self.assertIn("drive", written)
+
+    def test_sim_specs_cover_every_sim_kind(self):
+        info = analyze({"version": 1, "name": "x", "tick_ms": 1, "signals": [], "inputs": [],
+                        "outputs": [], "events": [], "queues": [], "flows": [], "machines": []}, {})
+        kinds = [s["kind"] for s in info["sim_specs"]]
+        self.assertEqual(set(kinds), set(studio_model.SIM_KINDS))
+        follow = next(s for s in info["sim_specs"] if s["kind"] == "follow")
+        self.assertEqual([f["role"] for f in follow["fields"]][0], "output")
+        self.assertTrue(all(f["min"] == 1 for f in follow["fields"] if f["role"] == "ms"))
+
     def test_recipes_are_valid_and_fully_implemented(self):
         for name in RECIPES:
             model, files, _ = templates.build(name, "x")
