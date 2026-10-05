@@ -31,9 +31,12 @@ function condition(t: Transition, model: Model): string {
   return '条件无效（请查看模型诊断）';
 }
 
+const secs = (ms: number) => `${(Math.max(0, ms) / 1000).toFixed(1)}s`;
+
 // 坐标只决定显示位置；不对转换排序，也不计算执行计划。
-function StateGraph({ machine, selected, transition, select }: {
+function StateGraph({ machine, selected, transition, select, live }: {
   machine: Machine; selected: string; transition: string | null; select: (id: string) => void;
+  live: { current: string; since: number } | null;
 }) {
   const marker = useId().replace(/:/g, '');
   const states = machine.states;
@@ -66,9 +69,12 @@ function StateGraph({ machine, selected, transition, select }: {
         {entries.map((s, i) => s.id === '*' ? (
           <div key={s.id} className="machine-state machine-any" style={{ top: i * 104 + 32 }}>{s.label}<span className="sub">匹配所有来源</span></div>
         ) : (
-          <button key={s.id} type="button" className="machine-state" style={{ top: i * 104 + 32 }} aria-pressed={selected === s.id} onClick={() => select(s.id)}>
+          <button key={s.id} type="button" data-id={s.id} className={`machine-state${live?.current === s.id ? ' is-live' : ''}`}
+            style={{ top: i * 104 + 32 }} aria-pressed={selected === s.id} aria-current={live?.current === s.id ? 'true' : undefined}
+            onClick={() => select(s.id)}>
             <span className="machine-state-title">{s.label || s.id}{s.id === machine.initial && <span className="machine-initial">初始</span>}</span>
             <span className="id sub">{s.id}</span>
+            {live?.current === s.id && <span className="machine-live">运行中 {secs(live.since)}</span>}
           </button>
         ))}
       </div>
@@ -76,11 +82,12 @@ function StateGraph({ machine, selected, transition, select }: {
   );
 }
 
-function MachineView({ machine, model, apply, pending, resetToken, errors, setErrors, focus }: {
+function MachineView({ machine, model, apply, pending, resetToken, errors, setErrors, focus, live }: {
   machine: Machine; model: Model;
   apply: (mutate: (m: Model) => Model) => Promise<boolean>;
   pending: boolean; resetToken: number; errors: Diagnostic[]; setErrors: (d: Diagnostic[]) => void;
   focus: { item?: string; token: number } | null;
+  live: { current: string; since: number } | null;
 }) {
   const [stateId, setStateId] = useState(machine.initial);
   const [transitionId, setTransitionId] = useState<string | null>(null);
@@ -191,7 +198,7 @@ function MachineView({ machine, model, apply, pending, resetToken, errors, setEr
     <div className="machine-workspace card">
       <section className="machine-map" aria-label="状态关系">
         <header><h2>状态关系</h2><span className="sub">点击状态查看详情 · 数字对应转换顺序</span></header>
-        {machine.states.length ? <StateGraph machine={machine} selected={state?.id ?? ''} transition={transitionId} select={select} />
+        {machine.states.length ? <StateGraph machine={machine} selected={state?.id ?? ''} transition={transitionId} select={select} live={live} />
           : <p className="empty">此状态机还没有状态。</p>}
         <div className="step-add">
           {addingState ? <>
@@ -341,7 +348,8 @@ function MachineView({ machine, model, apply, pending, resetToken, errors, setEr
 }
 
 export function Machines({ repair }: { repair: Repair | null }) {
-  const { project, analysis, updateModel } = useStore();
+  const { project, analysis, updateModel, debug } = useStore();
+  const manifest = debug.manifest;
   const [machineId, setMachineId] = useState('');
   const [pending, setPending] = useState(false);
   const [errors, setErrors] = useState<Diagnostic[]>([]);
@@ -353,6 +361,11 @@ export function Machines({ repair }: { repair: Repair | null }) {
   if (!project) return null;
   const model = project.model;
   const machine = model.machines.find((m) => m.id === machineId) ?? model.machines[0];
+  // 运行中的目标：模型哈希一致才敢把快照里的状态套到这个模型上
+  const running = debug.session !== null && !['stopped', 'error', 'ended'].includes(debug.state)
+    && !!manifest && manifest.hash === analysis?.hash;
+  const current = running ? debug.latest?.m?.[machine.id] : undefined;
+  const live = current ? { current: current.s, since: debug.t - current.since } : null;
   const diagnostics = analysis?.diagnostics.filter((d) => machine && (d.at === `machines/${machine.id}` || d.at.startsWith(`machines/${machine.id}/`))) ?? [];
 
   async function apply(mutate: (m: Model) => Model) {
@@ -384,7 +397,7 @@ export function Machines({ repair }: { repair: Repair | null }) {
       </div>
       {diagnostics.length > 0 && <section className="card" aria-label="状态机诊断">{diagnostics.map((d, i) => <div key={i} className={`diag ${d.level}`}><div><div>{d.message}</div>{d.hint && <div className="hint">{d.hint}</div>}</div></div>)}</section>}
       <MachineView key={machine.id} machine={machine} model={model} apply={apply} pending={pending} resetToken={resetToken} errors={errors} setErrors={setErrors}
-        focus={repair?.page === 'machines' && repair.machine === machine.id ? repair : null} />
+        focus={repair?.page === 'machines' && repair.machine === machine.id ? repair : null} live={live} />
     </>}
   </>;
 }

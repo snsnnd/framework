@@ -125,3 +125,36 @@ test('调试页选择真机目标：参数不全时不启动，顶栏运行沿�
   await page.getByRole('button', { name: '连接串口' }).click();
   await expect(page.getByRole('alert')).toContainText(/efw-no-such-port|pyserial/, { timeout: 30000 });
 });
+
+test('调试运行时状态机页高亮当前状态', async ({ page, request }) => {
+  const path = join(root, 'app');
+  await request.post('/rpc', { data: { method: 'project.create', params: { path, name: '恒温控制', template: 'thermostat' } } });
+  await page.emulateMedia({ colorScheme: 'dark' });
+  await page.addInitScript((p) => localStorage.setItem('efw.lastProject', p), path);
+  await page.goto('/');
+
+  // 没在调试：图上只有“初始”标记，没有运行中高亮
+  await page.getByRole('button', { name: '状态机', exact: true }).click();
+  await expect(page.locator('.machine-state.is-live')).toHaveCount(0);
+  await expect(page.locator('.machine-initial')).toHaveCount(1);
+
+  await page.getByRole('button', { name: '调试', exact: true }).click();
+  await page.getByRole('button', { name: '启动虚拟目标' }).click();
+  await expect(page.getByText('运行中')).toBeVisible({ timeout: 30000 });
+  await expect(page.locator('.card[aria-label="状态机"] .chip.acc')).toBeVisible();
+
+  // 运行中：当前状态同时用 aria-current 和“运行中 Ns”标注
+  await page.waitForTimeout(1500);
+  await page.getByRole('button', { name: '状态机', exact: true }).click();
+  const live = page.locator('.machine-state.is-live');
+  await expect(live).toHaveCount(1);
+  await expect(live).toHaveAttribute('aria-current', 'true');
+  await expect(page.locator('.machine-live')).toContainText('运行中');
+
+  // 停止后高亮消失
+  await page.getByRole('button', { name: '调试', exact: true }).click();
+  await page.getByRole('button', { name: '停止', exact: true }).first().click();
+  await expect(page.getByText('已停止')).toBeVisible({ timeout: 30000 });
+  await page.getByRole('button', { name: '状态机', exact: true }).click();
+  await expect(page.locator('.machine-state.is-live')).toHaveCount(0);
+});

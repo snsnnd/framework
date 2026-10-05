@@ -2,6 +2,7 @@ import { test, expect } from '@playwright/test';
 import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { waitEditorReady } from './helpers';
 
 let root: string;
 test.setTimeout(240000);
@@ -24,11 +25,10 @@ test('模板只读、编辑保存、跨页草稿保留及外部写入冲突保�
   await page.getByRole('button', { name: '代码', exact: true }).click();
   await page.getByRole('button', { name: 'src/logic.c', exact: true }).click();
   const input = page.locator('.monaco-editor textarea');
-  await expect(input).toBeVisible({ timeout: 150000 });
   const save = page.getByRole('button', { name: '保存文件', exact: true });
+  await waitEditorReady(page, input);
 
   // 固定结构不可改：文件末尾输入被拦截，不产生草稿
-  await input.focus();
   await page.keyboard.press('Control+End');
   await page.keyboard.press('a');
   await expect(page.getByRole('status')).toContainText('模板结构由工具维护');
@@ -108,9 +108,9 @@ test('efw.json 可编辑，保存后其他页面按新模型刷新', async ({ pa
   await page.getByRole('button', { name: '代码', exact: true }).click();
   await page.getByRole('button', { name: /efw\.json/ }).click();
   const input = page.locator('.monaco-editor textarea');
-  await expect(input).toBeVisible({ timeout: 150000 });
   const save = page.getByRole('button', { name: '保存文件', exact: true });
-  // Monaco 是按需加载的：视图刚挂上时输入会被丢弃。每次都整段重写，重试是幂等的。
+  await waitEditorReady(page, input);
+  // 整段重写，所以重试是幂等的
   const replace = async (text: string) => {
     for (let i = 0; i < 8; i++) {
       await input.focus();

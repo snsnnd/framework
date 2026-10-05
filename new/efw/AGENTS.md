@@ -11,7 +11,7 @@
 ## 1. 给下个 agent 的最重要八条
 
 1. 端到端可用：`studio_core/` + `ui/` 七个导航页面（总览 / 数据流 / 状态机 / 通信 / 代码 / 调试 / 生成）全部实现；风格规范 `docs/05-ui-style.md`。**下一步主线是“页面内模型编辑”**（见第 7 节），即把浏览页（数据流 / 状态机 / 通信）变成结构化编辑器。
-2. 测试：`32` 个后端测试全绿、`22` 条浏览器回归全过。任何改动后按第 8 节跑全套。
+2. 测试：`32` 个后端测试全绿、`23` 条浏览器回归全过。任何改动后按第 8 节跑全套。
 3. 只用 `uv` 管理 Python：`uv sync`、`uv run python ...`。唯一第三方依赖是 `pyserial`（真机串口）。
 4. 模型 id 必须匹配 `^[a-z][a-z0-9_]{0,23}$`；中文只出现在 `label` 里。生成的 C 标识符由 id 直接决定，创建后不可改。
 5. 生成器输出只写 `generated/`；`src/`、`board/` 永远由用户拥有。已有“预览 → token → 提交”与手改冲突保护，不要绕过。
@@ -40,7 +40,7 @@
 | 虚拟目标构建缓存 | `debug.build_virtual`（`.efw/build/<key>/`） | 键 = 模型哈希 + 用户源码摘要；改 codegen 后手工删缓存 |
 | JSON Lines 服务 + CLI | `server.py`、`cli.py` | `ServiceTests` 通过 |
 | C 运行库契约 | `tests/msgq_contract.c`、`tests/scheduler_contract.c` | 编译运行通过（cc -std=c99 -Wall -Wextra） |
-| React UI + 开发桥 | `ui/`、`tools/bridge.mjs` | 22 条 Playwright 回归；Monaco/worker 本地打包、无 CDN |
+| React UI + 开发桥 | `ui/`、`tools/bridge.mjs` | 23 条 Playwright 回归；Monaco/worker 本地打包、无 CDN |
 
 ## 3. 目录与职责
 
@@ -80,7 +80,7 @@ new/efw/
     styles/      tokens.css（唯一颜色来源）+ app.css
   tools/bridge.mjs          开发期 RPC/SSE 桥（Vite 中间件）
   tests/test_core.py         32 个测试（模型 / 生成 / 行为 / 项目 / 调试会话 / 真机链路 / 服务）
-  tests/ui/*.spec.ts         Playwright 回归（22 条）
+  tests/ui/*.spec.ts         Playwright 回归（23 条）
   tests/*_contract.c         C 契约测试
   playwright.config.ts       自动启动 Vite；测试自建临时项目并清理
   pyproject.toml + uv.lock   uv 管理；pyserial；packaging 组留给 PyInstaller
@@ -177,6 +177,8 @@ thermostat 运行窗口 12s→18s；traffic 转换时刻 3001/6002→3000/6000�
 
 真机链路也已用回环监听器与伪终端（PTY）实测，`debug.stop` 的 TCP 卡死问题就是被这组测试抓出来的（见 6.6）。
 
+调试运行时状态机页也会高亮当前状态：`debug.latest.m[<machine>]` 与 `debug.t` 给出状态与已保持时长，用 `.is-live` + `aria-current` + “运行中 Ns”标注。**只有 `manifest.hash === analysis.hash` 时才套用**——模型改了还在看旧固件的快照会误导。停止或会话结束后高亮自动消失。
+
 下一步：
 
 - 硬件在环验证（可选）：真板子上跑 `board/observe_port.c`，看串口丢帧与延迟。
@@ -221,7 +223,8 @@ thermostat 运行窗口 12s→18s；traffic 转换时刻 3001/6002→3000/6000�
 
 ### 测试现状
 
-- 后端 `unittest` 32 条全绿；浏览器 `@playwright/test` 22 条全绿（状态机含编辑、通信含输入输出、数据流、代码、调试含真机目标、生成页、总览修复入口）。
+- 后端 `unittest` 32 条全绿；浏览器 `@playwright/test` 23 条全绿（状态机含编辑与运行时高亮、通信含输入输出、数据流、代码、调试含真机目标、生成页、总览修复入口）。
 - 测试创建临时真实项目（`/tmp`），结束后清理；截图保存在被忽略的 `test-results/`。
-- 全局 `expect.timeout` 放宽到 20 秒（本机负载高时保存一趟要好几秒）；Monaco 按需加载，输入要整段重写并确认草稿变“未保存”，否则首次输入可能被丢弃。
+- 全局 `expect.timeout` 放宽到 20 秒（本机负载高时保存一趟要好几秒）。
+- Monaco 按需加载：textarea 出现得比视图早，此时打字会被整段丢弃（草稿仍是“已保存”）。统一用 `tests/ui/helpers.ts` 的 `waitEditorReady` 等到 `.view-lines` 里出现文字并聚焦；`window.monaco` 并未暴露，别依赖它。需要整段重写的地方（如 efw.json）可以安全重试。
 - 注意：`build_virtual` 缓存键只看模型哈希与用户源码，修改 `codegen.py` 后旧缓存不会失效，开发时手工删 `.efw/build/`。
