@@ -27,6 +27,7 @@
 | --- | --- |
 | `system.info` / `templates.list` | 服务版本与四个新建模板 |
 | `project.create/open/save/analyze` | 项目与模型；`create` 参数 `{path,name,template}`；`save` 使用 revision 防冲突 |
+| `analyze` 附加返回 | `sim_specs`（输入仿真字段表）、`usage.inputs/outputs`（被读取/写入步骤引用）、`functions[].owner`（函数归属的模型路径） |
 | `project.stub` | 为缺失函数生成骨架 |
 | `file.read/write/create` | 用户源码（`src/`、`board/`） |
 | `generate.preview/commit` | 逐文件 Diff → token → 写入 `generated/` |
@@ -68,6 +69,8 @@
 切换页面与文件时保留源码草稿，刷新或关闭窗口有未保存提示；草稿尚未持久化，不能恢复浏览器崩溃。顶栏重新载入项目不丢弃源码草稿；源码页“载入磁盘版本”会确认后丢弃当前文件草稿。签名错误打开源码修正，不自动追加同名函数。模板标记由代码页和 `file.write` 双重保护；代码页对标记外输入直接拦截并提示，保存端再校验一次。
 
 ## 界面结构
+
+总览页的“下一步”把每条诊断变成修复入口：按 `at` 前缀（`flows/`、`machines/`、`signals/`、`comms/<分类>/`）用 `ui/focus.ts` 映射到页面与对象，缺失的 C 函数按 `functions[].file` 跳到代码页；点击只改前端状态，不发 RPC。目标页读 `repair`（含单调递增的 `token`）做一次定位：`ui/App.tsx` 持有该状态，`Overview` 通过 `onRepair` 发起。
 
 左侧图标导航：总览 · 数据流 · 状态机 · 通信 · 代码 · 调试 · 生成。顶栏：项目名与路径、重新载入、运行/停止（启动虚拟目标并跳到调试页，有未保存源码草稿或模型错误时禁用）。底部状态栏：诊断计数、目标连接状态（占位）、模型 hash。撤销/重做尚未实现。
 

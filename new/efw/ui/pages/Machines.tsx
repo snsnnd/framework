@@ -1,6 +1,7 @@
-import { useId, useState } from 'react';
+import { useEffect, useId, useState } from 'react';
 import { CellInput } from '../components/CellInput';
 import { fail, idProblem, patchItem, removeItem, suggestId } from '../model-edit';
+import type { Repair } from '../focus';
 import { useStore } from '../store';
 import type { Diagnostic, Machine, Model, State, Transition } from '../types';
 
@@ -75,10 +76,11 @@ function StateGraph({ machine, selected, transition, select }: {
   );
 }
 
-function MachineView({ machine, model, apply, pending, resetToken, errors, setErrors }: {
+function MachineView({ machine, model, apply, pending, resetToken, errors, setErrors, focus }: {
   machine: Machine; model: Model;
   apply: (mutate: (m: Model) => Model) => Promise<boolean>;
   pending: boolean; resetToken: number; errors: Diagnostic[]; setErrors: (d: Diagnostic[]) => void;
+  focus: { item?: string; token: number } | null;
 }) {
   const [stateId, setStateId] = useState(machine.initial);
   const [transitionId, setTransitionId] = useState<string | null>(null);
@@ -88,6 +90,12 @@ function MachineView({ machine, model, apply, pending, resetToken, errors, setEr
   const [addingTr, setAddingTr] = useState(false);
   const [trNewId, setTrNewId] = useState('');
   const state = machine.states.find((s) => s.id === stateId) ?? machine.states[0];
+  // 总览页点进来时定位到出问题的状态或转换
+  useEffect(() => {
+    if (!focus?.item) return;
+    if (machine.states.some((s) => s.id === focus.item)) setStateId(focus.item);
+    else if (machine.transitions.some((t) => t.id === focus.item)) setTransitionId(focus.item);
+  }, [focus?.token]);
   const select = (id: string) => { setStateId(id); setTransitionId(null); };
 
   const patchMachine = (patch: Record<string, unknown>) => apply((m) => patchItem(m, 'machines', machine.id, patch));
@@ -332,12 +340,16 @@ function MachineView({ machine, model, apply, pending, resetToken, errors, setEr
   </>;
 }
 
-export function Machines() {
+export function Machines({ repair }: { repair: Repair | null }) {
   const { project, analysis, updateModel } = useStore();
   const [machineId, setMachineId] = useState('');
   const [pending, setPending] = useState(false);
   const [errors, setErrors] = useState<Diagnostic[]>([]);
   const [resetToken, setResetToken] = useState(0);
+  // 跳转进来时先选中对应状态机（必须放在 project 判空之前，hook 不能条件执行）
+  useEffect(() => {
+    if (repair?.page === 'machines' && repair.machine) setMachineId(repair.machine);
+  }, [repair?.token]);
   if (!project) return null;
   const model = project.model;
   const machine = model.machines.find((m) => m.id === machineId) ?? model.machines[0];
@@ -371,7 +383,8 @@ export function Machines() {
         <span className="sub">直接编辑，保存后其他页面按新模型刷新</span>
       </div>
       {diagnostics.length > 0 && <section className="card" aria-label="状态机诊断">{diagnostics.map((d, i) => <div key={i} className={`diag ${d.level}`}><div><div>{d.message}</div>{d.hint && <div className="hint">{d.hint}</div>}</div></div>)}</section>}
-      <MachineView key={machine.id} machine={machine} model={model} apply={apply} pending={pending} resetToken={resetToken} errors={errors} setErrors={setErrors} />
+      <MachineView key={machine.id} machine={machine} model={model} apply={apply} pending={pending} resetToken={resetToken} errors={errors} setErrors={setErrors}
+        focus={repair?.page === 'machines' && repair.machine === machine.id ? repair : null} />
     </>}
   </>;
 }

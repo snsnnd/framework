@@ -69,6 +69,13 @@ td.num, th.num { text-align: right; font-family: var(--mono); }
 .diag.error::before { background: var(--err); }
 .diag .at { font: 11px var(--mono); color: var(--fg-faint); }
 .diag .hint { color: var(--fg-dim); }
+/* 可跳转的修复入口：语义仍是 button，键盘可用；悬停给出“可点”的暗示 */
+.diag.repair { width: 100%; text-align: left; font: inherit; color: inherit; background: none; border: 0; border-bottom: 1px solid var(--line); cursor: pointer; grid-template-columns: 8px 1fr auto; align-items: center; }
+.diag.repair:hover { background: var(--bg-hover); }
+.diag.repair:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.diag.repair .go { display: block; margin-top: 4px; font-size: 12px; color: var(--accent); }
+.diag.repair .chev { font-size: 18px; color: var(--fg-faint); padding-left: 8px; }
+.diag.repair:hover .chev { color: var(--accent); }
 .empty { color: var(--fg-dim); padding: 24px 14px; text-align: center; }
 
 /* ---------- 数据流句子 ---------- */

@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useState } from 'react';
 import { call, RpcError } from '../rpc';
+import type { Repair } from '../focus';
 import { useStore } from '../store';
 import type { FnInfo } from '../types';
 
@@ -11,7 +12,7 @@ interface Draft { content: string; saved: string; revision: string | null }
 interface Stub { file: string; header: string; text: string }
 const dirty = (draft: Draft) => draft.revision === null || draft.content !== draft.saved;
 
-export function Code() {
+export function Code({ repair }: { repair: Repair | null }) {
   const { project, analysis, refresh, reload, setSourcesDirty } = useStore();
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const [active, setActive] = useState('');
@@ -22,6 +23,18 @@ export function Code() {
   const [notice, setNotice] = useState('');
   const hasChanges = Object.values(drafts).some(dirty);
   useEffect(() => { setSourcesDirty(hasChanges); }, [hasChanges, setSourcesDirty]);
+  // 总览页点“缺失的函数”时直接打开对应文件（页面常驻，切页不丢草稿）
+  useEffect(() => {
+    if (repair?.page !== 'code' || !repair.item) return;
+    if (active === repair.item) return;
+    void perform(async () => {
+      if (!drafts[repair.item!]) {
+        const loaded = await read(repair.item!);
+        setDrafts((all) => ({ ...all, [repair.item!]: loaded }));
+      }
+      setActive(repair.item!);
+    });
+  }, [repair?.token]);
   useEffect(() => {
     if (!hasChanges) return;
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = ''; };

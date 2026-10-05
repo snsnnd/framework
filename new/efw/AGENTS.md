@@ -11,7 +11,7 @@
 ## 1. 给下个 agent 的最重要八条
 
 1. 端到端可用：`studio_core/` + `ui/` 七个导航页面（总览 / 数据流 / 状态机 / 通信 / 代码 / 调试 / 生成）全部实现；风格规范 `docs/05-ui-style.md`。**下一步主线是“页面内模型编辑”**（见第 7 节），即把浏览页（数据流 / 状态机 / 通信）变成结构化编辑器。
-2. 测试：`29` 个后端测试全绿、`19` 条浏览器回归全过。任何改动后按第 8 节跑全套。
+2. 测试：`29` 个后端测试全绿、`21` 条浏览器回归全过。任何改动后按第 8 节跑全套。
 3. 只用 `uv` 管理 Python：`uv sync`、`uv run python ...`。唯一第三方依赖是 `pyserial`（真机串口）。
 4. 模型 id 必须匹配 `^[a-z][a-z0-9_]{0,23}$`；中文只出现在 `label` 里。生成的 C 标识符由 id 直接决定，创建后不可改。
 5. 生成器输出只写 `generated/`；`src/`、`board/` 永远由用户拥有。已有“预览 → token → 提交”与手改冲突保护，不要绕过。
@@ -39,7 +39,7 @@
 | 虚拟目标构建缓存 | `debug.build_virtual`（`.efw/build/<key>/`） | 键 = 模型哈希 + 用户源码摘要；改 codegen 后手工删缓存 |
 | JSON Lines 服务 + CLI | `server.py`、`cli.py` | `ServiceTests` 通过 |
 | C 运行库契约 | `tests/msgq_contract.c`、`tests/scheduler_contract.c` | 编译运行通过（cc -std=c99 -Wall -Wextra） |
-| React UI + 开发桥 | `ui/`、`tools/bridge.mjs` | 19 条 Playwright 回归；Monaco/worker 本地打包、无 CDN |
+| React UI + 开发桥 | `ui/`、`tools/bridge.mjs` | 21 条 Playwright 回归；Monaco/worker 本地打包、无 CDN |
 
 ## 3. 目录与职责
 
@@ -72,13 +72,14 @@ new/efw/
     template.ts  源码模板标记解析（与后端同规则）
     monaco.ts    编辑器与 Diff 共用的 Monaco 初始化
     model-edit.ts 页面内模型编辑：id 生成/校验、引用查询、增删改模型项（flows/machines 同样适用）
+    focus.ts       诊断 `at` → 修复入口（页面 + 对象）；总览页点击与目标页定位都用它
     components/CellInput.tsx 行内输入（失焦提交、被拒回滚）
     pages/       七个页面，每页一个文件
     components/  SourceEditor / CurveChart / DiffView / CellInput
     styles/      tokens.css（唯一颜色来源）+ app.css
   tools/bridge.mjs          开发期 RPC/SSE 桥（Vite 中间件）
   tests/test_core.py         29 个测试（模型 / 生成 / 行为 / 项目 / 调试会话 / 服务）
-  tests/ui/*.spec.ts         Playwright 回归（19 条）
+  tests/ui/*.spec.ts         Playwright 回归（21 条）
   tests/*_contract.c         C 契约测试
   playwright.config.ts       自动启动 Vite；测试自建临时项目并清理
   pyproject.toml + uv.lock   uv 管理；pyserial；packaging 组留给 PyInstaller
@@ -162,10 +163,12 @@ thermostat 运行窗口 12s→18s；traffic 转换时刻 3001/6002→3000/6000�
 
 顺带修掉的三个真实缺陷：`step_specs` 从不为 `read` 产出 `input`、为 `write` 产出 `output`（数据流页因此**无法选择硬件输入输出**，新增步骤里选输入的分支是死代码）；`analyze.usage` 缺 `inputs`/`outputs`，删除保护形同虚设；桥接层把无法解析的 stdout 行静默丢弃（丢掉响应会让请求永不返回）。`ui/rpc.ts` 另加了 120 秒超时与网络错误码，避免界面永远停在“保存中”。
 
+总览页“下一步”也已变成可点击的修复入口：`ui/focus.ts` 按诊断 `at` 前缀映射到页面与对象（缺失的 C 函数按 `file` 跳代码页），`App` 持有带 token 的 `repair`，四个目标页各用一次 `useEffect` 定位并选中；定位只改前端状态，不发 RPC。
+
 下一步：
 
-- 总览页“下一步”变成可点击的修复入口（跳到对应页面）。
-- 调试页接入真机目标（串口/TCP）选择。
+- 调试页接入真机目标（串口/TCP）选择：顶栏选目标，串口参数（设备/波特率）与 TCP（主机/端口），复用 `debug.py` 的 `Serial`/`Tcp` 传输。
+- 之后是 Electron 壳与打包。
 
 ### 7.2 真机链路
 
@@ -197,7 +200,7 @@ thermostat 运行窗口 12s→18s；traffic 转换时刻 3001/6002→3000/6000�
 
 ### 页面现状
 
-- 总览：只读统计（结构、执行计划、内存、下一步）。数据流页与状态机页：均可编辑（周期/步骤/排序/增删；状态/初始状态/run/set/钩子/转换条件/排序）。
+- 总览：只读统计（结构、执行计划、内存）+ “下一步”修复入口（按诊断 `at` 跳到对应页并选中对象，见 `ui/focus.ts`）。数据流页与状态机页：均可编辑（周期/步骤/排序/增删；状态/初始状态/run/set/钩子/转换条件/排序）。
 - 通信页：**行内编辑**（信号/输入/输出/事件/队列的增删改，删除前查 `usage` 引用，被拒编辑回滚并给诊断；输入可配虚拟仿真，字段表来自后端 `sim_specs`）。
 - 代码页：Monaco 按需加载，模板标记外只读（按键/粘贴拦截 + 保存端 `TEMPLATE` 校验）；新文件与函数模板先进草稿，保存后重新分析；`efw.json` 作为“应用配置”可整体编辑，保存后全页刷新。页面常驻以保留跨页草稿。
 - 调试页：顶栏“运行”启动虚拟目标（`sourcesDirty` 或模型错误时禁用）；播放/暂停/单步 500 ms/速度/重新开始/停止；曲线、任务统计、状态机、参数整定、事件/强制输入、队列、录制列表与回放。通知经 `ui/debug.ts` 归约。
@@ -206,7 +209,7 @@ thermostat 运行窗口 12s→18s；traffic 转换时刻 3001/6002→3000/6000�
 
 ### 测试现状
 
-- 后端 `unittest` 29 条全绿；浏览器 `@playwright/test` 19 条全绿（状态机含编辑、通信含输入输出、数据流、代码、调试、生成页）。
+- 后端 `unittest` 29 条全绿；浏览器 `@playwright/test` 21 条全绿（状态机含编辑、通信含输入输出、数据流、代码、调试、生成页、总览修复入口）。
 - 测试创建临时真实项目（`/tmp`），结束后清理；截图保存在被忽略的 `test-results/`。
 - 全局 `expect.timeout` 放宽到 20 秒（本机负载高时保存一趟要好几秒）；Monaco 按需加载，输入要整段重写并确认草稿变“未保存”，否则首次输入可能被丢弃。
 - 注意：`build_virtual` 缓存键只看模型哈希与用户源码，修改 `codegen.py` 后旧缓存不会失效，开发时手工删 `.efw/build/`。

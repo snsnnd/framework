@@ -1,8 +1,28 @@
+import { PAGE_LABEL, repairFor, repairForFunction, repairHint, type RepairTarget } from '../focus';
 import { useStore } from '../store';
+import type { FnInfo } from '../types';
 
 const COLORS = ['var(--accent)', 'var(--ok)', 'var(--warn)', '#a78bfa', '#38bdf8', 'var(--fg-faint)'];
 
-export function Overview() {
+/** 一条可跳转的修复入口：点它到能修掉这个问题的页面。 */
+function RepairRow({ level, at, text, hint, onRepair, target }: {
+  level: string; at: string; text: string; hint?: string;
+  onRepair: (target: RepairTarget) => void;
+  target: RepairTarget | null;
+}) {
+  const body = <>
+    <div className="at">{at}</div>
+    <div>{text}</div>
+    {hint && <div className="hint">{hint}</div>}
+  </>;
+  if (!target) return <div className={`diag ${level}`}><div>{body}</div></div>;
+  return <button className={`diag repair ${level}`} onClick={() => onRepair(target)}>
+    <div>{body}<span className="go">去{PAGE_LABEL[target.page]}页 · {repairHint(target)}</span></div>
+    <span className="chev" aria-hidden="true">›</span>
+  </button>;
+}
+
+export function Overview({ onRepair }: { onRepair: (target: RepairTarget) => void }) {
   const { project, analysis } = useStore();
   if (!project || !analysis) return <p className="sub">分析中…</p>;
   const m = project.model;
@@ -70,22 +90,12 @@ export function Overview() {
         <header><h2>下一步</h2></header>
         {missing.length === 0 && analysis.diagnostics.length === 0 && <p className="empty">一切就绪，可以生成代码或开始调试。</p>}
         {missing.map((f) => (
-          <div key={f.name} className="diag error">
-            <div>
-              <div className="at">{f.file}</div>
-              <div>{f.mismatch ?? `缺少函数 ${f.name}`}：{f.role}</div>
-              <div className="hint id">{f.signature}</div>
-            </div>
-          </div>
+          <RepairRow key={f.name} level="error" at={f.file} onRepair={onRepair} target={repairForFunction(f as FnInfo)}
+            text={`${f.mismatch ?? `缺少函数 ${f.name}`}：${f.role}`} hint={f.signature} />
         ))}
         {analysis.diagnostics.map((d, i) => (
-          <div key={i} className={`diag ${d.level}`}>
-            <div>
-              <div className="at">{d.at}</div>
-              <div>{d.message}</div>
-              {d.hint && <div className="hint">{d.hint}</div>}
-            </div>
-          </div>
+          <RepairRow key={i} level={d.level} at={d.at} onRepair={onRepair} target={repairFor(d.at)}
+            text={d.message} hint={d.hint || undefined} />
         ))}
       </section>
     </>

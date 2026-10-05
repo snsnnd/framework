@@ -1,6 +1,7 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CellInput } from '../components/CellInput';
 import { appendItem, fail, idProblem, patchItem, removeItem, suggestId } from '../model-edit';
+import type { Repair } from '../focus';
 import { useStore } from '../store';
 import type { Diagnostic, Flow, Model, Step, StepField, StepSpec } from '../types';
 
@@ -18,7 +19,7 @@ function options(model: Model, field: StepField): { value: string; label: string
   return undefined;
 }
 
-export function Flows() {
+export function Flows({ repair }: { repair: Repair | null }) {
   const { project, analysis, updateModel } = useStore();
   const [pending, setPending] = useState(false);
   const [errors, setErrors] = useState<Diagnostic[]>([]);
@@ -33,6 +34,12 @@ export function Flows() {
   const specs = analysis?.step_specs ?? [];
   const [resetToken, setResetToken] = useState(0);
   const flowIds = model.flows.map((f) => f.id);
+  // 总览页点进来时定位到出问题的数据流/步骤
+  useEffect(() => {
+    if (repair?.page !== 'flows' || !repair.item) return;
+    if (repair.step) setOpenStep(`${repair.item}/${repair.step}`);
+    document.querySelector(`[data-flow="${repair.item}"]`)?.scrollIntoView({ block: 'center' });
+  }, [repair?.token]);
   const stepIds = (f: Flow) => f.steps.map((s) => s.id);
 
   async function apply(mutate: (m: Model) => Model) {
@@ -130,7 +137,7 @@ export function Flows() {
     {!model.flows.length && !addingFlow && <p className="empty">还没有数据流。点“新增数据流”创建，或在 efw.json 里配置后重新载入。</p>}
     {model.flows.map((f) => {
       const steps = f.steps;
-      return <section className="card" key={f.id} aria-label={`数据流 ${f.id}`}>
+      return <section className="card" key={f.id} data-flow={f.id} aria-label={`数据流 ${f.id}`}>
         <header>
           <span><strong>{f.label}</strong> <span className="id sub">{f.id}</span></span>
           <span className="row">

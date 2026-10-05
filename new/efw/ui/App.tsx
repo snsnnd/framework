@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { ArrowsClockwise, Broadcast, Bug, Code as CodeIcon, FlowArrow, Gauge, GitBranch, Package } from '@phosphor-icons/react';
 import { useStore } from './store';
 import { Welcome } from './pages/Welcome';
@@ -9,6 +9,7 @@ import { Communication } from './pages/Communication';
 import { Code } from './pages/Code';
 import { Debug } from './pages/Debug';
 import { Generate } from './pages/Generate';
+import type { Repair, RepairTarget } from './focus';
 
 const NAV = [
   { id: 'overview', label: '总览', icon: Gauge },
@@ -25,6 +26,13 @@ const READY: PageId[] = ['overview', 'flows', 'machines', 'comm', 'code', 'debug
 export function App() {
   const { project, analysis, refresh, debug, startDebug, stopDebug, sourcesDirty } = useStore();
   const [page, setPage] = useState<PageId>('overview');
+  // 总览页“下一步”的修复入口：跳转并让目标页选中出问题的对象
+  const [repair, setRepair] = useState<Repair | null>(null);
+  const repairToken = useRef(0);
+  const goto = (target: RepairTarget) => {
+    setRepair({ ...target, token: ++repairToken.current });
+    setPage(target.page);
+  };
 
   if (!project) return <Welcome />;
 
@@ -63,11 +71,11 @@ export function App() {
 
       <main className="page">
         <div className="inner">
-          {page === 'overview' && <Overview />}
-          {page === 'flows' && <Flows />}
-          {page === 'machines' && <Machines key={project.path} />}
-          {page === 'comm' && <Communication key={project.path} />}
-          <div className="code-page" hidden={page !== 'code'}><Code key={project.path} /></div>
+          {page === 'overview' && <Overview onRepair={goto} />}
+          {page === 'flows' && <Flows repair={repair} />}
+          {page === 'machines' && <Machines key={project.path} repair={repair} />}
+          {page === 'comm' && <Communication key={project.path} repair={repair} />}
+          <div className="code-page" hidden={page !== 'code'}><Code key={project.path} repair={repair} /></div>
           {page === 'debug' && <Debug onOpenCode={() => setPage('code')} />}
           {page === 'generate' && <Generate key={project.path} />}
         </div>

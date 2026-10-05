@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { CellInput } from '../components/CellInput';
 import {
   appendItem, diagPrefix, fail, idProblem, ITEMS, newItem, patchItem, POLICY_LABEL, POLICIES, refGroups,
   removeItem, suggestId, TYPES, type Category,
 } from '../model-edit';
+import type { Repair } from '../focus';
 import { useStore } from '../store';
 import type { Diagnostic, IoPoint, Model, Queue, Signal, Sim, SimSpec, UsageRef } from '../types';
 
@@ -75,7 +76,7 @@ function References({ refs, model }: { refs: UsageRef[]; model: Model }) {
   })}</ul>;
 }
 
-export function Communication() {
+export function Communication({ repair }: { repair: Repair | null }) {
   const { project, analysis, updateModel } = useStore();
   const [category, setCategory] = useState<Category>('signals');
   const [query, setQuery] = useState('');
@@ -87,6 +88,15 @@ export function Communication() {
   const [newId, setNewId] = useState('');
   const [confirmId, setConfirmId] = useState('');
   const [resetToken, setResetToken] = useState(0);
+  // 总览页点进来时切到对应分类并选中对象
+  useEffect(() => {
+    if (repair?.page !== 'comm' || !repair.category) return;
+    setCategory(repair.category);
+    setQuery('');
+    setAdding(false);
+    setErrors([]);
+    setSelectedId(repair.item ?? '');
+  }, [repair?.token]);
   if (!project) return null;
   const model = project.model;
   const meta = CATEGORIES.find((c) => c.id === category)!;
