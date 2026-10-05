@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { call } from '../rpc';
+import { call, isDesktop, pickDirectory } from '../rpc';
 import { useStore } from '../store';
 import type { Template } from '../types';
 
@@ -11,7 +11,7 @@ export function Welcome() {
 
   useEffect(() => { void call<Template[]>('templates.list').then(setTemplates).catch(() => undefined); }, []);
 
-  const name = path.split('/').filter(Boolean).pop() ?? '';
+  const name = path.split(/[\\/]/).filter(Boolean).pop() ?? '';
   const valid = /^[a-z][a-z0-9_]{0,23}$/.test(name);
 
   return (
@@ -35,7 +35,10 @@ export function Welcome() {
             </div>
             <div className="row">
               <input className="input id" placeholder="项目目录，例如 /home/me/apps/heater" value={path} onChange={(e) => setPath(e.target.value)} aria-label="项目目录" />
-              <button className="btn primary" disabled={busy || !path.startsWith('/') || !valid} onClick={() => void create(path, name, tpl)}>创建</button>
+              {isDesktop() && <button className="btn" onClick={() => { void pickDirectory().then((dir) => { if (dir) setPath(dir); }); }}>浏览…</button>}
+              <button className="btn primary" disabled={busy || !path.startsWith('/') || !path.startsWith('\\') || !valid}
+                title={!path ? '先选一个目录' : !valid ? '目录名需小写字母开头，只含小写字母、数字与下划线' : ''}
+                onClick={() => void create(path, name, tpl)}>创建</button>
               <button className="btn" disabled={busy || !path} onClick={() => void open(path)}>打开已有</button>
             </div>
             {path && !valid && <p className="sub">目录名将作为项目标识：小写字母开头，只含小写字母、数字、下划线（最长 24）。</p>}

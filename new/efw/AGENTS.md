@@ -11,13 +11,13 @@
 ## 1. 给下个 agent 的最重要八条
 
 1. 端到端可用：`studio_core/` + `ui/` 七个导航页面（总览 / 数据流 / 状态机 / 通信 / 代码 / 调试 / 生成）全部实现；风格规范 `docs/05-ui-style.md`。**下一步主线是“页面内模型编辑”**（见第 7 节），即把浏览页（数据流 / 状态机 / 通信）变成结构化编辑器。
-2. 测试：`32` 个后端测试全绿、`23` 条浏览器回归全过。任何改动后按第 8 节跑全套。
+2. 测试：`32` 个后端测试、`25` 条浏览器回归、`2` 条壳协议测试，全绿。任何改动后按第 8 节跑全套。
 3. 只用 `uv` 管理 Python：`uv sync`、`uv run python ...`。唯一第三方依赖是 `pyserial`（真机串口）。
 4. 模型 id 必须匹配 `^[a-z][a-z0-9_]{0,23}$`；中文只出现在 `label` 里。生成的 C 标识符由 id 直接决定，创建后不可改。
 5. 生成器输出只写 `generated/`；`src/`、`board/` 永远由用户拥有。已有“预览 → token → 提交”与手改冲突保护，不要绕过。
 6. 执行计划只有一个事实来源：`studio_core/model.py:analyze()` 产出 plan，`studio_core/codegen.py` 按同一模型生成，UI 只展示，不得自行推导调度、内存或关系。
 7. 调试协议是文本命令（主机→目标）+ JSON 行（目标→主机），见 `docs/04`。虚拟目标与真机共用 `studio_core/debug.py` 的会话层，不要为真机另写一套。
-8. 前端不再是脚手架：`ui/` 是正式界面；但 `package.json` 的 `main: desktop/main.mjs`、`start`、`test:bridge`、`package:backend` 仍指向不存在的 `desktop/`、`scripts/`，做 Electron 壳与打包时再修（`scripts/` 目录为空）。
+8. `ui/` 是正式界面，浏览器（开发桥）与 Electron（IPC）共用同一份渲染代码：`ui/rpc.ts` 检测 `window.efw` 决定走 IPC 还是 HTTP 桥。`package.json` 的 `main`/`start`/`test:bridge`/`package:backend` 都已有对应实现。
 
 ## 2. 已验证可用的能力（不要重复实现）
 
@@ -40,7 +40,8 @@
 | 虚拟目标构建缓存 | `debug.build_virtual`（`.efw/build/<key>/`） | 键 = 模型哈希 + 用户源码摘要；改 codegen 后手工删缓存 |
 | JSON Lines 服务 + CLI | `server.py`、`cli.py` | `ServiceTests` 通过 |
 | C 运行库契约 | `tests/msgq_contract.c`、`tests/scheduler_contract.c` | 编译运行通过（cc -std=c99 -Wall -Wextra） |
-| React UI + 开发桥 | `ui/`、`tools/bridge.mjs` | 23 条 Playwright 回归；Monaco/worker 本地打包、无 CDN |
+| React UI + 开发桥 | `ui/`、`tools/bridge.mjs` | 25 条 Playwright 回归；Monaco/worker 本地打包、无 CDN |
+| Electron 壳 | `desktop/main.mjs`、`desktop/preload.cjs` | `tests/bridge.test.mjs`（协议行解析 + 真实服务往返）、`tests/ui/shell.spec.ts`（渲染层切 IPC）；**本机无显示器，GUI 未做端到端验证** |
 
 ## 3. 目录与职责
 
@@ -78,7 +79,11 @@ new/efw/
     pages/       七个页面，每页一个文件
     components/  SourceEditor / CurveChart / DiffView / CellInput
     styles/      tokens.css（唯一颜色来源）+ app.css
+  desktop/main.mjs         Electron 主进程：起 Python 服务、stdio→IPC、白名单方法、目录选择
+  desktop/preload.cjs      contextIsolation 下的唯一桥（efw.call / pickDirectory / onEvent）
+  scripts/package_backend.py  PyInstaller 打后端（backend-bin/，已被 .gitignore 忽略）
   tools/bridge.mjs          开发期 RPC/SSE 桥（Vite 中间件）
+  tests/bridge.test.mjs     壳协议测试（node --test，package.json 的 test:bridge）
   tests/test_core.py         32 个测试（模型 / 生成 / 行为 / 项目 / 调试会话 / 真机链路 / 服务）
   tests/ui/*.spec.ts         Playwright 回归（23 条）
   tests/*_contract.c         C 契约测试
@@ -145,7 +150,8 @@ thermostat 运行窗口 12s→18s；traffic 转换时刻 3001/6002→3000/6000�
 
 - `efw.h` 未聚合 `core/msgq.h`，`efw_all.c` 未包含 `core/msgq.c`；Keil 单编译单元用户暂时用不了消息队列。生成应用不受影响。
 - `pyproject.toml` 的 `packaging` 依赖组保留给将来的 PyInstaller 打包，尚未使用。
-- 源码草稿只在内存：刷新/崩溃会丢；顶栏没有保存/撤销/重做（代码页的“保存文件”是唯一写盘入口）。
+- 源码草稿只在内存：刷新/崩溃会丢；顶栏没有撤销/重做（代码页的“保存文件”是唯一写盘入口）。
+- 桌面版 GUI 未在本机验证过（无显示器/xvfb），见 7.3；已验证的是渲染层切 IPC 与协议层。
 
 ### 6.6 `debug.stop` 在 TCP 上永久卡死（已修）
 
@@ -182,15 +188,19 @@ thermostat 运行窗口 12s→18s；traffic 转换时刻 3001/6002→3000/6000�
 下一步：
 
 - 硬件在环验证（可选）：真板子上跑 `board/observe_port.c`，看串口丢帧与延迟。
-- 之后是 Electron 壳与打包。
+- 之后是撤销/重做与源码草稿持久化（见 6.5）。
 
 ### 7.2 真机链路
 
 `serial` / `tcp` 传输已用**真实 socket 与伪终端**测过（见第 2 节表格），不需要硬件就能验证握手、收帧、发命令、哈希不符提醒、录制与停止。仍然缺的只有硬件在环：真机串口吞吐下的丢帧表现、以及把 `board/observe_port.c` 烧进板子后的端到端。写新的传输时照 `TcpBoard`/`PtyBoard` 的做法加测试，别再只靠 `FakeTransport`。
 
-### 7.3 Electron 壳与打包
+### 7.3 Electron 壳与打包（壳已写好，GUI 未验证）
 
-`desktop/` 不存在，目前只有浏览器开发环境。主进程以 stdio 启动 `python -m studio_core.server`（或 PyInstaller 产物），把 `debug.frames` / `debug.status` 转 IPC；渲染进程只经受限 preload 调白名单方法；输出现已满足离线要求（Monaco worker 本地、无 CDN）。打包：`uv run --group packaging python -m PyInstaller` + electron-builder，修好 `package.json` 中的 `main`/`start`/`package:backend`。
+`desktop/main.mjs` 以 stdio 启动服务（开发时 `python -m studio_core.server`，打包后 `resources/backend-bin/efw-backend`），按 `METHODS` 白名单转 IPC，`debug.frames`/`debug.status` 转事件；`preload.cjs` 在 `contextIsolation` 下只暴露 `efw.call`/`pickDirectory`/`pickFile`/`onEvent`；打包后用 `EFW_RUNTIME` 指向 `resources/runtime`。渲染层切 IPC 由 `tests/ui/shell.spec.ts` 用假 preload 验证，协议行解析由 `tests/bridge.test.mjs` 覆盖。
+
+后端已能打出单文件产物并端到端跑通（`uv run --group packaging python scripts/package_backend.py` → `backend-bin/efw-backend`，12 MB；实测建项目→生成→编译→虚拟目标运行→事件→录制→停止全部正常）。
+
+**仍然缺的只有 GUI 真机验证**：本机没有显示器也没有 xvfb，`electron .` 静默退出，无法确认窗口加载。需要在有桌面的机器上跑 `npm start` 与 `npm run package` 验证。
 
 ### 7.4 可选增强
 

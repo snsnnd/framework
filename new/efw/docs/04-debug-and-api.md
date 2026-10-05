@@ -89,3 +89,16 @@
 未保存源码草稿会禁用顶栏“运行”和调试页的启动按钮（`sourcesDirty` 由代码页维护）；模型有错误时同样禁用，错误原因在启动卡片中给出。
 
 生成页已提供：打开或模型变化时自动 `generate.preview`；文件列表按 `path` 列出新增/更新/删除/冲突/未变化；选中文件用 Monaco DiffEditor 展示磁盘版本与将生成版本的差异（未变化显示说明文字）。`提交生成` 用预览 token 调 `generate.commit`，成功后重新预览并显示写入数量与输出目录；被手改的生成文件令预览 `blocked`，提交禁用并显示原因，删除手改文件后重新预览即可恢复。模型有错误时预览返回 blocked 与原因。
+
+## 两种传输
+
+`ui/rpc.ts` 是界面与后端之间的唯一入口，它按 `window.efw` 是否存在选择传输：
+
+| 环境 | 请求 | 通知 |
+| --- | --- | --- |
+| 浏览器开发（`npm run dev`） | `POST /rpc`（Vite 中间件 `tools/bridge.mjs` 转发给 Python） | `EventSource('/events')` |
+| 桌面版（`npm start`） | `ipcRenderer.invoke('efw:call')` → 主进程 stdio | preload 的 `efw.onEvent` |
+
+两种传输的协议约定相同：**stdout 只出协议行；响应带 `id`，通知不带 `id`；无法解析的行必须丢弃但不能吞掉后续响应**（丢掉响应会让请求永远不返回）。`tests/bridge.test.mjs` 用 `node --test` 覆盖这套解析规则与真实服务的往返。
+
+主进程只允许 `METHODS` 白名单里的方法（见 `desktop/main.mjs`），渲染进程拿不到 node 能力；外部链接交给系统浏览器。

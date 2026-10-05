@@ -1,4 +1,16 @@
-// 与服务通信的唯一入口。Electron 阶段只需替换这里的传输。
+// 与服务通信的唯一入口：浏览器开发时走开发桥的 HTTP/SSE，Electron 里走 preload 的 IPC。
+// 页面只调 call() 与 onEvent()，不感知当前是哪一种传输。
+
+/** preload 注入的最小桥（desktop/preload.cjs）。 */
+interface ElectronBridge {
+  call: (method: string, params: Record<string, unknown>) => Promise<unknown>;
+  onEvent: (fn: (msg: { event: string; [k: string]: unknown }) => void) => () => void;
+}
+
+const bridge = (): ElectronBridge | null =>
+  typeof window !== 'undefined' && 'efw' in window ? (window as unknown as { efw: ElectronBridge }).efw : null;
+
+export const isDesktop = () => bridge() !== null;
 export class RpcError extends Error {
   constructor(public code: string, message: string) { super(message); }
 }
@@ -7,6 +19,14 @@ export class RpcError extends Error {
 const TIMEOUT_MS = 120000;
 
 export async function call<T>(method: string, params: Record<string, unknown> = {}, timeoutMs = TIMEOUT_MS): Promise<T> {
+  const ipc = bridge();
+  if (ipc) {
+    try {
+      return await ipc.call(method, params) as T;
+    } catch (e) {
+      throw new RpcError('BACKEND', (e as Error).message);
+    }
+  }
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   let res: Response;
@@ -24,7 +44,16 @@ export async function call<T>(method: string, params: Record<string, unknown> = 
 }
 
 export function onEvent(fn: (event: { event: string; [k: string]: unknown }) => void): () => void {
+  const ipc = bridge();
+  if (ipc) return ipc.onEvent(fn);
   const es = new EventSource('/events');
   es.onmessage = (e) => fn(JSON.parse(e.data));
   return () => es.close();
+}
+
+/** 选目录：Electron 走系统对话框，浏览器里没有这个能力（返回 null）。 */
+export async function pickDirectory(): Promise<string | null> {
+  const ipc = bridge();
+  if (!ipc) return null;
+  return (ipc as ElectronBridge & { pickDirectory: () => Promise<string | null> }).pickDirectory();
 }
