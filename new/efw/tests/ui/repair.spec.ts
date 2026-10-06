@@ -32,7 +32,7 @@ test('总览页“下一步”跳到通信页并选中出问题的信号', async
   await entry.focus();
   await page.keyboard.press('Enter');
   await expect(page.locator('.comm-toolbar')).toBeVisible();
-  await expect(page.getByRole('button', { name: /^信号 / })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('.comm-categories').getByRole('button', { name: /^信号 / })).toHaveAttribute('aria-pressed', 'true');
   await expect(page.locator('tr[data-id="orphan"]')).toHaveClass(/is-selected/);
 });
 

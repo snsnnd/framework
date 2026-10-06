@@ -19,11 +19,11 @@ test('通信页解释信号与事件、常量的区别；步骤字段说明常�
   await expect(note).toContainText('它不是常量');
   await expect(note).toContainText('运行期的值');
 
-  await page.getByRole('button', { name: /^事件 / }).click();
+  await page.locator('.comm-categories').getByRole('button', { name: /^事件 / }).click();
   await expect(note).toContainText('不带数值');
   await expect(note).toContainText('触发状态机切换');
 
-  await page.getByRole('button', { name: /^输入 / }).click();
+  await page.locator('.comm-categories').getByRole('button', { name: /^输入 / }).click();
   await expect(note).toContainText('board/io.c');
   await expect(page.locator('.comm-note code').first()).toHaveText('board/io.c');
   await expect(page.locator('.comm-note code').filter({ hasText: '_read()' })).toBeVisible();

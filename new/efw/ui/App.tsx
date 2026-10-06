@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { ArrowCounterClockwise, ArrowClockwise, ArrowsClockwise, Broadcast, Bug, Code as CodeIcon, FlowArrow, Gauge, GitBranch, Package } from '@phosphor-icons/react';
+import { ArrowCounterClockwise, ArrowClockwise, ArrowsClockwise } from '@phosphor-icons/react';
 import { KIND_LABEL, useStore } from './store';
 import { Welcome } from './pages/Welcome';
 import { Overview } from './pages/Overview';
@@ -9,29 +9,28 @@ import { Communication } from './pages/Communication';
 import { Code } from './pages/Code';
 import { Debug } from './pages/Debug';
 import { Generate } from './pages/Generate';
+import { buildCommands, CommandPalette } from './components/CommandPalette';
+import { Explorer, type PageId } from './components/Explorer';
 import type { Repair, RepairTarget } from './focus';
 
-const NAV = [
-  { id: 'overview', label: '总览', icon: Gauge },
-  { id: 'flows', label: '数据流', icon: FlowArrow },
-  { id: 'machines', label: '状态机', icon: GitBranch },
-  { id: 'comm', label: '通信', icon: Broadcast },
-  { id: 'code', label: '代码', icon: CodeIcon },
-  { id: 'debug', label: '调试', icon: Bug },
-  { id: 'generate', label: '生成', icon: Package },
-] as const;
-type PageId = (typeof NAV)[number]['id'];
 const READY: PageId[] = ['overview', 'flows', 'machines', 'comm', 'code', 'debug', 'generate'];
 
 export function App() {
   const { project, analysis, refresh, debug, target, canUndo, canRedo, undoModel, redoModel, startDebug, stopDebug, sourcesDirty } = useStore();
   const [page, setPage] = useState<PageId>('overview');
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(true);
   // 总览页“下一步”的修复入口：跳转并让目标页选中出问题的对象
   const [repair, setRepair] = useState<Repair | null>(null);
   const repairToken = useRef(0);
   // 撤销/重做走快捷键；焦点在输入框或编辑器里时交给它们自己处理
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && !e.shiftKey && !e.altKey) {
+        const key = e.key.toLowerCase();
+        if (key === 'b') { e.preventDefault(); setSidebarOpen((v) => !v); return; }
+        if (key === 'k' || key === 'p') { e.preventDefault(); setPaletteOpen(true); return; }
+      }
       if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== 'z') return;
       const el = document.activeElement;
       if (el && (el.closest('.monaco-editor') || el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT')) return;
@@ -47,6 +46,21 @@ export function App() {
     setPage(target.page);
   };
 
+  const commands = buildCommands(project, {
+    goto: (next) => setPage(next),
+    repair: goto,
+    run: () => { if (running) void stopDebug(); else { void startDebug(target); setPage('debug'); } },
+    stop: () => void stopDebug(),
+    undo: undoModel,
+    redo: redoModel,
+    canUndo,
+    canRedo,
+    reload: () => void refresh(),
+    generate: () => setPage('generate'),
+    code: () => setPage('code'),
+    palette: () => setPaletteOpen(true),
+  });
+
   if (!project) return <Welcome />;
 
   const errors = analysis?.diagnostics.filter((d) => d.level === 'error').length ?? 0;
@@ -60,20 +74,14 @@ export function App() {
 
   return (
     <div className="shell">
-      <nav className="side" aria-label="主导航">
-        <div className="brand">EFW</div>
-        {NAV.map(({ id, label, icon: Icon }) => (
-          <button key={id} className="nav" aria-current={page === id ? 'page' : undefined} disabled={!READY.includes(id)} title={READY.includes(id) ? label : `${label}（开发中）`} onClick={() => setPage(id)}>
-            <Icon size={18} />
-            {label}
-          </button>
-        ))}
-      </nav>
+      <Explorer project={project} analysis={analysis} page={page} onPage={setPage} onRepair={goto}
+        collapsed={!sidebarOpen} onToggle={() => setSidebarOpen((v) => !v)} />
 
       <header className="top">
         <span className="name">{project.model.name}</span>
         <span className="path">{project.path}</span>
         <span className="spacer" />
+        <button className="btn" onClick={() => setPaletteOpen(true)} title="命令面板（Ctrl+K）">命令 <span className="id">⌘K</span></button>
         <button className="btn" onClick={() => void refresh()}><ArrowsClockwise size={14} /> 重新载入</button>
         <span className="row">
           <button className="btn" aria-label="撤销" title="撤销模型编辑（Ctrl+Z）" disabled={!canUndo} onClick={() => void undoModel()}><ArrowCounterClockwise size={14} /></button>
@@ -106,6 +114,7 @@ export function App() {
         <span className="spacer" />
         <span className="id">{analysis?.hash}</span>
       </footer>
+      {paletteOpen && <CommandPalette commands={commands} onClose={() => setPaletteOpen(false)} />}
     </div>
   );
 }

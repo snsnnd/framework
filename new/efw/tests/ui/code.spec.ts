@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { waitEditorReady } from './helpers';
 
 let root: string;
+/** 资源树与代码页都列文件，测试要指明是哪一个。 */
+const files = (page: import('@playwright/test').Page) => page.getByRole('complementary', { name: '源码文件' });
 test.setTimeout(240000);
 test.beforeEach(async () => { root = await mkdtemp(join(tmpdir(), 'efw-code-')); });
 test.afterEach(async () => { await rm(root, { recursive: true, force: true }); });
@@ -23,7 +25,7 @@ test('模板只读、编辑保存、跨页草稿保留及外部写入冲突保�
   await page.addInitScript((path) => localStorage.setItem('efw.lastProject', path), path);
   await page.goto('/');
   await page.getByRole('button', { name: '代码', exact: true }).click();
-  await page.getByRole('button', { name: 'src/logic.c', exact: true }).click();
+  await files(page).getByRole('button', { name: 'src/logic.c', exact: true }).click();
   const input = page.locator('.monaco-editor textarea');
   const save = page.getByRole('button', { name: '保存文件', exact: true });
   await waitEditorReady(page, input);
@@ -106,7 +108,7 @@ test('efw.json 可编辑，保存后其他页面按新模型刷新', async ({ pa
   await page.addInitScript((path) => localStorage.setItem('efw.lastProject', path), path);
   await page.goto('/');
   await page.getByRole('button', { name: '代码', exact: true }).click();
-  await page.getByRole('button', { name: /efw\.json/ }).click();
+  await files(page).getByRole('button', { name: /efw\.json/ }).click();
   const input = page.locator('.monaco-editor textarea');
   const save = page.getByRole('button', { name: '保存文件', exact: true });
   await waitEditorReady(page, input);
@@ -143,7 +145,7 @@ test('源码草稿在刷新后仍然存在', async ({ page, request }) => {
   await page.addInitScript((p) => localStorage.setItem('efw.lastProject', p), path);
   await page.goto('/');
   await page.getByRole('button', { name: '代码', exact: true }).click();
-  await page.getByRole('button', { name: 'src/logic.c', exact: true }).click();
+  await files(page).getByRole('button', { name: 'src/logic.c', exact: true }).click();
   const input = page.locator('.monaco-editor textarea');
   await waitEditorReady(page, input);
   const before = await readFile(join(path, 'src/logic.c'), 'utf8');
@@ -164,8 +166,8 @@ test('源码草稿在刷新后仍然存在', async ({ page, request }) => {
   await page.getByRole('button', { name: '代码', exact: true }).click();
   await expect(page.getByRole('status')).toContainText('恢复了未保存草稿', { timeout: 30000 });
   // 文件列表直接标出未保存
-  await expect(page.getByRole('button', { name: /src\/logic\.c 未保存/ })).toBeVisible();
-  await page.getByRole('button', { name: /src\/logic\.c/ }).click();
+  await expect(files(page).getByRole('button', { name: /src\/logic\.c 未保存/ })).toBeVisible();
+  await files(page).getByRole('button', { name: /src\/logic\.c/ }).click();
   await expect(page.locator('.monaco-editor .view-lines')).toContainText('刷新前写的', { timeout: 30000 });
   await expect(page.getByRole('button', { name: '保存文件', exact: true })).toBeEnabled();
   expect(await readFile(join(path, 'src/logic.c'), 'utf8')).toBe(before);

@@ -137,7 +137,7 @@ test('通信页：编辑输入的仿真，并让数据流的读取步骤选中�
   await page.getByRole('button', { name: '通信', exact: true }).click();
 
   // 输入分类可切换，详情区给出需要实现的 C 函数
-  await page.getByRole('button', { name: /^输入 / }).click();
+  await page.locator('.comm-categories').getByRole('button', { name: /^输入 / }).click();
   const row = page.locator('tr[data-id="sensor"]');
   await row.click();
   await expect(page.locator('.comm-io-fns')).toContainText('sensor_read');
@@ -173,7 +173,7 @@ test('通信页：编辑输入的仿真，并让数据流的读取步骤选中�
 
   // 仍被读取步骤引用的输入不给删
   await page.getByRole('button', { name: '通信', exact: true }).click();
-  await page.getByRole('button', { name: /^输入 / }).click();
+  await page.locator('.comm-categories').getByRole('button', { name: /^输入 / }).click();
   await page.locator('tr[data-id="pressure"]').click();
   await page.locator('tr[data-id="pressure"]').getByRole('button', { name: '删除' }).click();
   await page.locator('tr[data-id="pressure"]').getByRole('button', { name: '确认删除' }).click();
