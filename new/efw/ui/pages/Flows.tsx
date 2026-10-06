@@ -149,23 +149,54 @@ export function Flows({ repair }: { repair: Repair | null }) {
             <button className="btn danger" disabled={pending} onClick={() => removeFlow(f.id)}>删除</button>
           </span>
         </header>
-        {steps.map((s, i) => {
-          const spec = specs.find((x) => x.kind === s.kind);
-          const open = openStep === `${f.id}/${s.id}`;
-          return <div key={s.id} className={`step-row${open ? ' is-open' : ''}`} data-id={s.id}>
-            <div className="step-line" onClick={() => setOpenStep(open ? '' : `${f.id}/${s.id}`)} role="button" tabIndex={0}
-              onKeyDown={(e) => { if (e.key === 'Enter') setOpenStep(open ? '' : `${f.id}/${s.id}`); }}>
-              <span className="no">{i + 1}</span>
-              <span className="verb">{spec?.label ?? s.kind}</span>
-              <span className="sub">{describeStep(s, specs)}</span>
-              <span className="spacer" />
-              <button className="btn ghost" disabled={pending || i === 0} aria-label={`${f.id} ${s.id} 上移`} onClick={(e) => { e.stopPropagation(); void moveStep(f.id, s.id, -1); }}>↑</button>
-              <button className="btn ghost" disabled={pending || i === steps.length - 1} aria-label={`${f.id} ${s.id} 下移`} onClick={(e) => { e.stopPropagation(); void moveStep(f.id, s.id, 1); }}>↓</button>
-              <button className="btn ghost" disabled={pending} aria-label={`${f.id} ${s.id} 删除`} onClick={(e) => { e.stopPropagation(); removeStep(f.id, s.id); }}>×</button>
-            </div>
-            {open && spec && <StepFields flow={f} step={s} spec={spec} />}
-          </div>;
-        })}
+        <div className="blueprint" role="list" aria-label={`${f.label} 的步骤链`}>
+          {steps.length === 0 && <p className="empty">还没有步骤。点“添加步骤”从“读取 → 处理 → 写入”开始。</p>}
+          {steps.map((s, i) => {
+            const spec = specs.find((x) => x.kind === s.kind);
+            const open = openStep === `${f.id}/${s.id}`;
+            const role = stepRole(s.kind);
+            // 连接线上的信号 = 真实字段，不是画出来的推断
+            const carried = connectorSignal(steps, i, specs);
+            return <div key={s.id} className={`blueprint-item`} role="listitem">
+              {i > 0 && <span className="blueprint-link" aria-hidden="true">
+                <svg viewBox="0 0 28 24" width="28" height="24"><path d="M2 12 H22" markerEnd="" /><path d="M18 8 L22 12 L18 16" /></svg>
+                {carried && <span className="id sub">{carried}</span>}
+              </span>}
+              <div className={`step-row blueprint-box is-${role}${open ? ' is-open' : ''}`} data-id={s.id}
+                onClick={() => setOpenStep(open ? '' : `${f.id}/${s.id}`)} role="button" tabIndex={0}
+                aria-expanded={open} title="点开编辑这一步"
+                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpenStep(open ? '' : `${f.id}/${s.id}`); } }}
+                onDragStart={(e) => { e.dataTransfer.setData('text/efw-step', `${f.id}/${s.id}`); e.dataTransfer.effectAllowed = 'move'; }}
+                onDragOver={(e) => { if (e.dataTransfer.types.includes('text/efw-step')) e.preventDefault(); }}
+                onDrop={(e) => {
+                  const from = e.dataTransfer.getData('text/efw-step');
+                  if (!from || !from.startsWith(`${f.id}/`)) return;
+                  e.preventDefault();
+                  const src = from.split('/')[1];
+                  if (src && src !== s.id) void moveStep(f.id, src, steps.findIndex((x) => x.id === s.id) - steps.findIndex((x) => x.id === src));
+                }}>
+                <div className="blueprint-head">
+                  <span className="no">{i + 1}</span>
+                  <span className="verb">{spec?.label ?? s.kind}</span>
+                  <span className="spacer" />
+                  <button className="btn ghost" disabled={pending || i === 0} aria-label={`${f.id} ${s.id} 上移`} onClick={(e) => { e.stopPropagation(); void moveStep(f.id, s.id, -1); }}>↑</button>
+                  <button className="btn ghost" disabled={pending || i === steps.length - 1} aria-label={`${f.id} ${s.id} 下移`} onClick={(e) => { e.stopPropagation(); void moveStep(f.id, s.id, 1); }}>↓</button>
+                  <button className="btn ghost" disabled={pending} aria-label={`${f.id} ${s.id} 删除`} onClick={(e) => { e.stopPropagation(); removeStep(f.id, s.id); }}>×</button>
+                </div>
+                <span className="blueprint-desc sub">{describeStep(s, specs)}</span>
+                <span className="blueprint-grip" aria-hidden="true" title="拖动可调整执行顺序">⠿</span>
+              </div>
+            </div>;
+          })}
+        </div>
+        {openStep.startsWith(`${f.id}/`) && (() => {
+          const step = steps.find((x) => `${f.id}/${x.id}` === openStep);
+          const spec = step ? specs.find((x) => x.kind === step.kind) : undefined;
+          return step && spec ? <div className="blueprint-editor">
+            <h3><span className="no">{steps.findIndex((x) => x.id === step.id) + 1}</span> {spec.label} <span className="id sub">{step.id}</span></h3>
+            <StepFields flow={f} step={step} spec={spec} />
+          </div> : null;
+        })()}
         {addingIn === f.id && <div className="step-add">
           <span className="sub">新步骤类型</span>
           <select className="input" value={newStepKind} onChange={(e) => setNewStepKind(e.target.value)} aria-label="新步骤类型">
@@ -187,6 +218,25 @@ export function Flows({ repair }: { repair: Repair | null }) {
       </div>
     </section> : <div><button className="btn" onClick={() => { setAddingFlow(true); setFlowId(suggestId('flow', flowIds)); }}>新增数据流</button></div>}
   </>;
+}
+
+/** 步骤在蓝图里的配色分类：输入 / 处理 / 输出 / 事件。 */
+function stepRole(kind: string): 'in' | 'proc' | 'out' | 'event' {
+  if (kind === 'read') return 'in';
+  if (kind === 'write') return 'out';
+  if (kind === 'emit') return 'event';
+  return 'proc';
+}
+
+/** 连接线标注的信号：上一步写出、这一步读入的同一个信号；没有就空着。 */
+function connectorSignal(steps: Step[], index: number, specs: StepSpec[]): string {
+  const rolesOf = (step: Step | undefined, role: string): string[] => {
+    const fields = step ? specs.find((x) => x.kind === step.kind)?.fields.filter((f) => f.role === role) ?? [] : [];
+    return fields.map((f) => step?.[f.name]).filter((v): v is string => typeof v === 'string' && v !== '');
+  };
+  const carriedOut = rolesOf(steps[index - 1], 'signal');
+  const carriedIn = rolesOf(steps[index], 'signal');
+  return carriedOut.find((id) => carriedIn.includes(id)) ?? '';
 }
 
 function describeStep(step: Step, specs: StepSpec[]): string {

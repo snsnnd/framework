@@ -1,6 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 import { CellInput } from '../components/CellInput';
-import { fail, idProblem, patchItem, removeItem, suggestId } from '../model-edit';
+import { appendItem, fail, idProblem, patchItem, removeItem, suggestId } from '../model-edit';
 import type { Repair } from '../focus';
 import { useStore } from '../store';
 import type { Diagnostic, Machine, Model, State, Transition } from '../types';
@@ -12,6 +12,12 @@ const TRIGGERS = [
   { id: 'signal', label: '信号比较' },
   { id: 'call', label: 'C 函数返回真' },
 ] as const;
+
+/** 这条数据流由哪台状态机控制。 */
+function machineController(model: Model, flowId: string): string {
+  for (const m of model.machines) if (m.states.some((s) => s.run.includes(flowId))) return m.id;
+  return '';
+}
 
 function label(items: { id: string; label: string }[], id: string): string {
   return items.find((item) => item.id === id)?.label || id;
@@ -354,6 +360,9 @@ export function Machines({ repair }: { repair: Repair | null }) {
   const [pending, setPending] = useState(false);
   const [errors, setErrors] = useState<Diagnostic[]>([]);
   const [resetToken, setResetToken] = useState(0);
+  const [addingMachine, setAddingMachine] = useState(false);
+  const [newMachineId, setNewMachineId] = useState('');
+  const [newMachineLabel, setNewMachineLabel] = useState('');
   // 跳转进来时先选中对应状态机（必须放在 project 判空之前，hook 不能条件执行）
   useEffect(() => {
     if (repair?.page === 'machines' && repair.machine) setMachineId(repair.machine);
@@ -367,6 +376,26 @@ export function Machines({ repair }: { repair: Repair | null }) {
   const current = running ? debug.latest?.m?.[machine.id] : undefined;
   const live = current ? { current: current.s, since: debug.t - current.since } : null;
   const diagnostics = analysis?.diagnostics.filter((d) => machine && (d.at === `machines/${machine.id}` || d.at.startsWith(`machines/${machine.id}/`))) ?? [];
+
+  function addMachine() {
+    const id = newMachineId.trim();
+    const problem = idProblem(id, model.machines.map((m) => m.id));
+    if (problem) { setErrors(fail(problem)); return; }
+    const label = newMachineLabel.trim() || id;
+    // 后端要求状态机至少一个状态，并且 initial 必须指向已有状态
+    void apply((m) => appendItem(m, 'machines', { id, label, initial: 'idle', states: [{ id: 'idle', label: '初始', run: [], set: {} }], transitions: [] }))
+      .then((ok) => {
+        if (!ok) return;
+        setAddingMachine(false); setNewMachineLabel(''); setNewMachineId(''); setMachineId(id);
+      });
+  }
+
+  function removeMachine(id: string) {
+    const controlled = model.flows.filter((f) => machineController(model, f.id) === id).map((f) => f.id);
+    const extra = controlled.length ? `；它控制的数据流 ${controlled.join('、')} 会变成始终运行` : '';
+    if (!window.confirm(`确定删除状态机 ${id}？${extra}`)) return;
+    void apply((m) => removeItem(m, 'machines', id)).then((ok) => { if (ok) setMachineId(''); });
+  }
 
   async function apply(mutate: (m: Model) => Model) {
     setPending(true);
@@ -386,15 +415,36 @@ export function Machines({ repair }: { repair: Repair | null }) {
 
   return <>
     <div><h1>状态机</h1><p className="sub">用状态决定哪些数据流运行，用条件决定何时切换。</p></div>
-    {!machine ? <section className="card"><p className="empty">还没有状态机。数据流会按执行计划运行；需要工作模式切换时，可在 efw.json 的 machines 中配置后重新载入。</p></section> : <>
-      <div className="machine-toolbar">
+    <div className="machine-toolbar">
+      {model.machines.length > 0 && <>
         <label htmlFor="machine-select">状态机</label>
         <select id="machine-select" className="input" value={machine.id} onChange={(e) => { setMachineId(e.target.value); setErrors([]); }}>
           {model.machines.map((m) => <option key={m.id} value={m.id}>{m.label || m.id} · {m.id}</option>)}
         </select>
         <span className="sub">{machine.states.length} 个状态 · {machine.transitions.length} 条转换</span>
+        <button className="btn" disabled={pending || addingMachine} onClick={() => { setAddingMachine(!addingMachine); setErrors([]); }}>新建状态机</button>
+        <button className="btn danger" disabled={pending} onClick={() => removeMachine(machine.id)}>删除这台状态机</button>
+        <span className="spacer" />
         <span className="sub">直接编辑，保存后其他页面按新模型刷新</span>
+      </>}
+      {model.machines.length === 0 && <span className="sub">还没有状态机。数据流会按执行计划运行；需要按状态启停时，在这里新建一台。</span>}
+      {model.machines.length === 0 && <button className="btn primary" disabled={pending} onClick={() => setAddingMachine(true)}>新建状态机</button>}
+    </div>
+
+    {addingMachine && <section className="card" aria-label="新增状态机">
+      <header><h2>新增状态机</h2></header>
+      <div className="body step-add">
+        <CellInput liveCommit label="新状态机名称" value={newMachineLabel} onCommit={setNewMachineLabel} placeholder="名称" />
+        <CellInput liveCommit label="新状态机标识符" value={newMachineId} onCommit={setNewMachineId} className="mono" />
+        <button className="btn primary" disabled={pending} onClick={() => void addMachine()}>添加</button>
+        <button className="btn" onClick={() => setAddingMachine(false)}>取消</button>
+        <span className="sub">会自动带上一个初始状态（后端要求至少有一个状态）。</span>
       </div>
+    </section>}
+
+    {!machine ? (model.machines.length === 0 && !addingMachine ? <section className="card">
+      <p className="empty">状态机用来按状态启停数据流。还没有状态机时，所有数据流按执行计划一直运行。</p>
+    </section> : <></>) : <>
       {diagnostics.length > 0 && <section className="card" aria-label="状态机诊断">{diagnostics.map((d, i) => <div key={i} className={`diag ${d.level}`}><div><div>{d.message}</div>{d.hint && <div className="hint">{d.hint}</div>}</div></div>)}</section>}
       <MachineView key={machine.id} machine={machine} model={model} apply={apply} pending={pending} resetToken={resetToken} errors={errors} setErrors={setErrors}
         focus={repair?.page === 'machines' && repair.machine === machine.id ? repair : null} live={live} />

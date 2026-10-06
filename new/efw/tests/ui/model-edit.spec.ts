@@ -167,7 +167,7 @@ test('通信页：编辑输入的仿真，并让数据流的读取步骤选中�
   await page.getByRole('button', { name: '数据流', exact: true }).click();
   const readRow = page.locator('.step-row[data-id="read"]');
   await readRow.click();
-  const pick = readRow.getByLabel('read 输入');
+  const pick = page.locator('.blueprint-editor').getByLabel('read 输入');
   await pick.selectOption('pressure');
   await expect.poll(async () => (await model(path)).flows[0].steps.find((s: { id: string }) => s.id === 'read').input).toBe('pressure');
 

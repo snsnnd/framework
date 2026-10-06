@@ -250,6 +250,9 @@ td.num, th.num { text-align: right; font-family: var(--mono); }
 .step-row { border-bottom: 1px solid var(--line); }
 .step-row:last-of-type { border-bottom: 0; }
 .step-line { display: flex; align-items: center; gap: 8px; padding: 8px 14px; cursor: pointer; flex-wrap: wrap; }
+.step-line .no, .step-line .verb, .step-line .btn { flex: 0 0 auto; }
+.blueprint-box .no, .blueprint-box .verb, .blueprint-box .btn { flex: 0 0 auto; }
+.blueprint-box .no { width: 20px; text-align: right; color: var(--fg-faint); font: 12px var(--mono); }
 .step-line:hover { background: var(--bg-hover); }
 .step-row.is-open .step-line { background: var(--bg-inset); }
 .step-line .no { width: 20px; text-align: right; color: var(--fg-faint); font: 12px var(--mono); }
@@ -317,14 +320,58 @@ td.num, th.num { text-align: right; font-family: var(--mono); }
 
 /* 概念速览图（总览） */
 .concept { padding: 12px 16px 16px; }
-.concept-svg { width: 100%; height: auto; display: block; }
+.concept-scroll { overflow-x: auto; }
+.concept-svg { width: 100%; min-width: 900px; height: auto; display: block; }
+.concept .cm-col { fill: var(--fg-faint); font: 11px var(--sans); letter-spacing: .04em; }
 .concept .cm-node rect { fill: var(--bg-inset); stroke: var(--line-strong); }
 .concept .cm-node text { fill: var(--fg); font: 12px var(--sans); }
-.concept .cm-node .cm-sub { fill: var(--fg-faint); font: 11px var(--mono); }
-.concept .cm-flow rect { stroke: var(--s1); }
-.concept .cm-signal rect { stroke: var(--s2); }
-.concept .cm-machine rect { stroke: var(--s3); }
-.concept .cm-event rect { stroke: var(--s4); }
-.concept .cm-edge path { fill: none; stroke: var(--line-strong); stroke-width: 1.5; }
-.concept .cm-label text { fill: var(--fg-faint); font: 10px var(--mono); }
+.concept .cm-node .cm-sub { fill: var(--fg-faint); font: 10px var(--mono); }
+.concept .cm-node[role="button"] { cursor: pointer; }
+.concept .cm-node[role="button"]:hover rect { stroke: var(--accent); }
+.concept .cm-node.is-flow rect { stroke: var(--s1); }
+.concept .cm-node.is-signal rect { stroke: var(--s2); }
+.concept .cm-node.is-mode rect { stroke: var(--s3); }
+.concept .cm-node.is-event rect { stroke: var(--s4); }
+.concept .cm-node.is-in rect { stroke: var(--s5); }
+.concept .cm-node.is-out rect { stroke: var(--s2); }
+.concept .cm-node.is-live rect { stroke: var(--ok); stroke-width: 2; }
+.concept .cm-line { fill: none; stroke-width: 1.4; stroke: var(--line-strong); }
+.concept .cm-line.is-read { stroke: var(--s5); }
+.concept .cm-line.is-write { stroke: var(--s2); }
+.concept .cm-line.is-run { stroke: var(--s3); stroke-dasharray: 4 3; }
+.concept .cm-line.is-event { stroke: var(--s4); stroke-dasharray: 1 3; }
 .concept-legend { margin: 10px 0 0; }
+.concept-legend i.cm-line { display: inline-block; width: 24px; height: 0; vertical-align: middle; margin: 0 4px 0 10px; border-top-style: solid; border-top-width: 2px; }
+.concept-legend i.cm-line.is-run { border-top-style: dashed; }
+.concept-legend i.cm-line.is-event { border-top-style: dotted; }
+
+/* 数据流蓝图：步骤链（自动布局，位置不代表语义） */
+.blueprint { display: flex; align-items: stretch; gap: 0; padding: 12px 16px; overflow-x: auto; }
+.blueprint-item { display: flex; align-items: center; }
+.blueprint-link { display: flex; flex-direction: column; align-items: center; color: var(--fg-faint); padding: 0 2px; }
+.blueprint-link svg path { fill: none; stroke: currentColor; stroke-width: 1.5; }
+.blueprint-link .id { font-size: 10px; color: var(--s2); max-width: 80px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.blueprint-box { position: relative; width: 244px; flex: 0 0 auto; border: 1px solid var(--line); border-left-width: 3px; border-radius: var(--r); background: var(--bg-panel); }
+.blueprint-box { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px; cursor: grab; }
+.blueprint-box .blueprint-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.blueprint-box .verb { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.blueprint-desc { display: block; padding-left: 28px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 数据流卡头：周期框不要被 .row 拉满宽 */
+.card > header .row .input.cell { flex: 0 0 76px; }
+.blueprint-box.is-in { border-left-color: var(--s5); }
+.blueprint-box.is-proc { border-left-color: var(--s1); }
+.blueprint-box.is-out { border-left-color: var(--s2); }
+.blueprint-box.is-event { border-left-color: var(--s4); }
+.blueprint-box.is-open { box-shadow: 0 0 0 1px var(--accent); }
+
+.blueprint-box .step-line .sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 动作按钮只在悬停/聚焦时出现，把宽度让给步骤描述；键盘可达 */
+.blueprint-box .btn.ghost { opacity: 0; transition: opacity 80ms linear; }
+.blueprint-box:hover .btn.ghost,
+.blueprint-box:focus-within .btn.ghost,
+.blueprint-box.is-open .btn.ghost { opacity: 1; }
+.blueprint-box .btn.ghost:focus-visible { opacity: 1; }
+.blueprint-grip { position: absolute; top: 2px; right: 4px; font-size: 11px; color: var(--fg-faint); opacity: 0; }
+.blueprint-box:hover .blueprint-grip { opacity: 1; }
+.blueprint-editor { margin: 0 16px 16px; padding: 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg-inset); }
+.blueprint-editor h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 13px; font-weight: 500; }

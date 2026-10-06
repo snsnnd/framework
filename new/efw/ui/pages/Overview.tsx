@@ -63,9 +63,10 @@ export function Overview({ onRepair }: { onRepair: (target: RepairTarget) => voi
         <Timeline plan={analysis.plan} tick_ms={m.tick_ms} now={debug.session && !['stopped', 'error', 'ended'].includes(debug.state) ? debug.t : null} />
       </section>
 
-      <section className="card" aria-label="五个概念怎么协作">
-        <header><h2>这些概念怎么协作</h2><span className="sub">输入 · 信号 · 数据流 · 状态机 · 事件/队列</span></header>
-        <ConceptMap model={m} running={runningState} />
+      <section className="card" aria-label="项目结构">
+        <header><h2>项目结构</h2><span className="sub">盒子是模型里的对象，连线是真实读写关系；点盒子跳到能编辑它的页面</span></header>
+        <ConceptMap model={m} analysis={analysis} running={runningState}
+          onOpen={(page, category, item, machine) => onRepair({ page, category, item, machine })} />
       </section>
 
       <div className="grid five">

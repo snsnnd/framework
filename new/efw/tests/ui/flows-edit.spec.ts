@@ -28,7 +28,7 @@ test('数据流页：改周期、编辑步骤字段、排序与增删步骤', as
   await expect(period).toHaveValue('20');
 
   // 展开低通滤波步骤，改 alpha
-  await page.locator('.step-row[data-id="filter"] .step-line').click();
+  await page.locator('.step-row[data-id="filter"]').click();
   const alpha = page.getByLabel('filter alpha');
   await expect(alpha).toHaveValue('0.2');
   await alpha.fill('0.4');
@@ -36,7 +36,7 @@ test('数据流页：改周期、编辑步骤字段、排序与增删步骤', as
   await expect.poll(async () => (await step(path, 'control', 'filter')).alpha).toBe(0.4);
 
   // 改 PID 的目标信号与参数
-  await page.locator('.step-row[data-id="pid"] .step-line').click();
+  await page.locator('.step-row[data-id="pid"]').click();
   await page.getByLabel('pid kp').fill('0.12');
   await page.getByLabel('pid kp').press('Enter');
   await expect.poll(async () => (await step(path, 'control', 'pid')).kp).toBe(0.12);
@@ -59,7 +59,7 @@ test('数据流页：改周期、编辑步骤字段、排序与增删步骤', as
   await expect.poll(async () => (await model(path)).flows[0].steps.length).toBe(6);
   const clamp = (await model(path)).flows[0].steps.at(-1);
   expect(clamp.kind).toBe('clamp');
-  await page.locator(`.step-row[data-id="${clamp.id}"] .step-line`).click();
+  await page.locator(`.step-row[data-id="${clamp.id}"]`).click();
   await page.getByLabel(`${clamp.id} 读取信号`).selectOption('duty');
   await expect.poll(async () => (await step(path, 'control', clamp.id)).from).toBe('duty');
   await page.getByLabel(`${clamp.id} 写入信号`).selectOption('duty');

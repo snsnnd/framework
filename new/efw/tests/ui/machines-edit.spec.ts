@@ -130,3 +130,28 @@ test('状态机页：新增与编辑转换规则（事件 / 超时 / 信号 / �
   await page.getByRole('button', { name: '事件 1', exact: true }).click();
   await expect(page.getByRole('region', { name: '通信详情' })).toContainText('被消费');
 });
+test('状态机页：新增与删除状态机', async ({ page, request }) => {
+  const path = join(root, 'blank');
+  await request.post('/rpc', { data: { method: 'project.create', params: { path, name: '空白', template: 'blank' } } });
+  await page.addInitScript((p) => localStorage.setItem('efw.lastProject', p), path);
+  await page.goto('/');
+  await page.getByRole('button', { name: '状态机', exact: true }).click();
+
+  // 空白项目里能直接新建状态机，不用去改 efw.json
+  await expect(page.locator('.machine-toolbar')).toContainText('还没有状态机');
+  await page.getByRole('button', { name: '新建状态机' }).click();
+  await page.getByLabel('新状态机名称').fill('工作模式');
+  await page.getByLabel('新状态机标识符').fill('mode');
+  await page.getByRole('button', { name: '添加', exact: true }).click();
+  await expect.poll(async () => JSON.parse(await readFile(join(path, 'efw.json'), 'utf8')).machines.length).toBe(1);
+  // 后端要求至少一个状态，所以自动带上了初始状态
+  await expect(page.locator('.machine-state')).toHaveCount(1);
+  await expect(page.locator('#machine-select')).toHaveValue('mode');
+  await expect(page.getByLabel('idle 名称')).toHaveValue('初始');
+
+  // 把它删掉
+  page.once('dialog', (d) => d.accept());
+  await page.getByRole('button', { name: '删除这台状态机' }).click();
+  await expect.poll(async () => JSON.parse(await readFile(join(path, 'efw.json'), 'utf8')).machines.length).toBe(0);
+  await expect(page.locator('.machine-toolbar')).toContainText('还没有状态机');
+});
