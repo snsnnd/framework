@@ -97,12 +97,14 @@ function MachineView({ machine, model, apply, pending, resetToken, errors, setEr
 }) {
   const [stateId, setStateId] = useState(machine.initial);
   const [transitionId, setTransitionId] = useState<string | null>(null);
+  const [setPick, setSetPick] = useState('');
   const [addingState, setAddingState] = useState(false);
   const [stateLabel, setStateLabel] = useState('');
   const [stateNewId, setStateNewId] = useState('');
   const [addingTr, setAddingTr] = useState(false);
   const [trNewId, setTrNewId] = useState('');
   const state = machine.states.find((s) => s.id === stateId) ?? machine.states[0];
+  const setCandidates = model.signals.filter((sig) => !state?.set?.[sig.id]);
   // 总览页点进来时定位到出问题的状态或转换
   useEffect(() => {
     if (!focus?.item) return;
@@ -218,16 +220,15 @@ function MachineView({ machine, model, apply, pending, resetToken, errors, setEr
       <section className="machine-detail" aria-label="状态详情">
         {state ? <>
           <header>
-            <h2>{state.label || state.id}</h2><span className="id sub">{state.id}</span>
+            <CellInput resetKey={resetToken} label={`${state.id} 名称`} className="head-name"
+              value={state.label || state.id} onCommit={(raw) => patchState(state.id, { label: raw })} />
+            <span className="id sub">{state.id}</span>
             <span className="spacer" />
             <button className="btn" disabled={pending || machine.initial === state.id} title={machine.initial === state.id ? '当前已是初始状态' : '设为初始状态'}
               onClick={() => void patchMachine({ initial: state.id })}>设为初始</button>
             <button className="btn danger" disabled={pending} onClick={() => removeState(state.id)}>删除</button>
           </header>
           <div className="body">
-            <label className="step-field"><span className="sub">名称</span>
-              <CellInput resetKey={resetToken} label={`${state.id} 名称`} value={state.label || state.id} onCommit={(raw) => patchState(state.id, { label: raw })} />
-            </label>
             <h3 className="detail-h">运行的数据流</h3>
             {model.flows.length ? <ul className="check-list">{model.flows.map((flow) => {
               const controlled = model.machines.find((mc) => mc.id !== machine.id && mc.states.some((s) => s.run.includes(flow.id)));
@@ -245,20 +246,34 @@ function MachineView({ machine, model, apply, pending, resetToken, errors, setEr
               </li>;
             })}</ul> : <p className="sub">还没有数据流。</p>}
             <h3 className="detail-h">进入时设置信号</h3>
+            <p className="sub">进入这个状态时，把选中的信号写成指定的值（其余信号保持不变）。</p>
             {model.signals.length ? <div className="set-editor">
-              {model.signals.map((signal) => {
-                const current = state.set?.[signal.id];
-                return <div key={signal.id} className="set-row">
-                  <span className="sub">{signal.label || signal.id}</span>
-                  <CellInput resetKey={resetToken} label={`${state.id} 设置 ${signal.id}`} kind="number" step="any"
-                    value={current ?? signal.init} disabled={pending || current === undefined}
-                    onCommit={(raw) => patchState(state.id, { set: { ...(state.set ?? {}), [signal.id]: Number(raw) } })} />
-                  <button className="btn ghost" disabled={pending || current === undefined} aria-label={`${state.id} 取消设置 ${signal.id}`}
-                    onClick={() => { const next = { ...(state.set ?? {}) }; delete next[signal.id]; void patchState(state.id, { set: next }); }}>×</button>
+              {/* 只列真正设置了值的信号：把全部信号连同初值列出来，会让人以为都会被写入 */}
+              {Object.entries(state.set ?? {}).map(([id, value]) => {
+                const signal = model.signals.find((x) => x.id === id);
+                return <div key={id} className="set-row">
+                  <span className="sub">{signal?.label || id}</span>
+                  <CellInput resetKey={resetToken} label={`${state.id} 设置 ${id}`} kind="number" step="any"
+                    value={Number(value)}
+                    onCommit={(raw) => patchState(state.id, { set: { ...(state.set ?? {}), [id]: Number(raw) } })} />
+                  <button className="btn ghost" disabled={pending} aria-label={`${state.id} 取消设置 ${id}`}
+                    onClick={() => { const next = { ...(state.set ?? {}) }; delete next[id]; void patchState(state.id, { set: next }); }}>×</button>
                 </div>;
               })}
-              <button className="btn" disabled={pending || Object.keys(state.set ?? {}).length >= model.signals.length}
-                onClick={() => patchState(state.id, { set: { ...(state.set ?? {}), [model.signals[0].id]: model.signals[0].init } })}>添加设置</button>
+              {!Object.keys(state.set ?? {}).length && <p className="sub">没有设置任何信号。</p>}
+              <div className="row">
+                <select className="input" aria-label={`${state.id} 添加设置信号`} value={setPick}
+                  onChange={(e) => setSetPick(e.target.value)} disabled={pending || !setCandidates.length}>
+                  <option value="">选择要设置的信号…</option>
+                  {setCandidates.map((sig) => <option key={sig.id} value={sig.id}>{sig.label || sig.id} · {sig.id}</option>)}
+                </select>
+                <button className="btn" disabled={pending || !setPick} onClick={() => {
+                  const signal = model.signals.find((x) => x.id === setPick);
+                  if (!signal) return;
+                  void patchState(state.id, { set: { ...(state.set ?? {}), [signal.id]: signal.init } });
+                  setSetPick('');
+                }}>添加设置</button>
+              </div>
             </div> : <p className="sub">还没有信号。</p>}
             <h3 className="detail-h">钩子函数</h3>
             <div className="row">
@@ -377,6 +392,10 @@ export function Machines({ repair }: { repair: Repair | null }) {
   const live = current ? { current: current.s, since: debug.t - current.since } : null;
   const diagnostics = analysis?.diagnostics.filter((d) => machine && (d.at === `machines/${machine.id}` || d.at.startsWith(`machines/${machine.id}/`))) ?? [];
 
+  function patchMachine(id: string, patch: Record<string, unknown>) {
+    return apply((m) => patchItem(m, 'machines', id, patch));
+  }
+
   function addMachine() {
     const id = newMachineId.trim();
     const problem = idProblem(id, model.machines.map((m) => m.id));
@@ -422,6 +441,8 @@ export function Machines({ repair }: { repair: Repair | null }) {
           {model.machines.map((m) => <option key={m.id} value={m.id}>{m.label || m.id} · {m.id}</option>)}
         </select>
         <span className="sub">{machine.states.length} 个状态 · {machine.transitions.length} 条转换</span>
+        <CellInput resetKey={resetToken} label={`${machine.id} 名称`} value={machine.label || machine.id}
+          onCommit={(raw) => void patchMachine(machine.id, { label: raw })} />
         <button className="btn" disabled={pending || addingMachine} onClick={() => { setAddingMachine(!addingMachine); setErrors([]); }}>新建状态机</button>
         <button className="btn danger" disabled={pending} onClick={() => removeMachine(machine.id)}>删除这台状态机</button>
         <span className="spacer" />

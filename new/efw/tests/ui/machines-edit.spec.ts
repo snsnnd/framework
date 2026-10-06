@@ -31,7 +31,9 @@ test('状态机页：编辑状态、run、set、钩子与初始状态', async ({
   await page.getByLabel('mode running 运行 control').click();
   await expect.poll(async () => (await machine(path)).states.find((s: { id: string }) => s.id === 'running').run).toEqual(['cooldown']);
 
-  // set：新增一条信号设置并修改
+  // set：只列真正设置了的信号，先挑一个再加
+  await expect(page.locator('.set-editor')).toContainText('没有设置任何信号');
+  await page.getByLabel('running 添加设置信号').selectOption('temp_raw');
   await page.getByRole('button', { name: '添加设置' }).click();
   await expect.poll(async () => Object.keys((await machine(path)).states.find((s: { id: string }) => s.id === 'running').set)).toContain('temp_raw');
   await expect(page.getByLabel('running 设置 temp_raw')).toHaveValue('20');   // 等新增落盘、输入框可编辑
@@ -154,4 +156,27 @@ test('状态机页：新增与删除状态机', async ({ page, request }) => {
   await page.getByRole('button', { name: '删除这台状态机' }).click();
   await expect.poll(async () => JSON.parse(await readFile(join(path, 'efw.json'), 'utf8')).machines.length).toBe(0);
   await expect(page.locator('.machine-toolbar')).toContainText('还没有状态机');
+});
+
+test('状态机与状态的名称都能改，且不再出现重复的名称框', async ({ page, request }) => {
+  const path = join(root, 'app');
+  await request.post('/rpc', { data: { method: 'project.create', params: { path, name: '恒温控制', template: 'thermostat' } } });
+  await page.addInitScript((p) => localStorage.setItem('efw.lastProject', p), path);
+  await page.goto('/');
+  await page.getByRole('button', { name: '状态机', exact: true }).first().click();
+
+  // 状态名称就在标题里就地编辑，正文不再重复一个「名称」行
+  const name = page.getByLabel('running 名称');
+  await expect(name).toHaveValue('正常控制');
+  await expect(page.locator('.machine-detail .body > label.step-field')).toHaveCount(0);
+
+  // 状态机名称也能改（工具条里）
+  const machineName = page.getByLabel('mode 名称');
+  await machineName.fill('工作模式');
+  await machineName.press('Enter');
+  await expect.poll(async () => (await machine(path)).label).toBe('工作模式');
+
+  // 未设置信号时不能出现“看起来已设置”的行
+  await expect(page.locator('.set-editor')).toContainText('没有设置任何信号');
+  await expect(page.locator('.set-row')).toHaveCount(0);
 });

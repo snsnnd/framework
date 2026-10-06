@@ -11,7 +11,7 @@
 ## 1. 给下个 agent 的最重要八条
 
 1. 端到端可用：`studio_core/` + `ui/` 七个导航页面（总览 / 数据流 / 状态机 / 通信 / 代码 / 调试 / 生成）全部实现；风格规范 `docs/05-ui-style.md`。**下一步主线是“页面内模型编辑”**（见第 7 节），即把浏览页（数据流 / 状态机 / 通信）变成结构化编辑器。
-2. 测试：`34` 个后端测试、`33` 条浏览器回归、`2` 条壳协议测试，全绿。任何改动后按第 8 节跑全套。
+2. 测试：`34` 个后端测试、`34` 条浏览器回归、`2` 条壳协议测试，全绿。任何改动后按第 8 节跑全套。
 3. 只用 `uv` 管理 Python：`uv sync`、`uv run python ...`。唯一第三方依赖是 `pyserial`（真机串口）。
 4. 模型 id 必须匹配 `^[a-z][a-z0-9_]{0,23}$`；中文只出现在 `label` 里。生成的 C 标识符由 id 直接决定，创建后不可改。
 5. 生成器输出只写 `generated/`；`src/`、`board/` 永远由用户拥有。已有“预览 → token → 提交”与手改冲突保护，不要绕过。
@@ -41,7 +41,7 @@
 | JSON Lines 服务 + CLI | `server.py`、`cli.py` | `ServiceTests` 通过 |
 | C 运行库契约 | `tests/msgq_contract.c`、`tests/scheduler_contract.c` | 编译运行通过（cc -std=c99 -Wall -Wextra） |
 | 聚合头与单编译单元（`efw.h` / `efw_all.c`，Keil 用户只加一个 .c） | `runtime/include/efw/efw.h`、`runtime/src/efw_all.c` | `RuntimeContractTests`：聚合头能用消息队列、`efw_all.c` 在 `-Werror` 下编过 |
-| React UI + 开发桥 | `ui/`、`tools/bridge.mjs` | 33 条 Playwright 回归；Monaco/worker 本地打包、无 CDN |
+| React UI + 开发桥 | `ui/`、`tools/bridge.mjs` | 34 条 Playwright 回归；Monaco/worker 本地打包、无 CDN |
 | Electron 壳 | `desktop/main.mjs`、`desktop/preload.cjs` | `tests/bridge.test.mjs`（协议行解析 + 真实服务往返）、`tests/ui/shell.spec.ts`（渲染层切 IPC）；**本机无显示器，GUI 未做端到端验证** |
 
 ## 3. 目录与职责
@@ -153,7 +153,17 @@ thermostat 运行窗口 12s→18s；traffic 转换时刻 3001/6002→3000/6000�
 - 桌面版 GUI 未在本机验证过（无显示器/xvfb），见 7.3；已验证的是渲染层切 IPC 与协议层。
 - 撤销/重做只覆盖模型编辑（上限 50 步），源码文本靠编辑器自身的 Ctrl+Z；草稿持久化在 localStorage，换浏览器或清理站点数据会丢。
 
-### 6.6 `debug.stop` 在 TCP 上永久卡死（已修）
+### 6.6 状态详情里三个误导性缺陷（已修）
+
+用户问"状态机名称下面为什么还有一个需要填写的"时挖出来的：
+
+1. 面板标题已经写了状态名，正文又有一个「名称」输入框，看起来像要填两次。改成**在标题里就地编辑**，正文不再重复。
+2. 「进入时设置信号」把**所有信号连同初值都列出来**（禁用的行显示初值），看起来像"进入时会写全部信号"，其实 `set` 是空的。改成**只列真正设置了值的信号**，没设置时明说"没有设置任何信号"，添加时用下拉挑信号。
+3. 状态机自己的名称**创建后无法修改**（UI 里没有入口）。现在工具条里可直接改。
+
+`set` 的显示必须和模型一致：只渲染 `state.set` 里真实存在的键。
+
+### 6.7 `debug.stop` 在 TCP 上永久卡死（已修）
 
 `TcpTransport` 用 `sock.makefile("r")` 读，停止时先 `self.f.close()`——而 `close()` 会等读到 EOF，真机不会主动发 EOF，于是点“停止”整个界面挂住（连同 Python 服务）。改成和 `SerialTransport` 一样的 `recv` + 超时循环（`settimeout(0.2)`），`close()` 只做 `shutdown` + `close`。**写新传输时永远不要用阻塞式 `makefile().readline()`。**
 
@@ -247,7 +257,7 @@ IDE 化外壳也完成了（点 3）：左侧资源树（视图 / 项目文件 /
 
 ### 测试现状
 
-- 后端 `unittest` 34 条全绿；浏览器 `@playwright/test` 33 条全绿（状态机含编辑与运行时高亮、通信含输入输出、数据流、代码含草稿持久化、调试含真机目标与状态高亮、生成页、总览修复入口、撤销重做、桌面壳）。
+- 后端 `unittest` 34 条全绿；浏览器 `@playwright/test` 34 条全绿（状态机含编辑与运行时高亮、通信含输入输出、数据流、代码含草稿持久化、调试含真机目标与状态高亮、生成页、总览修复入口、撤销重做、桌面壳）。
 - 测试创建临时真实项目（`/tmp`），结束后清理；截图保存在被忽略的 `test-results/`。
 - 全局 `expect.timeout` 放宽到 20 秒（本机负载高时保存一趟要好几秒）。
 - Monaco 按需加载：textarea 出现得比视图早，此时打字会被整段丢弃（草稿仍是“已保存”）。统一用 `tests/ui/helpers.ts` 的 `waitEditorReady` 等到 `.view-lines` 里出现文字并聚焦；`window.monaco` 并未暴露，别依赖它。需要整段重写的地方（如 efw.json）可以安全重试。

@@ -413,3 +413,10 @@ td.num, th.num { text-align: right; font-family: var(--mono); }
 .tpl-skeleton { height: 76px; border-radius: var(--r); border: 1px solid var(--line); background: linear-gradient(90deg, var(--bg-inset), var(--bg-panel), var(--bg-inset)); background-size: 200% 100%; animation: tpl-shimmer 1.4s ease-in-out infinite; }
 @keyframes tpl-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 @media (prefers-reduced-motion: reduce) { .tpl-skeleton { animation: none; } }
+
+/* 状态/机器名称就地编辑：标题里直接改，不再在下面重复一个「名称」行 */
+.cell.head-name { font: 600 15px var(--sans); color: var(--fg); border-color: transparent; background: transparent; padding: 2px 6px; min-width: 120px; }
+.cell.head-name:hover { border-color: var(--line-strong); background: var(--bg-inset); }
+.machine-toolbar .input.cell { flex: 0 0 132px; }
+.set-editor .row { margin-top: 8px; }
+.set-editor .row .input { flex: 1; }
