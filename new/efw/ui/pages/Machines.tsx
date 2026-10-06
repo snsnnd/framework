@@ -1,5 +1,6 @@
 import { useEffect, useId, useState } from 'react';
 import { CellInput } from '../components/CellInput';
+import { NameIdFields } from '../components/NameIdFields';
 import { appendItem, fail, idProblem, patchItem, removeItem, suggestId } from '../model-edit';
 import type { Repair } from '../focus';
 import { useStore } from '../store';
@@ -210,8 +211,8 @@ function MachineView({ machine, model, apply, pending, resetToken, errors, setEr
           : <p className="empty">此状态机还没有状态。</p>}
         <div className="step-add">
           {addingState ? <>
-            <CellInput liveCommit label="新状态名称" value={stateLabel} onCommit={setStateLabel} placeholder="名称" />
-            <CellInput liveCommit label="新状态标识符" value={stateNewId} onCommit={setStateNewId} className="mono" />
+            <NameIdFields kind="state" idLabel="新状态标识符" id={stateNewId} label={stateLabel}
+              liveCommit onName={setStateLabel} onId={setStateNewId} />
             <button className="btn primary" disabled={pending} onClick={addState}>添加</button>
             <button className="btn" onClick={() => setAddingState(false)}>取消</button>
           </> : <button className="btn" disabled={pending} onClick={() => { setAddingState(true); setStateNewId(suggestId('state', machine.states.map((s) => s.id))); }}>新增状态</button>}
@@ -455,8 +456,8 @@ export function Machines({ repair }: { repair: Repair | null }) {
     {addingMachine && <section className="card" aria-label="新增状态机">
       <header><h2>新增状态机</h2></header>
       <div className="body step-add">
-        <CellInput liveCommit label="新状态机名称" value={newMachineLabel} onCommit={setNewMachineLabel} placeholder="名称" />
-        <CellInput liveCommit label="新状态机标识符" value={newMachineId} onCommit={setNewMachineId} className="mono" />
+        <NameIdFields kind="machine" idLabel="新状态机标识符" id={newMachineId} label={newMachineLabel}
+          liveCommit onName={setNewMachineLabel} onId={setNewMachineId} />
         <button className="btn primary" disabled={pending} onClick={() => void addMachine()}>添加</button>
         <button className="btn" onClick={() => setAddingMachine(false)}>取消</button>
         <span className="sub">会自动带上一个初始状态（后端要求至少有一个状态）。</span>

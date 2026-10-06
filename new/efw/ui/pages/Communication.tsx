@@ -259,8 +259,10 @@ export function Communication({ repair }: { repair: Repair | null }) {
                   </tr>;
                 })}
                 {adding && <tr className="adding-row" data-id="new">
-                  <td><CellInput resetKey={resetToken} liveCommit label="新名称" value={newLabel} onCommit={setNewLabel} placeholder="名称" /></td>
-                  <td><CellInput resetKey={resetToken} liveCommit label="新标识符" value={newId} onCommit={setNewId} className="mono" /></td>
+                  <td><CellInput resetKey={resetToken} liveCommit label="新名称" value={newLabel} onCommit={setNewLabel}
+                    placeholder="中文，显示在界面与图上" /></td>
+                  <td><CellInput resetKey={resetToken} liveCommit label="新标识符" value={newId} onCommit={setNewId} className="mono"
+                    placeholder="英文小写，进入 C 代码" /></td>
                   {category === 'signals' ? <><td className="sub">float</td><td>0</td><td>—</td><td className="sub">默认不可整定</td></>
                     : category === 'queues' ? <><td className="sub">uint16_t</td><td>8</td><td className="sub">{POLICY_LABEL.drop_oldest}</td></>
                       : isIo ? <><td className="sub">float</td><td>—</td><td className="sub">{category === 'inputs' ? '恒定值 0' : '—'}</td></>

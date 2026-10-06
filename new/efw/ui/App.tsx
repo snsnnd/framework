@@ -16,7 +16,7 @@ import type { Repair, RepairTarget } from './focus';
 const READY: PageId[] = ['overview', 'flows', 'machines', 'comm', 'code', 'debug', 'generate'];
 
 export function App() {
-  const { project, analysis, refresh, debug, target, canUndo, canRedo, undoModel, redoModel, startDebug, stopDebug, sourcesDirty } = useStore();
+  const { project, analysis, refresh, debug, target, canUndo, canRedo, undoModel, redoModel, startDebug, stopDebug, sourcesDirty, closeProject } = useStore();
   const [page, setPage] = useState<PageId>('overview');
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
@@ -56,6 +56,7 @@ export function App() {
     canUndo,
     canRedo,
     reload: () => void refresh(),
+    switchProject: () => void closeProject(),
     generate: () => setPage('generate'),
     code: () => setPage('code'),
     palette: () => setPaletteOpen(true),
@@ -82,6 +83,7 @@ export function App() {
         <span className="path">{project.path}</span>
         <span className="spacer" />
         <button className="btn" onClick={() => setPaletteOpen(true)} title="命令面板（Ctrl+K）">命令 <span className="id">⌘K</span></button>
+        <button className="btn" onClick={() => void closeProject()} title="回到欢迎页，打开或新建别的项目">切换项目</button>
         <button className="btn" onClick={() => void refresh()}><ArrowsClockwise size={14} /> 重新载入</button>
         <span className="row">
           <button className="btn" aria-label="撤销" title="撤销模型编辑（Ctrl+Z）" disabled={!canUndo} onClick={() => void undoModel()}><ArrowCounterClockwise size={14} /></button>

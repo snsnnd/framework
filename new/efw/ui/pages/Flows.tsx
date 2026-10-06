@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { CellInput } from '../components/CellInput';
+import { NameIdFields } from '../components/NameIdFields';
 import { appendItem, fail, idProblem, patchItem, removeItem, suggestId } from '../model-edit';
 import type { Repair } from '../focus';
 import { useStore } from '../store';
@@ -212,8 +213,7 @@ export function Flows({ repair }: { repair: Repair | null }) {
     {addingFlow ? <section className="card">
       <header><h2>新增数据流</h2></header>
       <div className="step-add">
-        <CellInput liveCommit label="新数据流名称" value={flowLabel} onCommit={setFlowLabel} placeholder="名称" />
-        <CellInput liveCommit label="新数据流标识符" value={flowId} onCommit={setFlowId} className="mono" />
+        <NameIdFields kind="flow" idLabel="新数据流标识符" id={flowId} label={flowLabel} liveCommit onName={setFlowLabel} onId={setFlowId} />
         <button className="btn primary" disabled={pending} onClick={addFlow}>添加</button>
         <button className="btn" onClick={() => setAddingFlow(false)}>取消</button>
       </div>

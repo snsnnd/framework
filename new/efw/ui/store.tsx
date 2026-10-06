@@ -44,6 +44,8 @@ interface Store {
   sendDebug: (line: string) => Promise<void>;
   updateModel: (mutate: (model: Model) => Model) => Promise<{ ok: boolean; diagnostics: Diagnostic[] }>;
   open: (path: string) => Promise<void>;
+  closeProject: () => Promise<void>;
+  recent: () => RecentProject[];
   create: (path: string, name: string, template: string) => Promise<void>;
   refresh: () => Promise<void>;
   reload: () => Promise<Opened | null>;
@@ -51,6 +53,25 @@ interface Store {
 
 const Ctx = createContext<Store | null>(null);
 const LAST = 'efw.lastProject';
+const RECENT = 'efw.recentProjects';
+export interface RecentProject { path: string; name: string }
+
+/** 最近打开的项目：欢迎页一键回到手头的工程。 */
+function readRecent(): RecentProject[] {
+  try {
+    const raw = localStorage.getItem(RECENT);
+    const list = raw ? JSON.parse(raw) : [];
+    return Array.isArray(list) ? list.filter((x) => x && typeof x.path === 'string') : [];
+  } catch { return []; }
+}
+export function forgetRecent(path: string) {
+  try { localStorage.setItem(RECENT, JSON.stringify(readRecent().filter((x) => x.path !== path))); } catch { /* 忽略 */ }
+}
+function pushRecent(entry: RecentProject) {
+  try {
+    localStorage.setItem(RECENT, JSON.stringify([entry, ...readRecent().filter((x) => x.path !== entry.path)].slice(0, 6)));
+  } catch { /* 隐私模式下写不进去，忽略 */ }
+}
 
 export function StoreProvider({ children }: { children: ReactNode }) {
   const [project, setProject] = useState<Opened | null>(null);
@@ -77,6 +98,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     setProject(p);
     setAnalysis(await call<Analysis>('project.analyze', { path: p.path, model: p.model }));
     localStorage.setItem(LAST, p.path);
+    pushRecent({ path: p.path, name: p.model?.name ?? p.path });
   }, []);
 
   const load = useCallback(async (p: Opened) => {
@@ -217,12 +239,33 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     catch (e) { setDebug((current) => ({ ...current, message: (e as Error).message })); }
   }, []);
 
+  /** 回到欢迎页去开别的项目：先停掉会话、清历史，并抹掉 lastProject 以免立刻又打开它。 */
+  const closeProject = useCallback(async () => {
+    const active = sessionRef.current;
+    if (active) {
+      sessionRef.current = null;
+      await call('debug.stop', { session: active }).catch(() => undefined);
+    }
+    setDebug(EMPTY_DEBUG);
+    setSourcesDirty(false);
+    setError(null);
+    undoRef.current = [];
+    redoRef.current = [];
+    setHistory({ undo: 0, redo: 0 });
+    projectRef.current = null;
+    setProject(null);
+    setAnalysis(null);
+    localStorage.removeItem(LAST);
+  }, []);
+
+  const recent = useCallback(() => readRecent(), []);
+
   useEffect(() => {
     const last = localStorage.getItem(LAST);
     if (last) void open(last);
   }, [open]);
 
-  return <Ctx.Provider value={{ project, analysis, busy, error, sourcesDirty, setSourcesDirty, debug, target, setTarget, canUndo: history.undo > 0, canRedo: history.redo > 0, undoModel, redoModel, startDebug, stopDebug, controlDebug, sendDebug, updateModel, open, create, refresh, reload }}>{children}</Ctx.Provider>;
+  return <Ctx.Provider value={{ project, analysis, busy, error, sourcesDirty, setSourcesDirty, debug, target, setTarget, canUndo: history.undo > 0, canRedo: history.redo > 0, undoModel, redoModel, startDebug, stopDebug, controlDebug, sendDebug, updateModel, open, create, refresh, reload, closeProject, recent }}>{children}</Ctx.Provider>;
 }
 
 export function useStore(): Store {

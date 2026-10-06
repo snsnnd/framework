@@ -354,7 +354,7 @@ td.num, th.num { text-align: right; font-family: var(--mono); }
 /* 概念速览图（总览） */
 .concept { padding: 12px 16px 16px; }
 .concept-scroll { overflow-x: auto; }
-.concept-svg { width: 100%; min-width: 900px; height: auto; display: block; }
+.concept-svg { width: auto; max-width: none; height: auto; display: block; }
 .concept .cm-col { fill: var(--fg-faint); font: 11px var(--sans); letter-spacing: .04em; }
 .concept .cm-node rect { fill: var(--bg-inset); stroke: var(--line-strong); }
 .concept .cm-node text { fill: var(--fg); font: 12px var(--sans); }
@@ -369,6 +369,10 @@ td.num, th.num { text-align: right; font-family: var(--mono); }
 .concept .cm-node.is-out rect { stroke: var(--s2); }
 .concept .cm-node.is-live rect { stroke: var(--ok); stroke-width: 2; }
 .concept .cm-line { fill: none; stroke-width: 1.4; stroke: var(--line-strong); }
+.concept .cm-line.is-dim { opacity: .18; }
+.concept .cm-node { transition: opacity 80ms linear; }
+.concept .cm-node.is-dim { opacity: .28; }
+.concept .cm-node.is-dim rect { stroke: var(--line); }
 .concept .cm-line.is-read { stroke: var(--s5); }
 .concept .cm-line.is-write { stroke: var(--s2); }
 .concept .cm-line.is-run { stroke: var(--s3); stroke-dasharray: 4 3; }
@@ -420,3 +424,21 @@ td.num, th.num { text-align: right; font-family: var(--mono); }
 .machine-toolbar .input.cell { flex: 0 0 132px; }
 .set-editor .row { margin-top: 8px; }
 .set-editor .row .input { flex: 1; }
+
+/* 欢迎页的“最近打开” */
+.recent { margin-top: 4px; }
+.recent h3 { margin: 8px 0 4px; font-weight: 500; }
+.recent ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.recent li { display: flex; align-items: center; gap: 6px; }
+.recent-item { flex: 1; display: flex; align-items: baseline; gap: 8px; min-width: 0; padding: 5px 8px; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg-inset); color: var(--fg); font-size: 12px; text-align: left; cursor: pointer; }
+.recent-item:hover { border-color: var(--line-strong); background: var(--bg-hover); }
+.recent-item .id { color: var(--fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* 名称 / 标识符：两者的区别必须显眼 */
+.name-id-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px 16px; width: 100%; }
+.name-id-fields label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--fg-dim); }
+.name-id-fields label .id { color: var(--fg-faint); }
+.name-id-hint { grid-column: 1 / -1; margin: 0; }
+.name-id-hint .c-preview { display: block; margin-top: 2px; }
+.name-id-hint code { font: 11px var(--mono); color: var(--s1); }
+.th-sub { display: block; font-weight: 400; font-size: 10px; color: var(--fg-faint); }

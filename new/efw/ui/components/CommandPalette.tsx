@@ -75,6 +75,7 @@ export function buildCommands(project: Opened | null, actions: {
   generate: () => void;
   code: () => void;
   palette: () => void;
+  switchProject: () => void;
 }): Command[] {
   const pages: [PageId, string][] = [
     ['overview', '总览'], ['flows', '数据流'], ['machines', '状态机'], ['comm', '通信'],
@@ -89,6 +90,7 @@ export function buildCommands(project: Opened | null, actions: {
     { id: 'generate', title: '生成代码', group: '生成', run: actions.generate },
     { id: 'reload', title: '重新载入项目', group: '项目', run: actions.reload },
     { id: 'code', title: '打开代码页', group: '项目', run: actions.code },
+    { id: 'switch', title: '切换项目 / 新建项目', group: '项目', hint: '回到欢迎页', run: actions.switchProject },
   );
   if (actions.canUndo) commands.push({ id: 'undo', title: '撤销模型编辑', group: '编辑', hint: 'Ctrl+Z', run: actions.undo });
   if (actions.canRedo) commands.push({ id: 'redo', title: '重做模型编辑', group: '编辑', hint: 'Ctrl+Shift+Z', run: actions.redo });

@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import type { Analysis, Model } from '../types';
 
 // 概念图必须由项目现状渲染：盒子 = 模型里的真实对象，连线 = 后端分析出的真实读写关系。
@@ -10,17 +11,20 @@ export interface ConceptMapProps {
   running?: string | null;
 }
 
-interface Node { key: string; col: Col; index: number; label: string; sub: string; tone: string }
 type Col = 'in' | 'flow' | 'signal' | 'out' | 'mode' | 'event';
+type EdgeKind = 'read' | 'write' | 'run' | 'event';
+interface Node { key: string; col: Col; index: number; label: string; sub: string; tone: string }
 
-const COL = { in: 12, flow: 176, signal: 340, out: 504, mode: 668, event: 852 } as const;
+const COL = { in: 14, flow: 228, signal: 442, out: 656, mode: 870, event: 1084 } as const;
 const COL_TITLE: Record<Col, string> = { in: '输入', flow: '数据流', signal: '信号', out: '输出', mode: '状态机', event: '事件' };
-const BOX_W = 152;
-const BOX_H = 38;
-const GAP_Y = 10;
-const WIDTH = COL.event + BOX_W + 12;
+const BOX_W = 150;
+const BOX_H = 40;
+const GAP_Y = 12;
+const GAP_X = 64;   // 列间空隙，全部走线都用它
+const WIDTH = COL.event + BOX_W + 14;
 
 export function ConceptMap({ model, analysis, onOpen, running = null }: ConceptMapProps) {
+  const [hover, setHover] = useState<string | null>(null);
   const usage = analysis?.usage;
   const flowIds = new Set(model.flows.map((f) => f.id));
   const signalIds = new Set(model.signals.map((s) => s.id));
@@ -62,24 +66,29 @@ export function ConceptMap({ model, analysis, onOpen, running = null }: ConceptM
   }
   for (const e of events) add('event', `event:${e.id}`, e.label || e.id, e.id, 'event');
 
-  const nodes = (Object.values(groups).flat());
+  const nodes = Object.values(groups).flat();
   const box = (key: string) => {
     const node = nodes.find((n) => n.key === key);
     if (!node) return null;
     return { x: COL[node.col], y: 26 + node.index * (BOX_H + GAP_Y), w: BOX_W, h: BOX_H };
   };
 
-  const edges: { d: string; kind: 'read' | 'write' | 'run' | 'event' }[] = [];
-  const link = (from: string, to: string, kind: 'read' | 'write' | 'run' | 'event') => {
+  const edges: { d: string; kind: EdgeKind; key: string; nodes: string[] }[] = [];
+  const link = (from: string, to: string, kind: EdgeKind) => {
     const a = box(from);
     const b = box(to);
     if (!a || !b) return;
-    const x1 = a.x + a.w;
+    const rightward = b.x >= a.x;
+    const x1 = rightward ? a.x + a.w : a.x;
+    const x2 = rightward ? b.x : b.x + b.w;
     const y1 = a.y + a.h / 2;
-    const x2 = b.x;
     const y2 = b.y + b.h / 2;
-    const bend = Math.max(24, (x2 - x1) / 2);
-    edges.push({ d: `M${x1} ${y1} C${x1 + bend} ${y1} ${x2 - bend} ${y2} ${x2} ${y2}`, kind });
+    // 按目标盒子在本列中的行号分道：连到第几个盒子就走第几条“管道”，扇出不再重叠
+    const target = nodes.find((n) => n.key === to);
+    const siblings = target ? groups[target.col].length : 1;
+    const lane = GAP_X * (0.18 + 0.64 * (target?.index ?? 0) / Math.max(1, siblings - 1 || 1));
+    const cx = rightward ? x1 + lane : x2 + lane;
+    edges.push({ d: `M${x1} ${y1} H${cx} V${y2} H${x2}`, kind, key: `${from}->${to}`, nodes: [from, to] });
   };
   // 关系一律来自 analyze.usage（输入/输出/信号/事件），状态机的 run 与 set 直接来自模型
   for (const [id, entry] of Object.entries(usage?.inputs ?? {})) {
@@ -113,12 +122,14 @@ export function ConceptMap({ model, analysis, onOpen, running = null }: ConceptM
           aria-label={`项目结构：${model.inputs.length} 个输入、${model.flows.length} 条数据流、${signals.length} 个被用到的信号、${model.outputs.length} 个输出、${model.machines.length} 台状态机、${events.length} 个事件`}>
           {(Object.keys(COL) as Col[]).map((col) => <text key={col} x={COL[col]} y={14} className="cm-col">{COL_TITLE[col]}</text>)}
           <g className="cm-edge">
-            {edges.map((e, i) => <path key={i} d={e.d} className={`cm-line is-${e.kind}`} />)}
+            {edges.map((e, i) => <path key={i} d={e.d} className={`cm-line is-${e.kind}${hover && !e.nodes.includes(hover) ? ' is-dim' : ''}`} />)}
           </g>
           {nodes.map((n) => {
             const b = box(n.key)!;
             const live = n.tone === 'mode' && running !== null && running.includes(`${n.key.slice(5)}`);
-            return <g key={n.key} className={`cm-node is-${n.tone}${live ? ' is-live' : ''}`} transform={`translate(${b.x} ${b.y})`}
+            const dim = hover !== null && hover !== n.key && !edges.some((e) => e.nodes[0] === hover && e.nodes[1] === n.key);
+            return <g key={n.key} className={`cm-node is-${n.tone}${live ? ' is-live' : ''}${dim ? ' is-dim' : ''}`} transform={`translate(${b.x} ${b.y})`}
+              onMouseEnter={() => setHover(n.key)} onMouseLeave={() => setHover(null)} onFocus={() => setHover(n.key)} onBlur={() => setHover(null)}
               {...(onOpen ? { role: 'button', tabIndex: 0, onClick: () => openNode(n.key, onOpen), onKeyDown: (e: React.KeyboardEvent) => { if (e.key === 'Enter') openNode(n.key, onOpen); } } : {})}>
               <rect width={BOX_W} height={BOX_H} rx="5" />
               <text x={9} y={16}>{clip(n.label)}</text>
@@ -139,7 +150,7 @@ export function ConceptMap({ model, analysis, onOpen, running = null }: ConceptM
 }
 
 function clip(text: string): string {
-  return text.length > 15 ? `${text.slice(0, 14)}…` : text;
+  return text.length > 17 ? `${text.slice(0, 16)}…` : text;
 }
 
 function openNode(key: string, onOpen: ConceptMapProps['onOpen']) {
