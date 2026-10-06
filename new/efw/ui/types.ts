@@ -19,7 +19,7 @@ export interface Diagnostic { level: 'error' | 'warn' | 'info'; at: string; mess
 export interface PlanItem { id: string; label: string; kind: string; period_ms: number; steps: number; controlled_by: string | null }
 export interface FnInfo { name: string; kind: string; role: string; owner: string; file: string; signature: string; defined: boolean; mismatch: string | null }
 export type UsageRef = { flow: string; step: string } | { machine: string; state: string } | { machine: string; transition: string };
-export interface StepField { name: string; role: 'signal' | 'input' | 'output' | 'event' | 'call' | 'number' | 'enum'; label: string; default?: number; min?: number | null; max?: number | null; options?: string[] }
+export interface StepField { name: string; role: 'signal' | 'input' | 'output' | 'event' | 'call' | 'number' | 'enum'; label: string; hint?: string; default?: number; min?: number | null; max?: number | null; options?: string[] }
 export interface StepSpec { kind: string; label: string; fields: StepField[] }
 export interface SimSpec { kind: string; label: string; fields: SimField[] }
 export interface SimField { name: string; role: 'output' | 'number' | 'ms'; label: string; default?: number; min?: number | null; max?: number | null }

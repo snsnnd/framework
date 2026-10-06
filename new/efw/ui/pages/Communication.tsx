@@ -8,12 +8,18 @@ import type { Repair } from '../focus';
 import { useStore } from '../store';
 import type { Diagnostic, IoPoint, Model, Queue, Signal, Sim, SimSpec, UsageRef } from '../types';
 
+// note 直接写在界面上：信号/事件/常量的区别是新手最常问的三件事
 const CATEGORIES = [
-  { id: 'signals', label: '信号', memory: '信号', prefix: 'signal' },
-  { id: 'inputs', label: '输入', memory: '输出缓存与强制值', prefix: 'input' },
-  { id: 'outputs', label: '输出', memory: '输出缓存与强制值', prefix: 'output' },
-  { id: 'events', label: '事件', memory: '事件队列', prefix: 'event' },
-  { id: 'queues', label: '队列', memory: '用户队列', prefix: 'queue' },
+  { id: 'signals', label: '信号', memory: '信号', prefix: 'signal',
+    note: '信号是**运行期的值**：会被数据流的步骤不断改写，每帧上报到调试页画曲线。它不是常量——常量是步骤参数（pid.kp、限幅范围），编译进固件后不再变化。' },
+  { id: 'inputs', label: '输入', memory: '输出缓存与强制值', prefix: 'input',
+    note: '输入是硬件读到的量，用“读取”步骤取进数据流。虚拟目标下可以用下方的仿真设置代替硬件；真机上来自 `board/io.c` 里你实现的 `<id>_read()`。' },
+  { id: 'outputs', label: '输出', memory: '输出缓存与强制值', prefix: 'output',
+    note: '输出是数据流用“写入”步骤驱动到硬件的值，真机上对应 `board/io.c` 的 `<id>_write()`。调试页可以临时强制它。' },
+  { id: 'events', label: '事件', memory: '事件队列', prefix: 'event',
+    note: '事件**不带数值**，只表示“刚刚发生了一次”，用来触发状态机切换。想知道当前的数值请用信号。发出事件要靠数据流的“发出事件”步骤拿信号做比较。' },
+  { id: 'queues', label: '队列', memory: '用户队列', prefix: 'queue',
+    note: '队列用于高速采样交给慢速处理（先进先出，固定容量）。它和事件队列不同：事件队列由框架管理，事件本身不带数据。' },
 ] as const;
 function isIoCategory(c: Category): c is 'inputs' | 'outputs' { return c === 'inputs' || c === 'outputs'; }
 const TYPE_OPTIONS = TYPES.map((t) => ({ value: t, label: t }));
@@ -60,6 +66,15 @@ function defaults(spec: SimSpec | undefined, outputs: IoPoint[]): Record<string,
     else out[f.name] = f.default ?? 0;
   }
   return out;
+}
+
+/** 概念说明：**强调** 与 `代码` 两种记号就地渲染，不塞 HTML。 */
+function Note({ text }: { text: string }) {
+  return <p className="comm-note">{text.split(/(\*\*[^*]+\*\*|`[^`]+`)/g).filter(Boolean).map((part, i) => {
+    if (part.startsWith('**')) return <strong key={i}>{part.slice(2, -2)}</strong>;
+    if (part.startsWith('`')) return <code key={i}>{part.slice(1, -1)}</code>;
+    return <span key={i}>{part}</span>;
+  })}</p>;
 }
 
 function References({ refs, model }: { refs: UsageRef[]; model: Model }) {
@@ -185,12 +200,13 @@ export function Communication({ repair }: { repair: Repair | null }) {
       </div>
       <label className="comm-search">查找<input className="input" type="search" placeholder="名称或标识符" value={query} onChange={(e) => setQuery(e.target.value)} /></label>
     </div>
+    <Note text={meta.note} />
     <section className="card" aria-label={`${meta.label}列表`}>
       <header>
         <span className="sub">{memory ? `${meta.memory}内存估算 ${memory.bytes} B` : '内存估算暂不可用'} · 全部{meta.label}</span>
         <button className="btn" onClick={startAdd} disabled={pending}>新增{meta.label}</button>
       </header>
-      {category === 'events' && <p className="comm-note sub">事件不携带数据，共用事件队列。{model.limits?.event_queue !== undefined ? `配置容量 ${model.limits.event_queue} 条；` : '容量使用后端默认值；'}队列满时丢弃最新事件。</p>}
+      {category === 'events' && <p className="comm-note sub">{model.limits?.event_queue !== undefined ? `共用事件队列，配置容量 ${model.limits.event_queue} 条；` : '共用事件队列，容量使用后端默认值；'}队列满时丢弃最新事件。</p>}
       {isIo && <p className="comm-note sub">{category === 'inputs' ? '输入是硬件读到的量，虚拟目标下可用下方的仿真设置代替硬件。' : '输出是写到硬件的值，调试页可以强制它。'}删除前要先改掉引用它的步骤；后端会拒绝仍被引用的删除。</p>}
       {!all.length && !adding ? <p className="empty">还没有{meta.label}。点“新增{meta.label}”创建，或在 efw.json 里配置后重新载入。</p>
         : !visible.length && !adding ? <div className="empty"><p>没有匹配的{meta.label}。</p><button className="btn" onClick={() => setQuery('')}>清除搜索</button></div>

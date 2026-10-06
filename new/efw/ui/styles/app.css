@@ -263,6 +263,7 @@ td.num, th.num { text-align: right; font-family: var(--mono); }
 .step-fields { display: flex; flex-wrap: wrap; gap: 12px 20px; padding: 12px 14px 14px 42px; border-top: 1px solid var(--line); background: var(--bg-inset); }
 .step-field { display: flex; flex-direction: column; gap: 4px; min-width: 140px; }
 .step-field .input.cell { border-color: var(--line-strong); }
+.field-hint { color: var(--fg-faint); font-size: 11px; line-height: 1.4; }
 .step-add { display: flex; align-items: center; gap: 8px; padding: 10px 14px; flex-wrap: wrap; border-top: 1px solid var(--line); }
 .step-add .input { min-height: 30px; }
 
@@ -375,3 +376,8 @@ td.num, th.num { text-align: right; font-family: var(--mono); }
 .blueprint-box:hover .blueprint-grip { opacity: 1; }
 .blueprint-editor { margin: 0 16px 16px; padding: 12px; border: 1px solid var(--line); border-radius: var(--r); background: var(--bg-inset); }
 .blueprint-editor h3 { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; font-size: 13px; font-weight: 500; }
+
+/* 欢迎页模板骨架：等待后端往返时不留空白 */
+.tpl-skeleton { height: 76px; border-radius: var(--r); border: 1px solid var(--line); background: linear-gradient(90deg, var(--bg-inset), var(--bg-panel), var(--bg-inset)); background-size: 200% 100%; animation: tpl-shimmer 1.4s ease-in-out infinite; }
+@keyframes tpl-shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .tpl-skeleton { animation: none; } }

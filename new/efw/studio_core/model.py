@@ -452,6 +452,13 @@ def normalize_params(params: str) -> list[str]:
     return out
 
 
+# 字段语义提示：label 是无障碍名（保持稳定），hint 负责解释它到底是什么。
+WRITE_HINT = "信号是运行期的共享值，这一步会改写它。"
+READ_HINT = "信号是运行期的共享值，这一步只读取，不改。"
+CONST_HINT = "常量：编译进固件，运行中不变（可整定的信号才是运行中能改的值）。"
+EVENT_HINT = "事件不带数值，只记录“刚刚发生了一次”；被比较的是信号。"
+
+
 def step_specs() -> list[dict[str, Any]]:
     """步骤类型表供界面渲染：字段、默认值与参数范围都来自 STEPS/PARAM_RANGE。"""
     out = []
@@ -460,7 +467,7 @@ def step_specs() -> list[dict[str, Any]]:
         if kind == "read":
             fields.append({"name": "input", "role": "input", "label": "输入"})
         for field in spec.get("out", []):
-            fields.append({"name": field, "role": "signal", "label": "写入信号"})
+            fields.append({"name": field, "role": "signal", "label": "写入信号", "hint": WRITE_HINT})
         for field in spec.get("inp", []):
             role = "signal"
             label = "读取信号"
@@ -468,14 +475,18 @@ def step_specs() -> list[dict[str, Any]]:
                 role, label = "event", "事件"
             elif kind == "custom" and field == "call":
                 role, label = "call", "C 函数"
-            fields.append({"name": field, "role": role, "label": label})
+            hint = READ_HINT if role == "signal" else ""
+            fields.append({"name": field, "role": role, "label": label, "hint": hint})
         if kind == "write":
             fields.append({"name": "output", "role": "output", "label": "输出"})
         if kind == "emit":
+            fields[0]["hint"] = EVENT_HINT
             fields.append({"name": "op", "role": "enum", "label": "比较", "options": [">", "<", ">=", "<=", "==", "!="]})
+            fields[-1]["hint"] = EVENT_HINT
         for name, default in spec.get("params", {}).items():
             lo, hi = PARAM_RANGE.get(name, (None, None))
-            fields.append({"name": name, "role": "number", "label": name, "default": default, "min": lo, "max": hi})
+            hint = EVENT_HINT if kind == "emit" else CONST_HINT
+            fields.append({"name": name, "role": "number", "label": name, "hint": hint, "default": default, "min": lo, "max": hi})
         for name, default in spec.get("static", {}).items():
             fields.append({"name": name, "role": "number", "label": name, "default": default, "min": None, "max": None})
         out.append({"kind": kind, "label": spec["label"], "fields": fields})

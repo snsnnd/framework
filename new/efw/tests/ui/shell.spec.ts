@@ -69,3 +69,19 @@ test('浏览器里没有浏览按钮，接口仍走 HTTP 桥', async ({ page, re
   // 已打开项目时不显示欢迎页；这里验证浏览器环境下 window.efw 不存在
   expect(await page.evaluate(() => 'efw' in window)).toBe(false);
 });
+test('欢迎页：模板没到之前有骨架，到失败有说法', async ({ page }) => {
+  // 让 templates.list 慢一点，看首屏是否留白
+  await page.route('**/rpc', async (route) => {
+    const body = route.request().postData() ?? '';
+    if (body.includes('templates.list')) {
+      await new Promise((r) => setTimeout(r, 1200));
+      return route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ id: 1, result: [] }) });
+    }
+    return route.continue();
+  });
+  await page.goto('/');
+  await expect(page.locator('.tpl-skeleton')).toHaveCount(4);
+  // 没有模板时要说清楚，而不是空白
+  await expect(page.getByText('没有可用模板')).toBeVisible({ timeout: 20000 });
+  await expect(page.locator('.tpl-skeleton')).toHaveCount(0);
+});

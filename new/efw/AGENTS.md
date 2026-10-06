@@ -11,7 +11,7 @@
 ## 1. 给下个 agent 的最重要八条
 
 1. 端到端可用：`studio_core/` + `ui/` 七个导航页面（总览 / 数据流 / 状态机 / 通信 / 代码 / 调试 / 生成）全部实现；风格规范 `docs/05-ui-style.md`。**下一步主线是“页面内模型编辑”**（见第 7 节），即把浏览页（数据流 / 状态机 / 通信）变成结构化编辑器。
-2. 测试：`34` 个后端测试、`29` 条浏览器回归、`2` 条壳协议测试，全绿。任何改动后按第 8 节跑全套。
+2. 测试：`34` 个后端测试、`31` 条浏览器回归、`2` 条壳协议测试，全绿。任何改动后按第 8 节跑全套。
 3. 只用 `uv` 管理 Python：`uv sync`、`uv run python ...`。唯一第三方依赖是 `pyserial`（真机串口）。
 4. 模型 id 必须匹配 `^[a-z][a-z0-9_]{0,23}$`；中文只出现在 `label` 里。生成的 C 标识符由 id 直接决定，创建后不可改。
 5. 生成器输出只写 `generated/`；`src/`、`board/` 永远由用户拥有。已有“预览 → token → 提交”与手改冲突保护，不要绕过。
@@ -41,7 +41,7 @@
 | JSON Lines 服务 + CLI | `server.py`、`cli.py` | `ServiceTests` 通过 |
 | C 运行库契约 | `tests/msgq_contract.c`、`tests/scheduler_contract.c` | 编译运行通过（cc -std=c99 -Wall -Wextra） |
 | 聚合头与单编译单元（`efw.h` / `efw_all.c`，Keil 用户只加一个 .c） | `runtime/include/efw/efw.h`、`runtime/src/efw_all.c` | `RuntimeContractTests`：聚合头能用消息队列、`efw_all.c` 在 `-Werror` 下编过 |
-| React UI + 开发桥 | `ui/`、`tools/bridge.mjs` | 29 条 Playwright 回归；Monaco/worker 本地打包、无 CDN |
+| React UI + 开发桥 | `ui/`、`tools/bridge.mjs` | 31 条 Playwright 回归；Monaco/worker 本地打包、无 CDN |
 | Electron 壳 | `desktop/main.mjs`、`desktop/preload.cjs` | `tests/bridge.test.mjs`（协议行解析 + 真实服务往返）、`tests/ui/shell.spec.ts`（渲染层切 IPC）；**本机无显示器，GUI 未做端到端验证** |
 
 ## 3. 目录与职责
@@ -191,6 +191,8 @@ thermostat 运行窗口 12s→18s；traffic 转换时刻 3001/6002→3000/6000�
 
 顺带修掉的坑：Vite 在 Windows 挂载盘（`/mnt/d`）上收不到 inotify 事件，热更新静默失效、长期运行的 dev server 会一直服务旧模块——`vite.config.ts` 改为轮询，但必须 `ignored` 掉 `node_modules`/`.efw`/`backend-bin`，否则每轮 stat 上万文件会把测试从 2 分钟拖到 23 分钟（期间出现大量 `ERR_ABORTED`）。
 
+概念提示也补上了（因为新手确实分不清）：`step_specs` 的每个字段带 `hint`，界面在控件下渲染——信号字段说"这一步会改写它/只读取"，参数字段说"常量，编译进固件"，`emit` 的字段说"事件不带数值，被比较的是信号"。`label` 保持不变（它是无障碍名，测试依赖它）。
+
 下一步：
 
 - IDE 化外壳（点 3）：资源树 + 属性面板 + 命令面板；这是最后一块大改。
@@ -231,7 +233,7 @@ thermostat 运行窗口 12s→18s；traffic 转换时刻 3001/6002→3000/6000�
 ### 页面现状
 
 - 总览：**整机时间线**（`ui/components/Timeline.tsx`：按 `analyze.plan` 的槽位顺序画每条数据流的触发点、受控泳道标闸、运行时有“现在”游标；原来的“执行计划”文字表已删除，避免同一事实两种表述）+ **项目结构图**（`ui/components/ConceptMap.tsx`：六列盒子 = 输入/数据流/信号/输出/状态机状态/事件，连线全部来自 `analyze.usage` 与模型的 `run`/`set`；只画真正被用到的信号；点盒子跳到编辑页）+ 结构计数 + 内存估算 + “下一步”修复入口（按诊断 `at` 跳到对应页并选中对象，见 `ui/focus.ts`）。数据流页与状态机页：均可编辑（周期/步骤/排序/增删；状态/初始状态/run/set/钩子/转换条件/排序）。
-- 通信页：**行内编辑**（信号/输入/输出/事件/队列的增删改，删除前查 `usage` 引用，被拒编辑回滚并给诊断；输入可配虚拟仿真，字段表来自后端 `sim_specs`）。
+- 通信页：**行内编辑**（信号/输入/输出/事件/队列的增删改，删除前查 `usage` 引用，被拒编辑回滚并给诊断；输入可配虚拟仿真，字段表来自后端 `sim_specs`）。每个分类上方有一句“这是什么”，专门讲最容易混的三件事：信号是运行期的值（不是常量）、事件不带数值、输入输出对应哪个 C 函数。
 - 代码页：Monaco 按需加载，模板标记外只读（按键/粘贴拦截 + 保存端 `TEMPLATE` 校验）；新文件与函数模板先进草稿，保存后重新分析；`efw.json` 作为“应用配置”可整体编辑，保存后全页刷新。页面常驻以保留跨页草稿，草稿按项目存 localStorage，刷新后自动恢复。
 - 调试页：启动卡片选虚拟目标 / 串口（设备+波特率）/ TCP（主机+端口），目标存 store 里，顶栏“运行”共用同一目标（参数不全时按钮禁用并说明缺什么）；启动失败的错误显示在启动卡上；播放/暂停/单步 500 ms/速度/重新开始/停止；曲线、任务统计、状态机、参数整定、事件/强制输入、队列、录制列表与回放。通知经 `ui/debug.ts` 归约。
 - 生成页：自动预览、逐文件 Monaco Diff、token 提交、冲突阻止与恢复。
@@ -239,7 +241,7 @@ thermostat 运行窗口 12s→18s；traffic 转换时刻 3001/6002→3000/6000�
 
 ### 测试现状
 
-- 后端 `unittest` 34 条全绿；浏览器 `@playwright/test` 29 条全绿（状态机含编辑与运行时高亮、通信含输入输出、数据流、代码含草稿持久化、调试含真机目标与状态高亮、生成页、总览修复入口、撤销重做、桌面壳）。
+- 后端 `unittest` 34 条全绿；浏览器 `@playwright/test` 31 条全绿（状态机含编辑与运行时高亮、通信含输入输出、数据流、代码含草稿持久化、调试含真机目标与状态高亮、生成页、总览修复入口、撤销重做、桌面壳）。
 - 测试创建临时真实项目（`/tmp`），结束后清理；截图保存在被忽略的 `test-results/`。
 - 全局 `expect.timeout` 放宽到 20 秒（本机负载高时保存一趟要好几秒）。
 - Monaco 按需加载：textarea 出现得比视图早，此时打字会被整段丢弃（草稿仍是“已保存”）。统一用 `tests/ui/helpers.ts` 的 `waitEditorReady` 等到 `.view-lines` 里出现文字并聚焦；`window.monaco` 并未暴露，别依赖它。需要整段重写的地方（如 efw.json）可以安全重试。

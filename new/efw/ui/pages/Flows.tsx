@@ -127,6 +127,7 @@ export function Flows({ repair }: { repair: Repair | null }) {
         {options(model, field)
           ? <CellInput resetKey={resetToken} label={`${step.id} ${field.label}`} kind="select" options={options(model, field)} value={String(step[field.name] ?? field.default ?? '')} onCommit={(raw) => editStep(flow.id, step.id, { [field.name]: raw })} />
           : <CellInput resetKey={resetToken} label={`${step.id} ${field.label}`} kind="number" step="any" min={field.min ?? undefined} max={field.max ?? undefined} value={Number(step[field.name] ?? field.default ?? 0)} onCommit={(raw) => editStep(flow.id, step.id, { [field.name]: Number(raw) })} />}
+        {field.hint && <span className="field-hint">{field.hint}</span>}
       </label>)}
     </div>;
   }
