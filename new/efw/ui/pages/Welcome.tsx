@@ -13,6 +13,8 @@ export function Welcome() {
 
   const name = path.split(/[\\/]/).filter(Boolean).pop() ?? '';
   const valid = /^[a-z][a-z0-9_]{0,23}$/.test(name);
+  // 绝对路径：POSIX 的 /…、Windows 的 C:\… 与 UNC 的 \\…
+  const absolute = /^\//.test(path) || /^[A-Za-z]:[\\/]/.test(path) || /^\\\\/.test(path);
 
   return (
     <div className="page" style={{ height: '100%' }}>
@@ -36,8 +38,9 @@ export function Welcome() {
             <div className="row">
               <input className="input id" placeholder="项目目录，例如 /home/me/apps/heater" value={path} onChange={(e) => setPath(e.target.value)} aria-label="项目目录" />
               {isDesktop() && <button className="btn" onClick={() => { void pickDirectory().then((dir) => { if (dir) setPath(dir); }); }}>浏览…</button>}
-              <button className="btn primary" disabled={busy || !path.startsWith('/') || !path.startsWith('\\') || !valid}
-                title={!path ? '先选一个目录' : !valid ? '目录名需小写字母开头，只含小写字母、数字与下划线' : ''}
+              <button className="btn primary" disabled={busy || !path || !absolute || !valid}
+                title={!path ? '先选一个目录' : !absolute ? '需要绝对路径，例如 /home/me/apps/heater'
+                  : !valid ? '目录名将作为项目标识：小写字母开头，只含小写字母、数字与下划线' : ''}
                 onClick={() => void create(path, name, tpl)}>创建</button>
               <button className="btn" disabled={busy || !path} onClick={() => void open(path)}>打开已有</button>
             </div>

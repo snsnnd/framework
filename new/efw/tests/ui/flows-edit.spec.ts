@@ -93,6 +93,12 @@ test('数据流页：新增与删除数据流，受状态机控制的不给删',
   await expect.poll(async () => (await model(path)).flows.length).toBe(3);
   await expect(page.locator('section[aria-label="数据流 log"]')).toBeVisible();
 
+  // 总览时间线立刻多出一条泳道
+  await page.getByRole('button', { name: '总览', exact: true }).click();
+  await expect(page.locator('.timeline-lane:not(.is-system)')).toHaveCount(3);
+  await expect(page.locator('.timeline-lane:not(.is-system)').last()).toContainText('记录');
+  await page.getByRole('button', { name: '数据流', exact: true }).click();
+
   // 被状态机 mode 控制的 control 不能删除
   await page.locator('section[aria-label="数据流 control"] > header').getByRole('button', { name: '删除', exact: true }).click();
   await expect(page.locator('.diag.error')).toContainText('由状态机 mode 控制');
@@ -102,7 +108,8 @@ test('数据流页：新增与删除数据流，受状态机控制的不给删',
   await page.locator('section[aria-label="数据流 log"] > header').getByRole('button', { name: '删除', exact: true }).click();
   await expect.poll(async () => (await model(path)).flows.some((f: { id: string }) => f.id === 'log')).toBe(false);
 
-  // 总览的执行计划随之更新
+  // 总览的整机时间线随之更新
   await page.getByRole('button', { name: '总览', exact: true }).click();
-  await expect(page.locator('table')).not.toContainText('log');
+  await expect(page.locator('.timeline-lane:not(.is-system)')).toHaveCount(2);   // 只剩 control 与 cooldown
+  await expect(page.locator('.timeline-lane:not(.is-system)').first()).toContainText('温度控制');
 });

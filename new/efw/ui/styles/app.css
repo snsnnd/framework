@@ -293,3 +293,38 @@ td.num, th.num { text-align: right; font-family: var(--mono); }
   .machine-rule { grid-template-columns: 20px minmax(0, 1fr); }
   .machine-rule > :last-child { grid-column: 2; }
 }
+
+/* 整机时间线（总览） */
+.timeline { padding: 12px 16px 16px; }
+.timeline-axis { display: flex; align-items: center; gap: 8px; padding-left: calc(28px + 168px); color: var(--fg-faint); font: 11px var(--mono); }
+.timeline-ticks { position: relative; flex: 1; height: 14px; }
+.timeline-ticks span { position: absolute; transform: translateX(-50%); }
+.timeline-lanes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.timeline-lane { display: grid; grid-template-columns: 28px 168px 1fr auto; align-items: center; gap: 8px; }
+.timeline-lane.is-gated .timeline-track { background: var(--bg-inset); }
+.timeline-lane.is-system { opacity: 0.75; }
+.timeline-slot { width: 22px; height: 22px; display: inline-flex; align-items: center; justify-content: center; border-radius: 3px; background: var(--bg-inset); border: 1px solid var(--line); font: 11px var(--mono); color: var(--fg-dim); }
+.timeline-name { display: flex; flex-direction: column; overflow: hidden; }
+.timeline-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.timeline-track { position: relative; height: 22px; border-radius: 3px; background: var(--bg-panel); border: 1px solid var(--line); }
+.timeline-tick-marks { position: absolute; inset: 0; }
+.timeline-tick-marks i { position: absolute; top: 3px; bottom: 3px; width: 2px; margin-left: -1px; background: var(--s1); border-radius: 1px; }
+.timeline-lane.is-gated .timeline-tick-marks i { background: var(--s3); }
+.timeline-gate { position: absolute; right: 0; top: 0; bottom: 0; width: 14px; border-left: 1px dashed var(--line-strong); }
+.timeline-now { position: absolute; top: -2px; bottom: -2px; width: 1px; background: var(--ok); }
+.timeline-facts { white-space: nowrap; font-size: 11px; }
+.timeline-legend { margin: 12px 0 0; }
+
+/* 概念速览图（总览） */
+.concept { padding: 12px 16px 16px; }
+.concept-svg { width: 100%; height: auto; display: block; }
+.concept .cm-node rect { fill: var(--bg-inset); stroke: var(--line-strong); }
+.concept .cm-node text { fill: var(--fg); font: 12px var(--sans); }
+.concept .cm-node .cm-sub { fill: var(--fg-faint); font: 11px var(--mono); }
+.concept .cm-flow rect { stroke: var(--s1); }
+.concept .cm-signal rect { stroke: var(--s2); }
+.concept .cm-machine rect { stroke: var(--s3); }
+.concept .cm-event rect { stroke: var(--s4); }
+.concept .cm-edge path { fill: none; stroke: var(--line-strong); stroke-width: 1.5; }
+.concept .cm-label text { fill: var(--fg-faint); font: 10px var(--mono); }
+.concept-legend { margin: 10px 0 0; }

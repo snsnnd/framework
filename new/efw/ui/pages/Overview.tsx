@@ -1,5 +1,7 @@
+import { ConceptMap } from '../components/ConceptMap';
+import { Timeline } from '../components/Timeline';
 import { PAGE_LABEL, repairFor, repairForFunction, repairHint, type RepairTarget } from '../focus';
-import { useStore } from '../store';
+import { useStore, KIND_LABEL } from '../store';
 import type { FnInfo } from '../types';
 
 const COLORS = ['var(--accent)', 'var(--ok)', 'var(--warn)', '#a78bfa', '#38bdf8', 'var(--fg-faint)'];
@@ -23,10 +25,20 @@ function RepairRow({ level, at, text, hint, onRepair, target }: {
 }
 
 export function Overview({ onRepair }: { onRepair: (target: RepairTarget) => void }) {
-  const { project, analysis } = useStore();
+  const { project, analysis, debug } = useStore();
   if (!project || !analysis) return <p className="sub">分析中…</p>;
   const m = project.model;
   const missing = analysis.functions.filter((f) => !f.defined || f.mismatch);
+  const live = debug.session !== null && !['stopped', 'error', 'ended'].includes(debug.state);
+  const manifest = debug.manifest;
+  const snap = live ? debug.latest : null;
+  const runningState = snap && manifest
+    ? m.machines.map((machine) => {
+      const now = snap.m?.[machine.id];
+      if (!now) return null;
+      return `${machine.label} → ${machine.states.find((s) => s.id === now.s)?.label ?? now.s}`;
+    }).filter(Boolean).join('；') || null
+    : null;
 
   const cards = [
     { label: '输入 / 输出', n: m.inputs.length + m.outputs.length, items: [...m.inputs, ...m.outputs].map((x) => x.id) },
@@ -40,8 +52,21 @@ export function Overview({ onRepair }: { onRepair: (target: RepairTarget) => voi
     <>
       <div>
         <h1>{m.name}</h1>
-        <p className="sub">节拍 {m.tick_ms} ms · {m.flows.length} 条数据流 · {m.machines.length} 个状态机</p>
+        <p className="sub">
+          节拍 {m.tick_ms} ms · {m.flows.length} 条数据流 · {m.machines.length} 个状态机
+          {debug.session && ` · 正在${KIND_LABEL[debug.kind] ?? debug.kind}运行 ${(debug.t / 1000).toFixed(1)} s`}
+        </p>
       </div>
+
+      <section className="card" aria-label="整机怎么跑">
+        <header><h2>整机怎么跑</h2><span className="sub">节拍 {m.tick_ms} ms · {analysis.plan.filter((p) => p.kind === 'flow').length} 个数据流任务按槽位顺序执行</span></header>
+        <Timeline plan={analysis.plan} tick_ms={m.tick_ms} now={debug.session && !['stopped', 'error', 'ended'].includes(debug.state) ? debug.t : null} />
+      </section>
+
+      <section className="card" aria-label="五个概念怎么协作">
+        <header><h2>这些概念怎么协作</h2><span className="sub">输入 · 信号 · 数据流 · 状态机 · 事件/队列</span></header>
+        <ConceptMap model={m} running={runningState} />
+      </section>
 
       <div className="grid five">
         {cards.map((c) => (
@@ -54,24 +79,7 @@ export function Overview({ onRepair }: { onRepair: (target: RepairTarget) => voi
       </div>
 
       <div className="grid two">
-        <section className="card">
-          <header><h2>执行计划</h2></header>
-          <table>
-            <thead><tr><th>任务</th><th className="num">周期</th><th className="num">步骤</th><th>由谁控制</th></tr></thead>
-            <tbody>
-              {analysis.plan.map((p) => (
-                <tr key={p.id}>
-                  <td>{p.label} <span className="id sub">{p.id}</span></td>
-                  <td className="num">{p.period_ms} ms</td>
-                  <td className="num">{p.steps}</td>
-                  <td>{p.controlled_by ? <span className="chip acc">{p.controlled_by}</span> : <span className="sub">始终运行</span>}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </section>
-
-        <section className="card">
+        <section className="card" aria-label="内存估算">
           <header><h2>内存估算</h2><span className="id">{analysis.memory.total} B</span></header>
           <div className="body">
             <div className="bar">

@@ -15,7 +15,7 @@
 3. 只用 `uv` 管理 Python：`uv sync`、`uv run python ...`。唯一第三方依赖是 `pyserial`（真机串口）。
 4. 模型 id 必须匹配 `^[a-z][a-z0-9_]{0,23}$`；中文只出现在 `label` 里。生成的 C 标识符由 id 直接决定，创建后不可改。
 5. 生成器输出只写 `generated/`；`src/`、`board/` 永远由用户拥有。已有“预览 → token → 提交”与手改冲突保护，不要绕过。
-6. 执行计划只有一个事实来源：`studio_core/model.py:analyze()` 产出 plan，`studio_core/codegen.py` 按同一模型生成，UI 只展示，不得自行推导调度、内存或关系。
+6. 执行计划只有一个事实来源：`studio_core/model.py:analyze()` 产出 plan，`studio_core/codegen.py` 按同一模型生成，UI 只展示，不得自行推导调度、内存或关系。时间线与概念图只做**几何**：格子位置由 `period_ms` 算出，连线由真实读写关系（`usage`）决定。
 7. 调试协议是文本命令（主机→目标）+ JSON 行（目标→主机），见 `docs/04`。虚拟目标与真机共用 `studio_core/debug.py` 的会话层，不要为真机另写一套。
 8. `ui/` 是正式界面，浏览器（开发桥）与 Electron（IPC）共用同一份渲染代码：`ui/rpc.ts` 检测 `window.efw` 决定走 IPC 还是 HTTP 桥。`package.json` 的 `main`/`start`/`test:bridge`/`package:backend` 都已有对应实现。
 
@@ -78,7 +78,7 @@ new/efw/
     focus.ts       诊断 `at` → 修复入口（页面 + 对象）；总览页点击与目标页定位都用它
     components/CellInput.tsx 行内输入（失焦提交、被拒回滚）
     pages/       七个页面，每页一个文件
-    components/  SourceEditor / CurveChart / DiffView / CellInput
+    components/  SourceEditor / CurveChart / DiffView / CellInput / Timeline（整机时间线）/ ConceptMap（概念图）
     styles/      tokens.css（唯一颜色来源）+ app.css
   desktop/main.mjs         Electron 主进程：起 Python 服务、stdio→IPC、白名单方法、目录选择
   desktop/preload.cjs      contextIsolation 下的唯一桥（efw.call / pickDirectory / onEvent）
@@ -185,8 +185,12 @@ thermostat 运行窗口 12s→18s；traffic 转换时刻 3001/6002→3000/6000�
 
 调试运行时状态机页也会高亮当前状态：`debug.latest.m[<machine>]` 与 `debug.t` 给出状态与已保持时长，用 `.is-live` + `aria-current` + “运行中 Ns”标注。**只有 `manifest.hash === analysis.hash` 时才套用**——模型改了还在看旧固件的快照会误导。停止或会话结束后高亮自动消失。
 
+总览也补上了"整机怎么跑"（原来只有计数 + 文字表，读不出时序）和"概念怎么协作"（原来全是文字）：`Timeline` 按 `analyze.plan` 的槽位顺序画泳道与触发点，受状态机控制的泳道画闸门，运行中有"现在"游标；`ConceptMap` 用一张图讲清输入/数据流/信号/输出/状态机/事件的关系。执行计划的文字表随之删除。
+
 下一步：
 
+- 数据流页改成蓝图式视图（点 1）：自动布局的步骤链 + 点开编辑，拖动只改布局。
+- 然后是 IDE 化外壳（点 3）：资源树 + 属性面板 + 命令面板。
 - 硬件在环验证（可选）：真板子上跑 `board/observe_port.c`，看串口丢帧与延迟。
 
 ### 7.2 真机链路
@@ -223,7 +227,7 @@ thermostat 运行窗口 12s→18s；traffic 转换时刻 3001/6002→3000/6000�
 
 ### 页面现状
 
-- 总览：只读统计（结构、执行计划、内存）+ “下一步”修复入口（按诊断 `at` 跳到对应页并选中对象，见 `ui/focus.ts`）。数据流页与状态机页：均可编辑（周期/步骤/排序/增删；状态/初始状态/run/set/钩子/转换条件/排序）。
+- 总览：**整机时间线**（`ui/components/Timeline.tsx`：按 `analyze.plan` 的槽位顺序画每条数据流的触发点、受控泳道标闸、运行时有“现在”游标；原来的“执行计划”文字表已删除，避免同一事实两种表述）+ **概念速览图**（`ui/components/ConceptMap.tsx`：输入→数据流→信号→输出、状态机启停、事件通知）+ 结构计数 + 内存估算 + “下一步”修复入口（按诊断 `at` 跳到对应页并选中对象，见 `ui/focus.ts`）。数据流页与状态机页：均可编辑（周期/步骤/排序/增删；状态/初始状态/run/set/钩子/转换条件/排序）。
 - 通信页：**行内编辑**（信号/输入/输出/事件/队列的增删改，删除前查 `usage` 引用，被拒编辑回滚并给诊断；输入可配虚拟仿真，字段表来自后端 `sim_specs`）。
 - 代码页：Monaco 按需加载，模板标记外只读（按键/粘贴拦截 + 保存端 `TEMPLATE` 校验）；新文件与函数模板先进草稿，保存后重新分析；`efw.json` 作为“应用配置”可整体编辑，保存后全页刷新。页面常驻以保留跨页草稿，草稿按项目存 localStorage，刷新后自动恢复。
 - 调试页：启动卡片选虚拟目标 / 串口（设备+波特率）/ TCP（主机+端口），目标存 store 里，顶栏“运行”共用同一目标（参数不全时按钮禁用并说明缺什么）；启动失败的错误显示在启动卡上；播放/暂停/单步 500 ms/速度/重新开始/停止；曲线、任务统计、状态机、参数整定、事件/强制输入、队列、录制列表与回放。通知经 `ui/debug.ts` 归约。
