@@ -90,6 +90,10 @@
 
 生成页已提供：打开或模型变化时自动 `generate.preview`；文件列表按 `path` 列出新增/更新/删除/冲突/未变化；选中文件用 Monaco DiffEditor 展示磁盘版本与将生成版本的差异（未变化显示说明文字）。`提交生成` 用预览 token 调 `generate.commit`，成功后重新预览并显示写入数量与输出目录；被手改的生成文件令预览 `blocked`，提交禁用并显示原因，删除手改文件后重新预览即可恢复。模型有错误时预览返回 blocked 与原因。
 
+## Agent 接入
+
+MCP server（`studio_core/mcp.py`）把上面这套协议包成 MCP 工具，默认只读；写操作需要 `--allow-write`，真机目标还要 `--allow-targets`，审计落在 `.efw/agent-audit.jsonl`。工具清单与档位见 docs/03。MCP 的 `mcp>=1.2` 在 `agent` 依赖组里，后端运行时不需要它。
+
 ## 两种传输
 
 `ui/rpc.ts` 是界面与后端之间的唯一入口，它按 `window.efw` 是否存在选择传输：

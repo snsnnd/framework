@@ -15,7 +15,9 @@
     "test:e2e": "playwright test",
     "package:backend": "uv run --group packaging python scripts/package_backend.py",
     "package": "npm run build && npm run package:backend && electron-builder --dir",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "mcp": "uv run --group agent python -m studio_core.mcp",
+    "test:mcp": "uv run --group agent python -m unittest tests.test_mcp"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

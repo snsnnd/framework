@@ -11,7 +11,7 @@
 ## 1. 给下个 agent 的最重要八条
 
 1. 端到端可用：`studio_core/` + `ui/` 七个导航页面（总览 / 数据流 / 状态机 / 通信 / 代码 / 调试 / 生成）全部实现；风格规范 `docs/05-ui-style.md`。**下一步主线是“页面内模型编辑”**（见第 7 节），即把浏览页（数据流 / 状态机 / 通信）变成结构化编辑器。
-2. 测试：`34` 个后端测试、`37` 条浏览器回归、`2` 条壳协议测试，全绿。任何改动后按第 8 节跑全套。
+2. 测试：`34` 个后端测试、`6` 条 MCP 测试、`37` 条浏览器回归、`2` 条壳协议测试，全绿。任何改动后按第 8 节跑全套。
 3. 只用 `uv` 管理 Python：`uv sync`、`uv run python ...`。唯一第三方依赖是 `pyserial`（真机串口）。
 4. 模型 id 必须匹配 `^[a-z][a-z0-9_]{0,23}$`；中文只出现在 `label` 里。生成的 C 标识符由 id 直接决定，创建后不可改。
 5. 生成器输出只写 `generated/`；`src/`、`board/` 永远由用户拥有。已有“预览 → token → 提交”与手改冲突保护，不要绕过。
@@ -42,6 +42,7 @@
 | C 运行库契约 | `tests/msgq_contract.c`、`tests/scheduler_contract.c` | 编译运行通过（cc -std=c99 -Wall -Wextra） |
 | 聚合头与单编译单元（`efw.h` / `efw_all.c`，Keil 用户只加一个 .c） | `runtime/include/efw/efw.h`、`runtime/src/efw_all.c` | `RuntimeContractTests`：聚合头能用消息队列、`efw_all.c` 在 `-Werror` 下编过 |
 | React UI + 开发桥 | `ui/`、`tools/bridge.mjs` | 37 条 Playwright 回归；Monaco/worker 本地打包、无 CDN |
+| Agent 接入（MCP） | `studio_core/mcp.py` | `tests/test_mcp.py`：只读模式不列出写工具、授权后能启动/控制/停止虚拟目标、失败写入审计、回放如实返回录制 |
 | Electron 壳 | `desktop/main.mjs`、`desktop/preload.cjs` | `tests/bridge.test.mjs`（协议行解析 + 真实服务往返）、`tests/ui/shell.spec.ts`（渲染层切 IPC）；**本机无显示器，GUI 未做端到端验证** |
 
 ## 3. 目录与职责
@@ -86,6 +87,7 @@ new/efw/
   tools/bridge.mjs          开发期 RPC/SSE 桥（Vite 中间件）
   tests/bridge.test.mjs     壳协议测试（node --test，package.json 的 test:bridge）
   tests/test_core.py         34 个测试（模型 / 生成 / 行为 / 项目 / 调试会话 / 真机链路 / 运行库契约 / 服务）
+  tests/test_mcp.py          6 个 MCP 测试（授权策略 / 审计 / 真实 stdio 握手；需要 --group agent）
   tests/ui/*.spec.ts         Playwright 回归（23 条）
   tests/*_contract.c         C 契约测试
   playwright.config.ts       自动启动 Vite；测试自建临时项目并清理
@@ -103,6 +105,8 @@ uv run python -m studio_core.cli new /tmp/app --template thermostat
 uv run python -m studio_core.cli check /tmp/app
 uv run python -m studio_core.cli generate /tmp/app
 uv run python -m studio_core.cli run /tmp/app --ms 8000 --set target=45 --fire overheat
+uv run --group agent python -m studio_core.mcp /tmp/app              # agent 接入（只读）
+uv run --group agent python -m unittest tests.test_mcp               # MCP 测试
 # C 契约（无需 cmake）：
 cc -std=c99 -Wall -Wextra -Iruntime/include tests/msgq_contract.c runtime/src/core/msgq.c -o /tmp/m && /tmp/m
 

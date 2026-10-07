@@ -75,3 +75,23 @@ efw_status_t count_fault(void) {
 ## 可观测性开销
 
 每个数据流一个 `run/miss/over/err/late/us` 统计（来自调度器）；每个队列 `n/push/drop/hw`；快照默认 200 ms 一帧，约 1 KB，115200 波特下约 45% 带宽；可用 `rate` 调整。
+
+## Agent 接入（MCP server）
+
+EFW 对外是一套 JSON Lines 服务 + 文本调试协议。为了让 agent 直接检测与控制，额外提供 MCP server：
+
+```bash
+uv run --group agent python -m studio_core.mcp [项目路径]          # 只读（默认）
+uv run --group agent python -m studio_core.mcp <路径> --allow-write --allow-targets virtual,serial,tcp
+```
+
+**默认只读。** 写操作（启动会话、改参数、触发事件、强制输出、生成代码）在没有 `--allow-write` 时既不出现在 `tools/list`，直接调用也会被拒；真机目标还要显式列进 `--allow-targets`。每一次写（含被拒的）都记进项目的 `.efw/agent-audit.jsonl`。
+
+| 工具 | 档位 | 作用 |
+| --- | --- | --- |
+| `efw_open_project` / `efw_analyze` / `efw_manifest` / `efw_sources` | 读 | 项目结构、诊断与执行计划、固件暴露的信号与可整定参数、用户源文件 |
+| `efw_runs` / `efw_replay` / `efw_state` | 读 | 已录制记录、离线回放任意一段帧、取一次实时或最近录制的状态 |
+| `efw_start` / `efw_set` / `efw_fire` / `efw_force` / `efw_release` / `efw_stop` | 写 | 启动会话与控制目标（对应协议的 `set`/`fire`/`force`/`release`） |
+| `efw_generate` | 写 | 预览生成结果，`commit=true` 才写盘 |
+
+会话属于 server 进程：agent 用 `efw_start` 拿到 `session` 后，后续控制都带这个 `session`；进程退出会自动停掉会话。响应是 JSON 文本，失败时是 `{"error": {"code", "message"}}`，不抛异常打断对话。
