@@ -103,6 +103,9 @@ WRITE_TOOLS: list[tuple[str, str, str, dict[str, Any]]] = [
      "控制", _schema({"session": STR, "input": STR}, ["session", "input"])),
     ("efw_stop", "停止会话（录制会落盘）",
      "控制", _schema({"session": STR}, ["session"])),
+    ("efw_command", "遥控台：把一条文本命令原样发给目标（dump/rate/set/fire/force/release/push/pause/resume/state），"
+     "人工在界面遥控台里用的是同一套命令",
+     "控制", _schema({"session": STR, "line": {**STR, "description": "例如 dump、rate 200、set target 70、fire overheat、pause control"}}, ["session", "line"])),
     ("efw_generate", "预览或提交生成代码；commit=true 时才写盘",
      "写文件", _schema({"path": STR, "commit": {**BOOL, "description": "默认只预览"}}, ["path"])),
 ]
@@ -179,6 +182,11 @@ def run_tool(policy: Policy, service: Service, name: str, args: dict[str, Any]) 
     if name == "efw_release":
         service.dispatch("debug.send", {"session": args["session"], "line": f"release {args['input']}"})
         return {"ok": True}
+    if name == "efw_command":
+        from .debug import valid_command
+        line = valid_command(args["line"])
+        service.dispatch("debug.send", {"session": args["session"], "line": line})
+        return {"sent": line, "note": "命令已发给目标；结果会出现在下一次 efw_state 或录制里"}
     if name == "efw_stop":
         return {"stopped": service.dispatch("debug.stop", {"session": args["session"]})}
     if name == "efw_generate":
@@ -241,7 +249,7 @@ def serve(policy: Policy, service: Service, default_path: str | None):
     async def dispatch(name: str, arguments: dict[str, Any]) -> str:
         args = {k: v for k, v in dict(arguments or {}).items() if v is not None}
         if not args.get("path") and default_path and name not in {
-                "efw_set", "efw_fire", "efw_force", "efw_release", "efw_stop"}:
+                "efw_set", "efw_fire", "efw_force", "efw_release", "efw_stop", "efw_command"}:
             args["path"] = default_path
         is_write = any(n == name for n, _d, _g, _s in WRITE_TOOLS)
         try:
@@ -258,7 +266,7 @@ def serve(policy: Policy, service: Service, default_path: str | None):
         except Exception as exc:  # noqa: BLE001 - 一次工具失败不能拖垮整个 server
             return json.dumps({"error": {"code": "INTERNAL", "message": str(exc)}}, ensure_ascii=False)
 
-    scoped_out = {"efw_set", "efw_fire", "efw_force", "efw_release", "efw_stop"}
+    scoped_out = {"efw_set", "efw_fire", "efw_force", "efw_release", "efw_stop", "efw_command"}
     for name, description, _group, schema in READ_TOOLS + (WRITE_TOOLS if policy.allow_write else []):
         schema = dict(schema)
         if default_path and name not in scoped_out:

@@ -11,7 +11,7 @@
 ## 1. 给下个 agent 的最重要八条
 
 1. 端到端可用：`studio_core/` + `ui/` 七个导航页面（总览 / 数据流 / 状态机 / 通信 / 代码 / 调试 / 生成）全部实现；风格规范 `docs/05-ui-style.md`。**下一步主线是“页面内模型编辑”**（见第 7 节），即把浏览页（数据流 / 状态机 / 通信）变成结构化编辑器。
-2. 测试：`34` 个后端测试、`6` 条 MCP 测试、`37` 条浏览器回归、`2` 条壳协议测试，全绿。任何改动后按第 8 节跑全套。
+2. 测试：`34` 个后端测试、`6` 条 MCP 测试、`38` 条浏览器回归、`2` 条壳协议测试，全绿。任何改动后按第 8 节跑全套。
 3. 只用 `uv` 管理 Python：`uv sync`、`uv run python ...`。唯一第三方依赖是 `pyserial`（真机串口）。
 4. 模型 id 必须匹配 `^[a-z][a-z0-9_]{0,23}$`；中文只出现在 `label` 里。生成的 C 标识符由 id 直接决定，创建后不可改。
 5. 生成器输出只写 `generated/`；`src/`、`board/` 永远由用户拥有。已有“预览 → token → 提交”与手改冲突保护，不要绕过。
@@ -41,7 +41,7 @@
 | JSON Lines 服务 + CLI | `server.py`、`cli.py` | `ServiceTests` 通过 |
 | C 运行库契约 | `tests/msgq_contract.c`、`tests/scheduler_contract.c` | 编译运行通过（cc -std=c99 -Wall -Wextra） |
 | 聚合头与单编译单元（`efw.h` / `efw_all.c`，Keil 用户只加一个 .c） | `runtime/include/efw/efw.h`、`runtime/src/efw_all.c` | `RuntimeContractTests`：聚合头能用消息队列、`efw_all.c` 在 `-Werror` 下编过 |
-| React UI + 开发桥 | `ui/`、`tools/bridge.mjs` | 37 条 Playwright 回归；Monaco/worker 本地打包、无 CDN |
+| React UI + 开发桥 | `ui/`、`tools/bridge.mjs` | 38 条 Playwright 回归；Monaco/worker 本地打包、无 CDN |
 | Agent 接入（MCP） | `studio_core/mcp.py` | `tests/test_mcp.py`：只读模式不列出写工具、授权后能启动/控制/停止虚拟目标、失败写入审计、回放如实返回录制 |
 | Electron 壳 | `desktop/main.mjs`、`desktop/preload.cjs` | `tests/bridge.test.mjs`（协议行解析 + 真实服务往返）、`tests/ui/shell.spec.ts`（渲染层切 IPC）；**本机无显示器，GUI 未做端到端验证** |
 
@@ -255,6 +255,7 @@ IDE 化外壳也完成了（点 3）：左侧资源树（视图 / 项目文件 /
 - 总览：**整机时间线**（`ui/components/Timeline.tsx`：按 `analyze.plan` 的槽位顺序画每条数据流的触发点、受控泳道标闸、运行时有“现在”游标；原来的“执行计划”文字表已删除，避免同一事实两种表述）+ **项目结构图**（`ui/components/ConceptMap.tsx`：六列盒子 = 输入/数据流/信号/输出/状态机状态/事件，连线全部来自 `analyze.usage` 与模型的 `run`/`set`；只画真正被用到的信号；点盒子跳到编辑页）+ 结构计数 + 内存估算 + “下一步”修复入口（按诊断 `at` 跳到对应页并选中对象，见 `ui/focus.ts`）。数据流页与状态机页：均可编辑（周期/步骤/排序/增删；状态/初始状态/run/set/钩子/转换条件/排序）。
 - 通信页：**行内编辑**（信号/输入/输出/事件/队列的增删改，删除前查 `usage` 引用，被拒编辑回滚并给诊断；输入可配虚拟仿真，字段表来自后端 `sim_specs`）。每个分类上方有一句“这是什么”，专门讲最容易混的三件事：信号是运行期的值（不是常量）、事件不带数值、输入输出对应哪个 C 函数。
 - 代码页：Monaco 按需加载，模板标记外只读（按键/粘贴拦截 + 保存端 `TEMPLATE` 校验）；新文件与函数模板先进草稿，保存后重新分析；`efw.json` 作为“应用配置”可整体编辑，保存后全页刷新。页面常驻以保留跨页草稿，草稿按项目存 localStorage，刷新后自动恢复。
+- 调试页有**遥控台**：像终端一样直接打字指挥目标（`dump`/`rate`/`set`/`fire`/`force`/`release`/`push`/`pause`/`resume`/`state`），带命令回显、方向键历史、Tab 补全、按当前项目生成的快捷命令；agent 用同一条文本协议（MCP 的 `efw_command`）。命令白名单在 `studio_core/debug.py:ALLOWED`，越界命令被拒并回显原因。
 - 调试页：启动卡片选虚拟目标 / 串口（设备+波特率）/ TCP（主机+端口），目标存 store 里，顶栏“运行”共用同一目标（参数不全时按钮禁用并说明缺什么）；启动失败的错误显示在启动卡上；播放/暂停/单步 500 ms/速度/重新开始/停止；曲线、任务统计、状态机、参数整定、事件/强制输入、队列、录制列表与回放。通知经 `ui/debug.ts` 归约。
 - 生成页：自动预览、逐文件 Monaco Diff、token 提交、冲突阻止与恢复。
 - 顶栏有「切换项目」按钮（或命令面板里“切换项目 / 新建项目”）：`store.closeProject()` 停会话、清历史、抹掉 `efw.lastProject` 后回到欢迎页；欢迎页列出最近 6 个项目（`efw.recentProjects`）一键打开，可单独移除。**只建过没打开过的项目不进列表**。
@@ -264,7 +265,7 @@ IDE 化外壳也完成了（点 3）：左侧资源树（视图 / 项目文件 /
 
 ### 测试现状
 
-- 后端 `unittest` 34 条全绿；浏览器 `@playwright/test` 37 条全绿（状态机含编辑与运行时高亮、通信含输入输出、数据流、代码含草稿持久化、调试含真机目标与状态高亮、生成页、总览修复入口、撤销重做、桌面壳）。
+- 后端 `unittest` 34 条全绿；浏览器 `@playwright/test` 38 条全绿（状态机含编辑与运行时高亮、通信含输入输出、数据流、代码含草稿持久化、调试含真机目标与状态高亮、生成页、总览修复入口、撤销重做、桌面壳）。
 - 测试创建临时真实项目（`/tmp`），结束后清理；截图保存在被忽略的 `test-results/`。
 - 全局 `expect.timeout` 放宽到 20 秒（本机负载高时保存一趟要好几秒）。
 - Monaco 按需加载：textarea 出现得比视图早，此时打字会被整段丢弃（草稿仍是“已保存”）。统一用 `tests/ui/helpers.ts` 的 `waitEditorReady` 等到 `.view-lines` 里出现文字并聚焦；`window.monaco` 并未暴露，别依赖它。需要整段重写的地方（如 efw.json）可以安全重试。

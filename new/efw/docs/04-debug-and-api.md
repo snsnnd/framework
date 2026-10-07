@@ -90,6 +90,14 @@
 
 生成页已提供：打开或模型变化时自动 `generate.preview`；文件列表按 `path` 列出新增/更新/删除/冲突/未变化；选中文件用 Monaco DiffEditor 展示磁盘版本与将生成版本的差异（未变化显示说明文字）。`提交生成` 用预览 token 调 `generate.commit`，成功后重新预览并显示写入数量与输出目录；被手改的生成文件令预览 `blocked`，提交禁用并显示原因，删除手改文件后重新预览即可恢复。模型有错误时预览返回 blocked 与原因。
 
+## 遥控台（人机同一个入口）
+
+界面上有一个文本遥控台：`dump`（立刻取一次快照）、`rate <ms>`、`set <key> <value>`、`fire <event>`、`force/release <input> [value]`、`push <queue> <value>`、`pause/resume <flow>`、`state <machine> <state>`（直接切状态）。命令带 ack 回执，界面按"命令 → 已生效/被拒绝"逐行回显，转换事件也插进同一时间线；方向键翻历史，Tab 补全，快捷命令按当前项目的真实 key/事件生成。
+
+agent 用同一条协议：MCP 的 `efw_command` 原样转发。两条路都经过 `debug.valid_command` 的白名单（`hello/dump/rate/set/force/release/fire/push/pause/resume/state`），越界命令被拒。
+
+回放会话不接受命令（`ReplaySession.send` 抛 `INVALID`），遥控台在回放时禁用。
+
 ## Agent 接入
 
 MCP server（`studio_core/mcp.py`）把上面这套协议包成 MCP 工具，默认只读；写操作需要 `--allow-write`，真机目标还要 `--allow-targets`，审计落在 `.efw/agent-audit.jsonl`。工具清单与档位见 docs/03。MCP 的 `mcp>=1.2` 在 `agent` 依赖组里，后端运行时不需要它。

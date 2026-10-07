@@ -442,3 +442,22 @@ td.num, th.num { text-align: right; font-family: var(--mono); }
 .name-id-hint .c-preview { display: block; margin-top: 2px; }
 .name-id-hint code { font: 11px var(--mono); color: var(--s1); }
 .th-sub { display: block; font-weight: 400; font-size: 10px; color: var(--fg-faint); }
+
+/* 遥控台：像终端一样操作目标，人和 agent 共用同一套文本命令 */
+.console-body { display: flex; flex-direction: column; gap: 8px; padding: 12px 16px 16px; }
+.console-log { min-height: 96px; max-height: 240px; overflow-y: auto; padding: 8px 10px; border: 1px solid var(--line);
+  border-radius: var(--r); background: var(--bg-inset); font: 12px var(--mono); }
+.console-line { display: flex; gap: 8px; align-items: baseline; padding: 1px 0; }
+.console-at { color: var(--fg-faint); flex: 0 0 auto; min-width: 44px; }
+.console-detail { margin-left: auto; color: var(--fg-faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45%; }
+.console-line.is-sent .console-text { color: var(--fg-dim); }
+.console-line.is-ack .console-text { color: var(--ok); }
+.console-line.is-err .console-text { color: var(--err); }
+.console-line.is-event .console-text { color: var(--s3); }
+.console-input { display: flex; align-items: center; gap: 8px; }
+.console-input .input { flex: 1; }
+.console-prompt { color: var(--accent); font: 700 14px var(--mono); }
+.console-help { display: flex; flex-wrap: wrap; gap: 6px; margin: 0; }
+.console-chip { padding: 1px 6px; border: 1px solid var(--line); border-radius: 3px; background: var(--bg-inset);
+  color: var(--fg-dim); font: 11px var(--mono); cursor: pointer; }
+.console-chip:hover { border-color: var(--accent); color: var(--accent); }

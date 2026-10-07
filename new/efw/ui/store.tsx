@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { applyDebugEvent, EMPTY_DEBUG, type DebugState } from './debug';
+import { applyDebugEvent, EMPTY_DEBUG, type ConsoleLine, type DebugState } from './debug';
 import { call, onEvent } from './rpc';
 import type { Analysis, Diagnostic, Manifest, Model, Opened } from './types';
 
@@ -235,8 +235,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const sendDebug = useCallback(async (line: string) => {
     const session = sessionRef.current;
     if (!session) return;
+    // 先把命令本身写进遥控台回显，再等目标的 ack，读起来像在终端里操作
+    const echo: ConsoleLine = { at: Date.now(), kind: 'sent', text: `> ${line}` };
+    setDebug((current) => ({ ...current, console: [...current.console, echo].slice(-200) }));
     try { await call('debug.send', { session, line }); }
-    catch (e) { setDebug((current) => ({ ...current, message: (e as Error).message })); }
+    catch (e) {
+      setDebug((current) => ({
+        ...current,
+        message: (e as Error).message,
+        console: [...current.console, { at: Date.now(), kind: 'err' as const, text: `${line} 发送失败：${(e as Error).message}` }].slice(-200),
+      }));
+    }
   }, []);
 
   /** 回到欢迎页去开别的项目：先停掉会话、清历史，并抹掉 lastProject 以免立刻又打开它。 */

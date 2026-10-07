@@ -119,6 +119,7 @@ class HandshakeTests(unittest.TestCase):
         self.assertIn("efw_replay", tools)
         self.assertNotIn("efw_start", tools)      # 只读模式不列出写工具
         self.assertNotIn("efw_set", tools)
+        self.assertNotIn("efw_command", tools)
         analyze = result["efw_analyze"][0]
         self.assertTrue(analyze["ok"])
         self.assertIn("diagnostics", analyze)
@@ -153,6 +154,8 @@ class HandshakeTests(unittest.TestCase):
                     for name, arguments in [
                         ("efw_set", {"session": session_id, "key": "control.pid.kp", "value": 0.4}),
                         ("efw_fire", {"session": session_id, "event": "overheat"}),
+                        # 遥控台：同一条文本命令，人工在界面里敲的和这个完全一样
+                        ("efw_command", {"session": session_id, "line": "rate 100"}),
                         ("efw_state", {"session": session_id}),
                         ("efw_generate", {}),
                         ("efw_stop", {"session": session_id}),
@@ -165,13 +168,14 @@ class HandshakeTests(unittest.TestCase):
         if "skip" in result:
             self.skipTest(result["skip"])
         # 授权后写工具全部开放
-        for name in ("efw_start", "efw_set", "efw_fire", "efw_force", "efw_release", "efw_stop", "efw_generate"):
+        for name in ("efw_start", "efw_set", "efw_fire", "efw_force", "efw_release", "efw_stop", "efw_generate", "efw_command"):
             self.assertIn(name, result["tools"])
         started = result["efw_start"]
         self.assertEqual(started["kind"], "virtual")
         self.assertTrue(started["session"])
         self.assertTrue(result["efw_set"].get("ok"))
         self.assertTrue(result["efw_fire"].get("ok"))
+        self.assertEqual(result["efw_command"]["sent"], "rate 100")
         self.assertEqual(result["efw_state"]["source"], "live")
         # 生成默认只预览；显式 commit 才写盘
         self.assertFalse(result["efw_generate"]["committed"])
@@ -179,7 +183,7 @@ class HandshakeTests(unittest.TestCase):
 
         audit = Path(self.path) / ".efw" / "agent-audit.jsonl"
         rows = [json.loads(x) for x in audit.read_text(encoding="utf-8").splitlines()]
-        self.assertEqual([r["tool"] for r in rows], ["efw_start", "efw_set", "efw_fire", "efw_generate", "efw_stop"])
+        self.assertEqual([r["tool"] for r in rows], ["efw_start", "efw_set", "efw_fire", "efw_command", "efw_generate", "efw_stop"])
         self.assertTrue(all(r["ok"] for r in rows))
 
     def test_replay_tool_returns_the_recording_verbatim(self):

@@ -2,10 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { call } from '../rpc';
 import { KIND_LABEL, targetProblem, useStore } from '../store';
 import { CurveChart, type Channel } from '../components/CurveChart';
-import type { Run, Tunable } from '../types';
+import type { Manifest, Run, Tunable } from '../types';
 
 const SPEEDS = [[0.5, '0.5×'], [1, '1×'], [2, '2×'], [4, '4×'], [0, '最快']] as const;
 const CONNECT_LABEL: Record<string, string> = { serial: '连接串口', tcp: '连接 TCP' };
+/** 固件 observe 端口接受的命令（与 studio_core/debug.py 的 ALLOWED 一致）。 */
+const COMMANDS = ['hello', 'dump', 'rate', 'set', 'fire', 'force', 'release', 'push', 'pause', 'resume', 'state'];
+const modelFlows = (manifest: Manifest | null) => manifest?.flows.map((f) => f.id) ?? [];
 const STATE_LABEL: Record<string, string> = { idle: '未启动', starting: '启动中', running: '运行中', paused: '已暂停', stopped: '已停止', error: '启动失败', ended: '回放结束' };
 const CHANNELS = ['--s1', '--s2', '--s3', '--s4', '--s5'];
 const BAUDS = [9600, 19200, 38400, 115200, 230400, 460800, 921600];
@@ -20,6 +23,10 @@ export function Debug({ onOpenCode }: { onOpenCode: () => void }) {
   const [draft, setDraft] = useState<Record<string, number>>({});
   const [forceValues, setForceValues] = useState<Record<string, string>>({});
   const timers = useRef<Record<string, number>>({});
+  const [cmd, setCmd] = useState('');
+  const [history, setHistory] = useState<string[]>([]);
+  const [histIndex, setHistIndex] = useState(0);
+  const logRef = useRef<HTMLDivElement>(null);
   const manifest = debug.manifest;
 
   useEffect(() => {
@@ -56,6 +63,52 @@ export function Debug({ onOpenCode }: { onOpenCode: () => void }) {
   const blocked = sourcesDirty || !analysis || !analysis.ok;
   const blockReason = sourcesDirty ? '有未保存的源码草稿' : !analysis ? '正在分析模型' : '模型有错误，请先修复诊断';
   const latest = debug.latest;
+  const lines = debug.console;
+  // 回显时间轴：从会话建立算起，避免每行都显示同一时刻
+  const startedAtRef = useRef(Date.now());
+  if (debug.session && !debug.session.startsWith('agent')) startedAtRef.current = Math.min(startedAtRef.current, Date.now());
+  const startedAt = startedAtRef.current;
+  // 可补全的命令：协议白名单 + 当前项目真实存在的 key
+  const suggestions = useMemo(() => {
+    if (!manifest) return COMMANDS.slice(0, 6);
+    // 优先给"遥控"最常用的：立刻取一次状态、调目标值、触发事件
+    const signal = manifest.params.find((p) => p.kind === 'signal') ?? manifest.params[0];
+    const event = manifest.events[0];
+    return [
+      'dump',
+      ...(signal ? [`set ${signal.key} `] : []),
+      ...(event ? [`fire ${event.id}`] : []),
+      'rate 200',
+      ...(manifest.inputs[0] ? [`force ${manifest.inputs[0].id} `] : []),
+      ...(manifest.machines[0] ? [`state ${manifest.machines[0].id} ${manifest.machines[0].states[0]?.id ?? ''}`.trim()] : []),
+    ];
+  }, [manifest]);
+  const consoleHint = manifest ? `例如：set ${manifest.params[0]?.key ?? 'target'} 70 / fire ${manifest.events[0]?.id ?? 'overheat'} / dump` : '启动会话后可输入命令';
+
+  function complete(prefix: string): string {
+    const parts = prefix.split(' ');
+    const verb = parts[0];
+    if (!prefix.includes(' ')) {
+      const hit = COMMANDS.find((c) => c.startsWith(verb) && c !== verb);
+      return hit ? `${hit} ` : '';
+    }
+    const pool: string[] = verb === 'set' || verb === 'force' || verb === 'release'
+      ? (manifest?.params ?? []).map((p) => p.key)
+      : verb === 'fire' ? manifest?.events.map((e) => e.id) ?? []
+        : verb === 'push' ? manifest?.queues.map((q) => q.id) ?? []
+          : verb === 'pause' || verb === 'resume' ? modelFlows(manifest) : [];
+    const hit = pool.find((id) => id.startsWith(parts[1] ?? ''));
+    return hit ? `${verb} ${hit}` : '';
+  }
+
+  async function submit() {
+    const line = cmd.trim();
+    if (!line) return;
+    setCmd('');
+    setHistory((h) => [...h.slice(-49), line]);
+    setHistIndex(0);
+    await sendDebug(line);
+  }
 
   function toggleChannel(id: string) {
     setPicked((current) => (current.includes(id) ? current.filter((x) => x !== id) : [...current, id]));
@@ -252,6 +305,41 @@ export function Debug({ onOpenCode }: { onOpenCode: () => void }) {
           {!manifest?.events.length && !manifest?.inputs.length && <p className="empty">当前项目没有事件或输入。</p>}
         </section>
 
+        <section className="card console" aria-label="遥控台">
+          <header>
+            <h2>遥控台</h2>
+            <span className="sub">按文本协议直接指挥目标；agent 用同一个协议（MCP 的 efw_command）</span>
+          </header>
+          <div className="body console-body">
+            <div className="console-log" role="log" aria-label="遥控台回显" tabIndex={0}>
+              {lines.length === 0 && <p className="sub">还没有回显。启动一个会话后，下面这些命令就能用：</p>}
+              {lines.map((line) => <div key={line.at + line.text} className={`console-line is-${line.kind}`}>
+                <span className="console-at">{secs(Math.max(0, line.at - startedAt))}</span>
+                <span className="console-text">{line.text}</span>
+                {line.detail && <span className="console-detail sub">{line.detail}</span>}
+              </div>)}
+            </div>
+            <div className="console-input">
+              <span className="console-prompt" aria-hidden="true">&gt;</span>
+              <input className="input mono" aria-label="遥控台命令" placeholder={consoleHint} value={cmd}
+                disabled={!active || debug.kind === 'replay'}
+                onChange={(e) => setCmd(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') { void submit(); return; }
+                  if (e.key === 'ArrowUp') { e.preventDefault(); setCmd((v) => { const prev = history[history.length - 1 - histIndex] ?? v; setHistIndex((i) => Math.min(history.length - 1, i + 1)); return prev; }); return; }
+                  if (e.key === 'ArrowDown') { e.preventDefault(); setHistIndex((i) => { const next = history[history.length - 1 - Math.max(0, i - 1)] ?? ''; return Math.max(0, i - 1); }); return; }
+                  if (e.key === 'Tab') {
+                    const hit = complete(cmd);
+                    if (hit) { e.preventDefault(); setCmd(hit); }
+                  }
+                }} />
+              <button className="btn primary" onClick={() => void submit()} disabled={!active || debug.kind === 'replay' || !cmd.trim()}>发送</button>
+            </div>
+            <p className="console-help sub">
+              {suggestions.map((s) => <button key={s} className="console-chip" onClick={() => { setCmd(s); }}>{s}</button>)}
+            </p>
+          </div>
+        </section>
         <section className="card" aria-label="队列">
           <header><h2>队列</h2></header>
           <table>
