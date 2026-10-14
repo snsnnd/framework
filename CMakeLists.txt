@@ -27,6 +27,16 @@ option(EFW_ENABLE_EVENT "Enable lightweight topic event" ON)
 option(EFW_ENABLE_SCHEDULER "Enable multi-period task scheduler" ON)
 option(EFW_ENABLE_DEBUG "Enable online debug module" OFF)
 option(EFW_ENABLE_LITETUNE "Enable LiteTune backend for online debug" OFF)
+option(EFW_ENABLE_DEBUG_FAST "Enable incremental double-buffer debug backend" OFF)
+option(EFW_ENABLE_DEBUG_ASYNC "Enable asynchronous debug transport backend" OFF)
+option(EFW_ENABLE_DEBUG_RUNTIME "Enable runtime timing snapshot backend" OFF)
+
+if(EFW_ENABLE_LITETUNE AND NOT EFW_ENABLE_DEBUG)
+    message(FATAL_ERROR "EFW_ENABLE_LITETUNE requires EFW_ENABLE_DEBUG")
+endif()
+if((EFW_ENABLE_DEBUG_FAST OR EFW_ENABLE_DEBUG_ASYNC OR EFW_ENABLE_DEBUG_RUNTIME) AND NOT EFW_ENABLE_DEBUG)
+    message(FATAL_ERROR "Optional debug backends require EFW_ENABLE_DEBUG")
+endif()
 
 set(EFW_SOURCES src/core/init.c src/core/diagnostic.c src/app/runtime.c)
 
@@ -110,6 +120,15 @@ endif()
 
 if(EFW_ENABLE_DEBUG)
     list(APPEND EFW_SOURCES src/debug/efw_debug.c)
+    if(EFW_ENABLE_DEBUG_FAST)
+        list(APPEND EFW_SOURCES src/debug/efw_debug_fast.c)
+    endif()
+    if(EFW_ENABLE_DEBUG_ASYNC)
+        list(APPEND EFW_SOURCES src/debug/efw_debug_async.c)
+    endif()
+    if(EFW_ENABLE_DEBUG_RUNTIME)
+        list(APPEND EFW_SOURCES src/debug/efw_debug_runtime.c)
+    endif()
 endif()
 
 if(EFW_ENABLE_DEBUG AND EFW_ENABLE_LITETUNE)
@@ -122,12 +141,6 @@ target_link_libraries(efw PUBLIC m)
 target_include_directories(efw PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-
-if(EFW_ENABLE_DEBUG AND EFW_ENABLE_LITETUNE)
-    target_include_directories(efw PUBLIC
-        ${CMAKE_CURRENT_SOURCE_DIR}/lite-tune/src/litetune
-    )
-endif()
 
 target_compile_features(efw PUBLIC c_std_99)
 
@@ -155,6 +168,10 @@ target_compile_definitions(efw PUBLIC
     EFW_ENABLE_SCHEDULER=$<BOOL:${EFW_ENABLE_SCHEDULER}>
     EFW_ENABLE_DEBUG=$<BOOL:${EFW_ENABLE_DEBUG}>
     EFW_ENABLE_LITETUNE=$<BOOL:${EFW_ENABLE_LITETUNE}>
+    EFW_ENABLE_DEBUG_FAST=$<BOOL:${EFW_ENABLE_DEBUG_FAST}>
+    EFW_ENABLE_DEBUG_ASYNC=$<BOOL:${EFW_ENABLE_DEBUG_ASYNC}>
+    EFW_ENABLE_DEBUG_RUNTIME=$<BOOL:${EFW_ENABLE_DEBUG_RUNTIME}>
+    EFW_DEBUG_ENABLE=$<BOOL:${EFW_ENABLE_DEBUG}>
 )
 
 if(EFW_BUILD_APPLICATIONS)
@@ -193,12 +210,30 @@ if(EFW_BUILD_APPLICATIONS)
 endif()
 
 if(EFW_BUILD_TESTS)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
     enable_testing()
     add_executable(efw_test_contract_sizes tests/contract_size_check.c)
     target_link_libraries(efw_test_contract_sizes PRIVATE efw)
     add_test(NAME efw_contract_sizes COMMAND efw_test_contract_sizes)
 
+    add_executable(efw_module_smoke_test tests/module_smoke_test.c)
+    target_link_libraries(efw_module_smoke_test PRIVATE efw m)
+    add_test(NAME efw_module_smoke COMMAND efw_module_smoke_test)
+
     add_executable(efw_sim_test tests/efw_sim_test.c)
     target_link_libraries(efw_sim_test PRIVATE efw m)
-    add_test(NAME efw_sim_test COMMAND efw_sim_test)
+    add_test(NAME efw_integration_sim COMMAND efw_sim_test)
+
+    add_test(NAME efw_groundstation_loopback
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_groundstation_loopback.py)
+    add_test(NAME efw_codegen_trace
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_codegen_trace.py)
+    add_test(NAME efw_generated_app_fixture
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_generated_app_fixture.py)
+    add_test(NAME efw_codegen_snapshot
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/codegen_snapshot_test.py)
+    add_test(NAME efw_python_toolchain_hardening
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_python_toolchain_hardening.py)
+    add_test(NAME efw_litetune_python
+        COMMAND ${Python3_EXECUTABLE} -m unittest discover -s ${CMAKE_CURRENT_SOURCE_DIR}/lite-tune/tests -p test*.py)
 endif()

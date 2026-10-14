@@ -6,14 +6,14 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import secrets
+import tempfile
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
 from litetune_protocol import DEFAULT_REQUESTED_FEATURES, hex64
-
-MAX_UDS_LINE_BYTES = 1024 * 1024
 
 
 class DaemonError(Exception):
@@ -27,6 +27,10 @@ class DaemonError(Exception):
 
 class BadRequestError(DaemonError):
     code = "BAD_REQUEST"
+
+
+class UnauthorizedError(DaemonError):
+    code = "UNAUTHORIZED"
 
 
 class NotReadyError(DaemonError):
@@ -72,10 +76,11 @@ class SchemaBuilder:
 class DaemonState:
     port: str
     baud: int
-    socket_path: str
-    log_path: str
-    daemon_json_path: str
-    runtime_dir: str
+    bind_host: str = "127.0.0.1"
+    bind_port: int = 0
+    log_path: str = ""
+    daemon_json_path: str = ""
+    runtime_dir: str = ""
     host_max_decoded_frame: int = 2048
     requested_features: int = DEFAULT_REQUESTED_FEATURES
     response_timeout_ms: int = 1000
@@ -87,6 +92,7 @@ class DaemonState:
 
     state: str = "starting"
     daemon_id: str = field(default_factory=lambda: str(uuid.uuid4()))
+    session_token: str = field(default_factory=lambda: secrets.token_urlsafe(32), repr=False)
     serial_transport: Any | None = None
     server: Any | None = None
     active_schema: dict[str, Any] | None = None
@@ -103,7 +109,7 @@ class DaemonState:
         "frames_rx": 0,
         "frames_tx": 0,
         "decode_errors": 0,
-        "uds_requests": 0,
+        "tcp_requests": 0,
         "schema_refreshes": 0,
         "telemetry_logged": 0,
         "telemetry_dropped": 0,
@@ -148,14 +154,32 @@ def response_error(exc: DaemonError) -> dict[str, Any]:
 
 
 def atomic_write_json(path: str, data: dict[str, Any]) -> None:
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = f"{path}.tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
-        f.write("\n")
-        f.flush()
-        os.fsync(f.fileno())
-    os.replace(tmp, path)
+    import time
+    directory = os.path.dirname(path)
+    os.makedirs(directory, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=f".{os.path.basename(path)}.", suffix=".tmp", dir=directory)
+    try:
+        os.chmod(tmp, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2, sort_keys=True)
+            f.write("\n")
+            f.flush()
+            os.fsync(f.fileno())
+        # Retry on Windows where concurrent readers may briefly lock the file.
+        for attempt in range(5):
+            try:
+                os.replace(tmp, path)
+                os.chmod(path, 0o600)
+                return
+            except OSError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05 * (attempt + 1))
+    finally:
+        try:
+            os.unlink(tmp)
+        except FileNotFoundError:
+            pass
 
 
 async def write_daemon_json(state: DaemonState) -> None:
@@ -167,7 +191,9 @@ async def write_daemon_json(state: DaemonState) -> None:
         "pid": os.getpid(),
         "port": state.port,
         "baud": state.baud,
-        "socket_path": state.socket_path,
+        "bind_host": state.bind_host,
+        "bind_port": state.bind_port,
+        "session_token": state.session_token,
         "log_path": state.log_path,
         "started_at": state.started_at,
         "updated_at": utc_now(),

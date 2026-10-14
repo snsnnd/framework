@@ -8,6 +8,8 @@
 #include "efw/device/sensor.h"
 #include "efw/algorithm/registry.h"
 #include "efw/state/state_machine.h"
+#include "efw/app/runtime.h"
+#include "efw/core/scheduler.h"
 #include <stddef.h>
 #include <string.h>
 
@@ -120,6 +122,11 @@ efw_status_t efw_algo_get(const char *name, const efw_algo_ops_t **out_ops) {
     return EFW_ERR_NOT_FOUND;
 }
 size_t efw_algo_count(void) { return g_algo_count; }
+void efw_algo_enumerate(efw_algo_enumerate_fn fn, void *user) {
+    for (size_t i = 0; i < g_algo_count; i++) {
+        fn(g_algos[i], user);
+    }
+}
 efw_status_t efw_algo_run(const char *name, const void *in, uint16_t in_size, void *out, uint16_t out_size) {
     const efw_algo_ops_t *ops;
     efw_status_t ret = efw_algo_get(name, &ops);
@@ -137,3 +144,9 @@ efw_status_t efw_sm_register(efw_sm_context_t *ctx) { (void)ctx; return EFW_OK; 
 efw_status_t efw_sm_get(const char *name, efw_sm_context_t **out_ctx) { (void)name; (void)out_ctx; return EFW_ERR_NOT_FOUND; }
 size_t efw_sm_count(void) { return 0; }
 const char *efw_sm_current_state(const efw_sm_context_t *ctx) { (void)ctx; return "UNKNOWN"; }
+uint32_t efw_sm_time_in_state(const efw_sm_context_t *ctx) { return ctx ? ctx->elapsed_ms - ctx->entered_ms : 0u; }
+void efw_sm_set_trace_callback(efw_sm_trace_fn_t callback, void *user) { (void)callback; (void)user; }
+void efw_sm_enumerate(efw_sm_enumerate_fn fn, void *user) { (void)fn; (void)user; }
+
+void efw_app_set_trace_callback(efw_app_trace_fn_t callback, void *user) { (void)callback; (void)user; }
+void efw_scheduler_set_trace_callback(efw_scheduler_trace_fn_t callback, void *user) { (void)callback; (void)user; }

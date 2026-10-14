@@ -6,6 +6,11 @@
  * 然后在工程宏定义里关闭不用的 EFW_ENABLE_*，未启用模块不会进入编译单元。
  */
 
+/*
+ * 这是给不方便维护源文件列表的 Keil/裸机工程使用的“单编译单元”入口。
+ * 直接 include .c 会让多个源文件共享本编译单元的 static 符号，因此下面
+ * 对常见内部函数名做临时重命名，避免不同模块发生静态符号冲突。
+ */
 #include "core/init.c"
 #include "core/diagnostic.c"
 #include "app/runtime.c"
@@ -108,6 +113,15 @@
 
 #if EFW_ENABLE_DEBUG
 #include "debug/efw_debug.c"
+#if EFW_ENABLE_DEBUG_FAST
+#include "debug/efw_debug_fast.c"
+#endif
+#if EFW_ENABLE_DEBUG_ASYNC
+#include "debug/efw_debug_async.c"
+#endif
+#if EFW_ENABLE_DEBUG_RUNTIME
+#include "debug/efw_debug_runtime.c"
+#endif
 #endif
 
 #if EFW_ENABLE_DEBUG && EFW_ENABLE_LITETUNE

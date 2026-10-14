@@ -12,3 +12,11 @@ playwright-report/
 examples/*/generated/
 examples/*/.efw/generated.json
 examples/*/.efw/backups/
+
+# Project Tool local state
+.pjt/local/
+.pjt/transactions/
+
+# Project Tool derived caches (rebuilt on demand; never commit these)
+.pjt/state/
+.pjt/refs/labels.json

@@ -13,7 +13,7 @@ EFW 在线调试通过 LiteTune 协议把 MCU 侧监控点注册为 Host 可发�
 │  │ efw.py debug │───▶│ LiteTune     │───▶│  PyQt Debug  │      │
 │  │    CLI       │    │   Daemon     │    │    Panel     │      │
 │  └──────────────┘    └──────┬───────┘    └──────────────┘      │
-│                             │ UDS                               │
+│                             │ Local IPC                         │
 │                             ▼                                   │
 │                     ┌──────────────┐                            │
 │                     │  lt.py CLI   │                            │
@@ -155,6 +155,10 @@ void USARTx_RxCallback(const uint8_t *data, uint16_t len) {
 }
 ```
 
+同步发送 transport 在 `send` 成功返回后由 EFW 自动完成本批发送。异步 UART/DMA transport 必须设置 `.send_mode = EFW_DEBUG_LITETUNE_SEND_ASYNC`，并在且仅在成功发送对应的完成回调中调用 `efw_debug_litetune_tx_complete()`。ISR 与主循环并发使用 LiteTune 时，平台还必须成对定义 `LT_CRITICAL_ENTER/EXIT`，并恢复进入前的中断状态。
+
+启用 runtime trace 后，Scheduler 会输出 `scheduler.task.begin/end`，end 事件包含 `lateness_ms`、`runtime_us`、`missed` 和 `overruns`。若需要真实 WCET 数据，必须在注册任务前通过 `efw_scheduler_set_time_providers()` 提供平台微秒时钟；Graph 的逻辑 tick 只能作为 release 时间，不能替代高精度执行计时。
+
 ### 4. 批量注册自定义监控点
 
 ```c
@@ -203,7 +207,8 @@ void register_custom_debug_points(void) {
 framework/
 ├── include/efw/debug/
 │   ├── efw_debug.h              # MCU 端调试模块头文件
-│   └── efw_debug_litetune.h     # LiteTune 集成 API
+│   ├── efw_debug_litetune.h     # LiteTune 集成 API
+│   └── litetune/                # EFW 内置 LiteTune MCU 通信层副本
 │
 ├── src/debug/
 │   ├── efw_debug.c              # MCU 端核心实现
@@ -228,6 +233,81 @@ framework/
 在 CMakeLists.txt 中可以通过以下选项控制调试模块。默认关闭，避免主机验证
 或裸机轻量集成时默认拉入调试/LiteTune 相关源码：
 
+## EFW Ground Station 与协议 Profile
+
+LiteTune 在 EFW 中被定位为地面站通信基础，而不是 PID 专用工具。PC 端入口位于
+`tools/groundstation/`，负责串口 daemon、schema discovery、参数读写、命令调用、
+日志/遥测记录。
+
+生成可编辑协议 profile：
+
+```bash
+python3 tools/efw.py debug protocol init efw_protocol_profile.json
+```
+
+查看当前 profile：
+
+```bash
+python3 tools/efw.py debug protocol show efw_protocol_profile.json
+```
+
+项目可以在 `.efw_project.json` 中配置：
+
+```json
+{
+  "protocol_profile": "efw_protocol_profile.json"
+}
+```
+
+profile 可覆盖：
+
+- `features`: Host 请求的功能位映射。
+- `frame_types`: 标准帧 ID 映射。
+- `extensions.frame_types`: 项目私有帧。
+- `value_types` / `extensions.value_types`: 参数和日志字段类型。
+- `project_frame_range`: 项目私有帧 ID 范围。
+- `project_status_range` / `extensions.status_names`: 项目私有状态码。
+
+MCU 端 trace 事件保持低耦合：`app/runtime` 和 `state_machine` 只暴露 callback，不依赖
+LiteTune。启用 `EFW_ENABLE_DEBUG && EFW_ENABLE_LITETUNE` 后，`efw_debug_litetune_init()`
+会自动把 runtime/state-machine trace 接到 LiteTune packed log layout `0x11`。该 layout
+包含 `trace.event_id`、`trace.name_id`、`trace.status`、`trace.mcu_time_ms`、`trace.duration_ms`，
+其中 event/name 使用稳定 dictionary hash ID，避免实时路径传大段文本。若 Host 不支持 packed log，
+bridge 会回退到 `LOG_TEXT`：
+
+- `app.init.begin` / `app.init.end`
+- `app.step.begin` / `app.step.end`
+- `app.update.begin` / `app.update.end`
+- `sm.transition`
+
+trace 文本包含 MCU 侧 timing 字段：
+
+- `mcu_time_ms`: MCU/runtime 时间源给出的毫秒时间戳。
+- `duration_ms`: begin/end 成对事件的持续时间；无法计算时为 `unknown`。
+- `time_in_state_ms`: 状态机 transition 前在旧状态停留的时间。
+
+为避免调试回传破坏实时任务，EFW/LiteTune trace 默认采用有界队列和预算 flush：
+
+- 正常任务上下文只把 trace record 复制进本地 ring buffer，不执行 COBS/CRC/串口发送。
+- `efw_debug_litetune_process()` 默认每次最多 flush 少量 trace 事件。
+- 空闲循环可以调用 `efw_debug_litetune_process_budget(max_trace_events)` 增加预算。
+- Host 尚未连接时不会弹出 trace queue，避免初始化阶段日志被丢掉。
+- 队列满时丢弃新 trace 并计入 `events_dropped`，不阻塞控制任务。
+- 崩溃/错误路径可调用 `efw_debug_litetune_panic_flush(max_trace_events)` 做 best-effort flush。
+- Host 可通过 `debug.perf` 查看 `events_received/events_queued/events_flushed/events_dropped/current_queue_depth/max_queue_depth/process_calls`。
+
+推荐主循环结构：
+
+```c
+for (;;) {
+    app_loop_tick();                 /* 正常实时任务 */
+    efw_debug_litetune_process_budget(2u); /* idle/debug 预算 */
+}
+```
+
+后续 Graph 生成代码可以在节点执行和数据搬运处调用 `efw_app_trace_event(...)`，实现
+节点生命周期和数据流 trace，而不需要直接依赖 LiteTune。
+
 ```cmake
 option(EFW_ENABLE_DEBUG "Enable online debug module" OFF)
 option(EFW_ENABLE_LITETUNE "Enable LiteTune backend for online debug" OFF)
@@ -241,7 +321,7 @@ cmake -S . -B build -DEFW_ENABLE_DEBUG=ON -DEFW_ENABLE_LITETUNE=ON
 
 ## 当前边界
 
-- 已支持：自定义监控点注册、HAL/传感器/算法枚举注册、LiteTune 参数表注册、LiteTune 命令注册、`param get --all`、`debug.stats`、`debug.list`、`debug.snapshot`、可选 packed telemetry。
+- 已支持：自定义监控点注册、HAL/传感器/算法枚举注册、LiteTune 参数表注册、LiteTune string 参数 wrapper、LiteTune 命令注册、`param get --all`、`debug.stats`、`debug.list`、`debug.snapshot`、packed telemetry、packed trace。
 - Host 工具主路径：`tools/debug/collector.py` 通过 LiteTune daemon 读取 schema 和参数；`tools/debug/cli.py stats` 通过 LiteTune command path 读取 EFW debug 统计。
 - LiteTune discovery 使用静态 registry；需要先完成 `efw_debug_register_*()`，再调用 `efw_debug_litetune_init()`。运行中新增监控点需要重新初始化/重新 discovery 才能被 Host schema 发现。
-- 状态机当前状态属于动态字符串值，当前没有自动注册为 LiteTune string 参数；LiteTune string 需要 `lt_str8_view_t` 存储形态，EFW 暂时只自动注册数值/bool 监控点。
+- `EFW_DEBUG_TYPE_STRING` 会映射为 LiteTune `LT_VALUE_STRING`，bridge 内部维护稳定 `lt_str8_view_t` wrapper，并在 process/report 前刷新长度和指针；用户仍需保证原始字符串缓冲区在监控点生命周期内有效。

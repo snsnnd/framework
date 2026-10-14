@@ -30,6 +30,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import stat
 import subprocess
 import sys
 import zipfile
@@ -38,6 +39,38 @@ from pathlib import Path
 from typing import Optional
 import urllib.request
 import urllib.error
+
+
+def _archive_target(destination: Path, member_name: str) -> Path:
+    normalized = member_name.replace("\\", "/")
+    member = Path(normalized)
+    if not normalized or member.is_absolute() or member.drive or (member.parts and member.parts[0].endswith(":")):
+        raise ValueError(f"压缩包包含非法路径: {member_name}")
+    root = destination.resolve()
+    target = (root / member).resolve()
+    if target == root or root not in target.parents:
+        raise ValueError(f"压缩包路径逃逸: {member_name}")
+    return target
+
+
+def safe_extract_zip(archive: zipfile.ZipFile, destination: Path) -> None:
+    for member in archive.infolist():
+        _archive_target(destination, member.filename)
+        mode = member.external_attr >> 16
+        if stat.S_ISLNK(mode):
+            raise ValueError(f"压缩包不允许符号链接: {member.filename}")
+    archive.extractall(destination)
+
+
+def safe_extract_tar(archive: tarfile.TarFile, destination: Path) -> None:
+    members = archive.getmembers()
+    for member in members:
+        _archive_target(destination, member.name)
+        if member.issym() or member.islnk():
+            raise ValueError(f"压缩包不允许链接: {member.name}")
+        if not member.isdir() and not member.isfile():
+            raise ValueError(f"压缩包包含不支持的成员: {member.name}")
+    archive.extractall(destination, members=members)
 
 
 # ─── 固件定义 ────────────────────────────────────────────────────────────────
@@ -74,7 +107,10 @@ class FirmwareInfo:
         self.linker_dir = linker_dir
 
 
-# 支持的固件列表
+# Only SDKs referenced by authoritative, verified target descriptors are public.
+SUPPORTED_FIRMWARES = frozenset({"stm32f1", "stm32f4", "stm32g4"})
+
+# 固件元数据列表
 FIRMWARES = {
     # ── STM32 系列 ──────────────────────────────────────────────────────
     "stm32f1": FirmwareInfo(
@@ -354,11 +390,23 @@ class FirmwareManager:
         """保存配置"""
         with open(self.config_file, "w", encoding="utf-8") as f:
             json.dump(self.config, f, indent=2)
+
+    def _managed_path(self, path: Path, *, allow_root: bool = False) -> Path:
+        root = self.firmware_dir.resolve()
+        resolved = path.resolve()
+        if resolved == Path(resolved.anchor) or resolved == root:
+            if not allow_root:
+                raise ValueError(f"拒绝操作受管目录或文件系统根目录: {resolved}")
+        elif root not in resolved.parents:
+            raise ValueError(f"路径不在固件受管目录中: {resolved}")
+        return resolved
     
     def list_firmwares(self) -> list[dict]:
         """列出所有支持的固件"""
         result = []
         for name, fw in FIRMWARES.items():
+            if name not in SUPPORTED_FIRMWARES:
+                continue
             installed = name in self.config
             
             info = {
@@ -381,6 +429,8 @@ class FirmwareManager:
         """获取已安装的固件"""
         result = []
         for name, config in self.config.items():
+            if name not in SUPPORTED_FIRMWARES:
+                continue
             path = Path(config.get("path", ""))
             if path.exists():
                 result.append({
@@ -393,13 +443,12 @@ class FirmwareManager:
     
     def get_firmware_for_chip(self, chip: str) -> Optional[FirmwareInfo]:
         """根据芯片获取固件"""
-        chip_upper = chip.upper()
-        
-        for prefix, fw_name in CHIP_TO_FIRMWARE.items():
-            if chip_upper.startswith(prefix):
-                return FIRMWARES.get(fw_name)
-        
-        return None
+        try:
+            from tools.target import resolve_target
+            target = resolve_target(chip=chip)
+        except ValueError:
+            return None
+        return FIRMWARES.get(target.sdk) if target.sdk in SUPPORTED_FIRMWARES else None
     
     def download(self, name: str, url: str = None, local_path: Path = None) -> bool:
         """下载固件
@@ -409,13 +458,17 @@ class FirmwareManager:
             url: 自定义下载 URL
             local_path: 本地固件路径
         """
-        if name not in FIRMWARES and not url and not local_path:
-            print(f"错误: 未知固件 '{name}'")
-            print("请指定固件名称或使用 --url/--local 参数")
+        if name not in SUPPORTED_FIRMWARES:
+            print(f"错误: SDK '{name}' 尚无经过验证的端到端构建支持")
             return False
         
         fw = FIRMWARES.get(name)
         dest_dir = self.firmware_dir / name
+        try:
+            dest_dir = self._managed_path(dest_dir)
+        except (OSError, ValueError) as exc:
+            print(f"错误: 非法固件名称 '{name}': {exc}")
+            return False
         
         if dest_dir.exists():
             print(f"固件已存在: {dest_dir}")
@@ -448,16 +501,19 @@ class FirmwareManager:
                     dest_dir.mkdir(parents=True, exist_ok=True)
                     if local_path.suffix == ".zip":
                         with zipfile.ZipFile(local_path, "r") as zip_ref:
-                            zip_ref.extractall(dest_dir)
-                    elif local_path.suffix in {".tar", ".tar.gz", ".tgz", ".tar.xz"}:
+                            safe_extract_zip(zip_ref, dest_dir)
+                    elif local_path.name.endswith((".tar", ".tar.gz", ".tgz", ".tar.xz")):
                         with tarfile.open(local_path, "r:*") as tar:
-                            tar.extractall(dest_dir)
+                            safe_extract_tar(tar, dest_dir)
                     else:
                         print(f"错误: 不支持的文件格式: {local_path.suffix}")
+                        shutil.rmtree(dest_dir)
                         return False
                 
                 print("复制完成")
             except Exception as e:
+                if dest_dir.exists():
+                    shutil.rmtree(dest_dir)
                 print(f"复制失败: {e}")
                 return False
         
@@ -483,11 +539,11 @@ class FirmwareManager:
             
             # 解压
             print("解压中...")
+            temp_dir = self.firmware_dir / f"{name}_temp"
             try:
                 with zipfile.ZipFile(download_path, "r") as zip_ref:
                     # 解压到临时目录
-                    temp_dir = self.firmware_dir / f"{name}_temp"
-                    zip_ref.extractall(temp_dir)
+                    safe_extract_zip(zip_ref, temp_dir)
                     
                     # 移动到目标目录（跳过顶层目录）
                     extracted_dirs = list(temp_dir.iterdir())
@@ -502,6 +558,8 @@ class FirmwareManager:
                 
                 print("解压完成")
             except Exception as e:
+                if temp_dir.exists():
+                    shutil.rmtree(temp_dir)
                 print(f"解压失败: {e}")
                 return False
         
@@ -530,7 +588,15 @@ class FirmwareManager:
             print(f"错误: 固件 '{name}' 未安装")
             return False
         
-        path = Path(self.config[name].get("path", ""))
+        configured_path = self.config[name].get("path")
+        if not isinstance(configured_path, str) or not configured_path.strip():
+            print(f"错误: 拒绝删除固件 '{name}': 配置路径为空")
+            return False
+        try:
+            path = self._managed_path(Path(configured_path))
+        except (OSError, ValueError) as exc:
+            print(f"错误: 拒绝删除固件 '{name}': {exc}")
+            return False
         
         if path.exists():
             print(f"删除固件: {path}")
@@ -754,8 +820,8 @@ def cmd_firmware(argv: list[str]) -> int:
             print("错误: 请指定固件名称")
             return 1
         
-        if name not in FIRMWARES:
-            print(f"错误: 未知固件 '{name}'")
+        if name not in SUPPORTED_FIRMWARES:
+            print(f"错误: SDK '{name}' 尚无经过验证的端到端构建支持")
             return 1
         
         fw = FIRMWARES[name]
@@ -878,31 +944,10 @@ EFW 固件管理工具
   # 配置项目
   python3 tools/efw.py firmware config --chip STM32F407VGT6
 
-支持的固件:
-  ── STM32 系列 ──
+经过验证的端到端 SDK:
   stm32f1          STM32CubeF1 (STM32F1)
   stm32f4          STM32CubeF4 (STM32F4)
   stm32g4          STM32CubeG4 (STM32G4)
-  stm32h7          STM32CubeH7 (STM32H7)
-  
-  ── ESP 系列 ──
-  esp-idf          ESP-IDF (ESP32, ESP32-S2, ESP32-S3, ESP32-C3)
-  
-  ── Arduino 系列 ──
-  arduino-avr      Arduino AVR (Uno, Mega, Nano)
-  arduino-samd     Arduino SAMD (Zero, MKR)
-  arduino-mbed     Arduino Mbed (RP2040, Portenta)
-  
-  ── TI 系列 ──
-  mspm0-sdk        MSPM0 SDK (MSPM0G3507, MSPM0L1306)
-  
-  ── 国产芯片 ──
-  gd32-standard    GD32 标准库 (GD32F103, GD32F303)
-  ch32v-sdk        CH32V SDK (CH32V003, CH32V203)
-  
-  ── 其他 ──
-  nxp-lpc          NXP LPC SDK
-  rp2040           Raspberry Pi Pico SDK
 
 固件存储位置:
   ~/.efw/firmware/

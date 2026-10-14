@@ -50,6 +50,8 @@ elseif(CPU_TYPE STREQUAL "cortex-m3")
     set(CPU_FLAGS "-mcpu=cortex-m3 -mthumb")
 elseif(CPU_TYPE STREQUAL "cortex-m0")
     set(CPU_FLAGS "-mcpu=cortex-m0 -mthumb")
+elseif(CPU_TYPE STREQUAL "cortex-m7")
+    set(CPU_FLAGS "-mcpu=cortex-m7 -mthumb -mfloat-abi=hard -mfpu=fpv5-d16")
 else()
     set(CPU_FLAGS "-mcpu=cortex-m4 -mthumb")
 endif()
@@ -80,38 +82,19 @@ endif()
     
     def _parse_chip(self, chip: str) -> dict[str, str]:
         """解析芯片名称"""
-        chip_upper = chip.upper()
-        
-        # 默认值
-        info = {
-            "family": "STM32F4",
-            "device": "STM32F407xx",
-            "cpu": "cortex-m4",
-            "flash_size": "1024K",
-            "ram_size": "192K",
+        from tools.target import resolve_target
+
+        target = resolve_target(chip=chip)
+        device = next((define for define in target.defines if define.startswith("STM32")), "")
+        if not device:
+            raise ValueError(f"目标 {target.chip} 缺少 CMSIS device define")
+        return {
+            "family": target.family,
+            "device": device,
+            "cpu": target.core,
+            "flash_size": f"{target.memory['flash_kb']}K",
+            "ram_size": f"{target.memory['ram_kb']}K",
         }
-        
-        # 解析系列
-        if "F103" in chip_upper:
-            info.update(family="STM32F1", device="STM32F103xB", cpu="cortex-m3",
-                       flash_size="128K", ram_size="20K")
-        elif "F407" in chip_upper:
-            info.update(family="STM32F4", device="STM32F407xx", cpu="cortex-m4",
-                       flash_size="1024K", ram_size="192K")
-        elif "F411" in chip_upper:
-            info.update(family="STM32F4", device="STM32F411xE", cpu="cortex-m4",
-                       flash_size="512K", ram_size="128K")
-        elif "F446" in chip_upper:
-            info.update(family="STM32F4", device="STM32F446xx", cpu="cortex-m4",
-                       flash_size="512K", ram_size="128K")
-        elif "G431" in chip_upper:
-            info.update(family="STM32G4", device="STM32G431xx", cpu="cortex-m4",
-                       flash_size="128K", ram_size="32K")
-        elif "H743" in chip_upper:
-            info.update(family="STM32H7", device="STM32H743xx", cpu="cortex-m7",
-                       flash_size="2048K", ram_size="1024K")
-        
-        return info
     
     def _generate_firmware_config(self, chip_info: dict) -> str:
         """生成固件库配置"""
@@ -156,17 +139,18 @@ add_definitions(-D{chip_info['device']} -DUSE_HAL_DRIVER -DUSE_STM32_HAL)
     def _generate_efw_config(self) -> str:
         """生成 EFW 框架配置"""
         # 使用绝对路径指向 EFW 框架
-        efw_root = Path(__file__).parent.parent.absolute()
+        efw_root = Path(__file__).resolve().parents[2]
         
         return f"""# ====================================================================
 # EFW 框架配置
 # ====================================================================
 
-set(EFW_ROOT {efw_root})
+set(EFW_ROOT "{efw_root}")
 include_directories(${{EFW_ROOT}}/include)
 
 # EFW 源文件（排除平台特定文件）
 file(GLOB_RECURSE EFW_SOURCES_ALL
+    ${{EFW_ROOT}}/src/app/*.c
     ${{EFW_ROOT}}/src/core/*.c
     ${{EFW_ROOT}}/src/hal/*.c
     ${{EFW_ROOT}}/src/comm/*.c
@@ -281,20 +265,21 @@ add_custom_command(TARGET app.elf POST_BUILD
         """生成工具链文件"""
         return """set(CMAKE_SYSTEM_NAME Generic)
 set(CMAKE_SYSTEM_PROCESSOR arm)
+set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 
 # 编译器路径（可通过环境变量或命令行覆盖）
 if(DEFINED ENV{ARM_GCC_PATH})
-    set(TOOLCHAIN_PREFIX $ENV{ARM_GCC_PATH}/arm-none-eabi-)
+    set(TOOLCHAIN_PREFIX "$ENV{ARM_GCC_PATH}/arm-none-eabi-")
 else()
     set(TOOLCHAIN_PREFIX arm-none-eabi-)
 endif()
 
-set(CMAKE_C_COMPILER ${{TOOLCHAIN_PREFIX}}gcc)
-set(CMAKE_CXX_COMPILER ${{TOOLCHAIN_PREFIX}}g++)
-set(CMAKE_ASM_COMPILER ${{TOOLCHAIN_PREFIX}}gcc)
-set(CMAKE_OBJCOPY ${{TOOLCHAIN_PREFIX}}objcopy)
-set(CMAKE_OBJDUMP ${{TOOLCHAIN_PREFIX}}objdump)
-set(CMAKE_SIZE ${{TOOLCHAIN_PREFIX}}size)
+set(CMAKE_C_COMPILER "${TOOLCHAIN_PREFIX}gcc")
+set(CMAKE_CXX_COMPILER "${TOOLCHAIN_PREFIX}g++")
+set(CMAKE_ASM_COMPILER "${TOOLCHAIN_PREFIX}gcc")
+set(CMAKE_OBJCOPY "${TOOLCHAIN_PREFIX}objcopy")
+set(CMAKE_OBJDUMP "${TOOLCHAIN_PREFIX}objdump")
+set(CMAKE_SIZE "${TOOLCHAIN_PREFIX}size")
 
 set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
 set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)

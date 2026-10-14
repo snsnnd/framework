@@ -4,10 +4,14 @@
  */
 
 #include "efw/debug/efw_debug.h"
+#include "efw/app/runtime.h"
 #include "efw/hal/hal.h"
 #include "efw/device/sensor.h"
 #include "efw/algorithm/registry.h"
 #include "efw/state/state_machine.h"
+#if EFW_ENABLE_SCHEDULER
+#include "efw/core/scheduler.h"
+#endif
 #include <string.h>
 #include <stdio.h>
 
@@ -30,6 +34,30 @@ static struct {
     .error_count = 0,
     .initialized = 0,
 };
+
+static efw_debug_event_sink_fn g_debug_event_sink;
+static void *g_debug_event_user;
+
+#if EFW_ENABLE_ALGORITHM
+typedef struct {
+    uint32_t type;
+    uint32_t ctx_addr;
+} efw_debug_algo_snapshot_t;
+
+static efw_debug_algo_snapshot_t g_algo_debug[EFW_MAX_ALGOS];
+static uint16_t g_algo_debug_count;
+#endif
+
+#if EFW_ENABLE_STATE_MACHINE
+typedef struct {
+    efw_sm_context_t *ctx;
+    uint32_t state_hash;
+    uint32_t time_ms;
+} efw_debug_sm_snapshot_t;
+
+static efw_debug_sm_snapshot_t g_sm_debug[EFW_MAX_STATE_MACHINES];
+static uint16_t g_sm_debug_count;
+#endif
 
 /* ==================================================================
  *  内部辅助函数
@@ -111,6 +139,107 @@ static efw_status_t validate_point_readable(const efw_debug_point_t *point)
     return EFW_OK;
 }
 
+#if EFW_ENABLE_STATE_MACHINE
+static uint32_t debug_hash_string(const char *text)
+{
+    uint32_t hash = 2166136261u;
+    if (!text) {
+        return 0u;
+    }
+    while (*text) {
+        hash ^= (uint8_t)(*text++);
+        hash *= 16777619u;
+    }
+    return hash;
+}
+#endif
+
+#if EFW_ENABLE_ALGORITHM
+static uint32_t debug_ptr_to_u32(const void *ptr)
+{
+    uintptr_t value = (uintptr_t)ptr;
+    uint32_t hash = (uint32_t)value;
+#if UINTPTR_MAX > UINT32_MAX
+    hash ^= (uint32_t)(value >> 32);
+#endif
+    return hash;
+}
+#endif
+
+static void update_dynamic_debug_points(void)
+{
+#if EFW_ENABLE_STATE_MACHINE
+    for (uint16_t i = 0; i < g_sm_debug_count; ++i) {
+        efw_sm_context_t *ctx = g_sm_debug[i].ctx;
+        if (!ctx) {
+            continue;
+        }
+        g_sm_debug[i].state_hash = debug_hash_string(efw_sm_current_state(ctx));
+        g_sm_debug[i].time_ms = efw_sm_time_in_state(ctx);
+    }
+#endif
+}
+
+static void debug_app_trace_callback(const char *event,
+                                     const char *name,
+                                     efw_status_t status,
+                                     uint32_t mcu_time_ms,
+                                     uint32_t duration_ms,
+                                     void *user)
+{
+    char detail[96];
+    (void)user;
+    if (duration_ms == EFW_APP_TRACE_DURATION_UNKNOWN) {
+        snprintf(detail, sizeof(detail), "status=%d mcu_time_ms=%lu duration_ms=unknown", (int)status, (unsigned long)mcu_time_ms);
+    } else {
+        snprintf(detail, sizeof(detail), "status=%d mcu_time_ms=%lu duration_ms=%lu", (int)status, (unsigned long)mcu_time_ms, (unsigned long)duration_ms);
+    }
+    efw_debug_emit_event(event, name, detail);
+}
+
+#if EFW_ENABLE_SCHEDULER
+static void debug_scheduler_trace_callback(const char *event,
+                                           const efw_scheduler_slot_t *slot,
+                                           efw_status_t status,
+                                           uint32_t now_ms,
+                                           void *user)
+{
+    char detail[128];
+    (void)user;
+    if (!slot || !slot->def.fn) return;
+    snprintf(detail, sizeof(detail),
+             "status=%d mcu_time_ms=%lu lateness_ms=%lu runtime_us=%lu missed=%lu overruns=%lu",
+             (int)status,
+             (unsigned long)now_ms,
+             (unsigned long)slot->last_start_lateness_ms,
+             (unsigned long)slot->last_runtime_us,
+             (unsigned long)slot->missed_releases,
+             (unsigned long)slot->overrun_count);
+    efw_debug_emit_event(event, slot->def.name, detail);
+}
+#endif
+
+#if EFW_ENABLE_STATE_MACHINE
+static void debug_sm_trace_callback(const efw_sm_context_t *ctx,
+                                    const char *from_state,
+                                    const char *to_state,
+                                    uint32_t time_in_state_ms,
+                                    void *user)
+{
+    char name[EFW_DEBUG_NAME_MAX_LEN];
+    char detail[96];
+    (void)user;
+    snprintf(name, sizeof(name), "sm.%s", (ctx && ctx->name) ? ctx->name : "unknown");
+    snprintf(detail, sizeof(detail), "from=%s to=%s mcu_time_ms=%lu duration_ms=%lu time_in_state_ms=%lu",
+             from_state ? from_state : "",
+             to_state ? to_state : "",
+             ctx ? (unsigned long)ctx->elapsed_ms : 0ul,
+             (unsigned long)time_in_state_ms,
+             (unsigned long)time_in_state_ms);
+    efw_debug_emit_event("sm.transition", name, detail);
+}
+#endif
+
 /* ==================================================================
  *  HAL 层数据采集回调
  * ================================================================== */
@@ -138,27 +267,6 @@ static void hal_register_callback(const efw_hal_ops_t *ops, void *user)
  *  传感器数据采集回调
  * ================================================================== */
 
-#if EFW_ENABLE_SENSOR
-static void sensor_register_callback(const efw_sensor_ops_t *ops, void *user)
-{
-    int *count = (int *)user;
-    char name[EFW_DEBUG_NAME_MAX_LEN];
-
-    /* 生成名称: "sensor.{name}" */
-    snprintf(name, sizeof(name), "sensor.%s", ops->name);
-
-    /* 对于传感器，我们需要获取其最新读数
-     * 注意：这里需要一个地方存储传感器的最新值
-     * 实际实现中，可以在 efw_sensor_read() 时自动更新调试模块
-     */
-    efw_status_t ret = register_point(name, EFW_DEBUG_SOURCE_SENSOR,
-                                       EFW_DEBUG_TYPE_F32, ops->ctx);
-    if (ret == EFW_OK) {
-        (*count)++;
-    }
-}
-#endif /* EFW_ENABLE_SENSOR */
-
 /* ==================================================================
  *  算法数据采集回调
  * ================================================================== */
@@ -168,16 +276,30 @@ static void algo_register_callback(const efw_algo_ops_t *ops, void *user)
 {
     int *count = (int *)user;
     char name[EFW_DEBUG_NAME_MAX_LEN];
+    efw_status_t ret;
 
-    /* 生成名称: "algo.{name}" */
-    snprintf(name, sizeof(name), "algo.%s", ops->name);
+    if (!ops || g_algo_debug_count >= EFW_MAX_ALGOS) {
+        return;
+    }
 
-    /* 对于算法，我们监控其上下文（可能包含内部状态） */
-    efw_status_t ret = register_point(name, EFW_DEBUG_SOURCE_ALGORITHM,
-                                       EFW_DEBUG_TYPE_U32, ops->ctx);
+    g_algo_debug[g_algo_debug_count].type = (uint32_t)ops->type;
+    g_algo_debug[g_algo_debug_count].ctx_addr = debug_ptr_to_u32(ops->ctx);
+
+    snprintf(name, sizeof(name), "algo.%s.type", ops->name);
+    ret = register_point(name, EFW_DEBUG_SOURCE_ALGORITHM,
+                         EFW_DEBUG_TYPE_U32, &g_algo_debug[g_algo_debug_count].type);
     if (ret == EFW_OK) {
         (*count)++;
     }
+
+    snprintf(name, sizeof(name), "algo.%s.ctx", ops->name);
+    ret = register_point(name, EFW_DEBUG_SOURCE_ALGORITHM,
+                         EFW_DEBUG_TYPE_U32, &g_algo_debug[g_algo_debug_count].ctx_addr);
+    if (ret == EFW_OK) {
+        (*count)++;
+    }
+
+    g_algo_debug_count++;
 }
 #endif /* EFW_ENABLE_ALGORITHM */
 
@@ -186,33 +308,35 @@ static void algo_register_callback(const efw_algo_ops_t *ops, void *user)
  * ================================================================== */
 
 #if EFW_ENABLE_STATE_MACHINE
-/**
- * @brief 状态机监控点的特殊读取函数
- *
- * 由于状态机的当前状态是动态变化的，我们需要一个包装器
- */
-typedef struct {
-    const efw_sm_context_t *sm_ctx;
-    char state_name[EFW_DEBUG_NAME_MAX_LEN];
-} efw_debug_sm_wrapper_t;
-
-static efw_status_t sm_state_reader(const efw_debug_sm_wrapper_t *wrapper,
-                                     char *out_name, uint16_t out_size)
+static void sm_register_callback(efw_sm_context_t *ctx, void *user)
 {
-    if (!wrapper || !wrapper->sm_ctx || !out_name) {
-        return EFW_ERR_INVALID;
+    int *count = (int *)user;
+    char name[EFW_DEBUG_NAME_MAX_LEN];
+    efw_status_t ret;
+
+    if (!ctx || !ctx->name || g_sm_debug_count >= EFW_MAX_STATE_MACHINES) {
+        return;
     }
 
-    const char *current = efw_sm_current_state(wrapper->sm_ctx);
-    if (current) {
-        strncpy(out_name, current, out_size - 1);
-        out_name[out_size - 1] = '\0';
-    } else {
-        strncpy(out_name, "UNKNOWN", out_size - 1);
-        out_name[out_size - 1] = '\0';
+    g_sm_debug[g_sm_debug_count].ctx = ctx;
+    g_sm_debug[g_sm_debug_count].state_hash = debug_hash_string(efw_sm_current_state(ctx));
+    g_sm_debug[g_sm_debug_count].time_ms = efw_sm_time_in_state(ctx);
+
+    snprintf(name, sizeof(name), "sm.%s.state_hash", ctx->name);
+    ret = register_point(name, EFW_DEBUG_SOURCE_STATE_MACHINE,
+                         EFW_DEBUG_TYPE_U32, &g_sm_debug[g_sm_debug_count].state_hash);
+    if (ret == EFW_OK) {
+        (*count)++;
     }
 
-    return EFW_OK;
+    snprintf(name, sizeof(name), "sm.%s.time_ms", ctx->name);
+    ret = register_point(name, EFW_DEBUG_SOURCE_STATE_MACHINE,
+                         EFW_DEBUG_TYPE_U32, &g_sm_debug[g_sm_debug_count].time_ms);
+    if (ret == EFW_OK) {
+        (*count)++;
+    }
+
+    g_sm_debug_count++;
 }
 #endif /* EFW_ENABLE_STATE_MACHINE */
 
@@ -232,6 +356,14 @@ efw_status_t efw_debug_init(void)
     g_debug.next_param_id = 0x1000;
     g_debug.update_count = 0;
     g_debug.error_count = 0;
+#if EFW_ENABLE_ALGORITHM
+    g_algo_debug_count = 0;
+    memset(g_algo_debug, 0, sizeof(g_algo_debug));
+#endif
+#if EFW_ENABLE_STATE_MACHINE
+    g_sm_debug_count = 0;
+    memset(g_sm_debug, 0, sizeof(g_sm_debug));
+#endif
 
     g_debug.initialized = 1;
 
@@ -246,6 +378,8 @@ efw_status_t efw_debug_update(void)
 
     uint16_t synced = 0;
     uint16_t errors = 0;
+
+    update_dynamic_debug_points();
 
     /* 检查所有已注册监控点仍可读取。LiteTune 上报由集成层显式调用。 */
     for (uint16_t i = 0; i < EFW_MAX_DEBUG_POINTS; i++) {
@@ -296,6 +430,30 @@ efw_status_t efw_debug_get_stats(efw_debug_stats_t *stats)
     return EFW_OK;
 }
 
+void efw_debug_set_event_sink(efw_debug_event_sink_fn sink, void *user)
+{
+    g_debug_event_sink = sink;
+    g_debug_event_user = user;
+}
+
+void efw_debug_emit_event(const char *event, const char *name, const char *detail)
+{
+    if (g_debug_event_sink) {
+        g_debug_event_sink(event ? event : "event", name ? name : "", detail ? detail : "", g_debug_event_user);
+    }
+}
+
+void efw_debug_attach_runtime_trace(void)
+{
+    efw_app_set_trace_callback(debug_app_trace_callback, NULL);
+#if EFW_ENABLE_SCHEDULER
+    efw_scheduler_set_trace_callback(debug_scheduler_trace_callback, NULL);
+#endif
+#if EFW_ENABLE_STATE_MACHINE
+    efw_sm_set_trace_callback(debug_sm_trace_callback, NULL);
+#endif
+}
+
 uint16_t efw_debug_point_count(void)
 {
     return g_debug.point_count;
@@ -331,13 +489,20 @@ int efw_debug_register_efw_hal(void)
 
 int efw_debug_register_efw_sensors(void)
 {
-#if EFW_ENABLE_SENSOR
-    int count = 0;
-    efw_sensor_enumerate(sensor_register_callback, &count);
-    return count;
-#else
+    /* Sensor output type/storage is not described by efw_sensor_ops_t. */
     return 0;
-#endif
+}
+
+efw_status_t efw_debug_register_sensor_value(const char *sensor_name,
+                                             efw_debug_type_t type,
+                                             const void *latest_value)
+{
+    char name[EFW_DEBUG_NAME_MAX_LEN];
+    if (!sensor_name || !latest_value) {
+        return EFW_ERR_INVALID;
+    }
+    (void)snprintf(name, sizeof(name), "sensor.%s", sensor_name);
+    return register_point(name, EFW_DEBUG_SOURCE_SENSOR, type, latest_value);
 }
 
 int efw_debug_register_efw_algorithms(void)
@@ -354,12 +519,9 @@ int efw_debug_register_efw_algorithms(void)
 int efw_debug_register_efw_state_machines(void)
 {
 #if EFW_ENABLE_STATE_MACHINE
-    /* 状态机当前状态是计算值；这里只提供遍历入口，具体快照字段
-     * 需要后续引入动态 reader 后再自动注册。
-     */
-    (void)sm_state_reader;
-    (void)efw_sm_enumerate;
-    return 0;
+    int count = 0;
+    efw_sm_enumerate(sm_register_callback, &count);
+    return count;
 #else
     return 0;
 #endif

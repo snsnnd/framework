@@ -58,11 +58,18 @@ def format_graph(project_ref: str | Path) -> Path:
 
 
 def validate_graph(project_ref: str | Path) -> dict[str, Any]:
-    return validate_graph_data(load_json(graph_path(project_ref)))
+    project_path, project = load_project(project_ref)
+    graph = load_json(project_graph_path(project_path, project))
+    from tools.target import GENERIC_BOARD_PROFILES, resolve_project_target
+    has_chip = bool(str(project.get("chip") or graph.get("project", {}).get("chip") or "").strip())
+    boards = [str(project.get("board_profile") or "").strip(), str(graph.get("board", {}).get("profile") or "").strip()]
+    has_specific_board = any(board and board.casefold() not in GENERIC_BOARD_PROFILES for board in boards)
+    target = resolve_project_target(project, graph) if has_chip or has_specific_board else None
+    return validate_graph_data(graph, target_chip=target.chip if target else None)
 
 
-def validate_graph_data(graph: dict[str, Any]) -> dict[str, Any]:
-    return _validate_graph_data(graph)
+def validate_graph_data(graph: dict[str, Any], *, target_chip: str | None = None) -> dict[str, Any]:
+    return _validate_graph_data(graph, target_chip=target_chip)
 
 
 def debug_graph(project_ref: str | Path, sections: list[str] | None = None) -> tuple[int, str, str]:

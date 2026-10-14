@@ -354,55 +354,47 @@
       "id": "e1",
       "from": "line_input",
       "to": "line_sensor",
-      "from_port": "out",
-      "to_port": "in",
+      "from_port": "hal",
+      "to_port": "hal",
       "kind": "hardware_dependency"
     },
     {
       "id": "e2",
       "from": "line_sensor",
       "to": "line_pid",
-      "from_port": "out",
-      "to_port": "in",
+      "from_port": "sensor",
+      "to_port": "sensor",
       "kind": "data_flow"
     },
     {
       "id": "e3",
       "from": "line_pid",
       "to": "left_motor",
-      "from_port": "out",
-      "to_port": "in",
-      "kind": "data_flow"
+      "from_port": "algorithm",
+      "to_port": "control",
+      "kind": "control_flow"
     },
     {
       "id": "e4",
       "from": "line_pid",
       "to": "right_motor",
-      "from_port": "out",
-      "to_port": "in",
-      "kind": "data_flow"
+      "from_port": "algorithm",
+      "to_port": "control",
+      "kind": "control_flow"
     },
     {
       "id": "e5",
       "from": "battery_sensor",
       "to": "publish_battery",
-      "from_port": "out",
+      "from_port": "event_source",
       "to_port": "event_source",
-      "kind": "data_flow"
-    },
-    {
-      "id": "e6",
-      "from": "ultrasonic",
-      "to": "state_tracking",
-      "from_port": "out",
-      "to_port": "sensor",
       "kind": "data_flow"
     },
     {
       "id": "e7",
       "from": "ultrasonic",
       "to": "distance_processor",
-      "from_port": "out",
+      "from_port": "sensor",
       "to_port": "sensor",
       "kind": "data_flow"
     },
@@ -410,9 +402,9 @@
       "id": "e8",
       "from": "distance_processor",
       "to": "status_led",
-      "from_port": "out",
-      "to_port": "in",
-      "kind": "data_flow"
+      "from_port": "processor",
+      "to_port": "control",
+      "kind": "control_flow"
     }
   ],
   "flows": [
@@ -458,6 +450,10 @@
     {
       "path": "board_adapters/stm32f1_hal.c",
       "content": "/**\n * @file    stm32f1_hal.c\n * @brief   STM32F1 HAL适配层\n *\n * 本文件包含STM32F1特定的硬件操作实现。\n * 用户需要根据实际硬件连接修改以下函数。\n */\n\n#include \"efw/efw.h\"\n#include \"app_board_config.h\"\n\n/* STM32 HAL头文件 */\n/* #include \"stm32f1xx_hal.h\" */\n\n/* ========================================================================\n *  GPIO操作\n * ======================================================================== */\n\n/*\n * 根据APP_PINPLAN_xxx宏定义实现GPIO读写\n * \n * 示例:\n * HAL_GPIO_ReadPin(GPIOA, GPIO_PIN_0)\n * HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, GPIO_PIN_SET)\n */\n\n/* ========================================================================\n *  PWM操作\n * ======================================================================== */\n\n/*\n * 根据APP_PINPLAN_xxx_PWM宏定义实现PWM输出\n *\n * 示例:\n * __HAL_TIM_SET_COMPARE(&htim1, TIM_CHANNEL_1, duty_cycle)\n */\n\n/* ========================================================================\n *  ADC操作\n * ======================================================================== */\n\n/*\n * 实现ADC采集用于电池电压检测\n *\n * 示例:\n * HAL_ADC_Start(&hadc1);\n * HAL_ADC_PollForConversion(&hadc1, 100);\n * uint32_t adc_value = HAL_ADC_GetValue(&hadc1);\n */\n\n/* ========================================================================\n *  超声波操作\n * ======================================================================== */\n\n/*\n * 实现HC-SR04超声波测距\n *\n * 1. TRIG引脚输出10us高电平\n * 2. 测量ECHO引脚高电平持续时间\n * 3. 计算距离: distance_cm = time_us / 58.0f\n */\n"
+    },
+    {
+      "path": "board_adapters/efw_required_io.c",
+      "content": "#include \"efw/efw.h\"\n#include \"app_board_config.h\"\n\nefw_status_t app_board_read_line_input(const app_gpio_pin_t *pins, uint8_t count, efw_line_tracking_data_t *out) {\n    EFW_UNUSED(pins);\n    EFW_UNUSED(count);\n    EFW_UNUSED(out);\n    return EFW_ERR_UNSUPPORTED;\n}\n\nefw_status_t app_board_write_motor(app_pwm_channel_t pwm, app_gpio_pin_t dir_pin, const efw_motor_cmd_t *cmd) {\n    EFW_UNUSED(pwm);\n    EFW_UNUSED(dir_pin);\n    EFW_UNUSED(cmd);\n    return EFW_ERR_UNSUPPORTED;\n}\n"
     }
   ],
   "ui": {

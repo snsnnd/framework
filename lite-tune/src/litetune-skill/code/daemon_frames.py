@@ -55,6 +55,8 @@ class LiteTuneSerialProtocol(asyncio.Protocol):
 
     def data_received(self, data: bytes) -> None:
         self.buf.extend(data)
+        # Log raw RX for debugging
+        asyncio.ensure_future(log_event(self.state, "local", "RAW_RX", {"hex": data.hex()[:256], "len": len(data)}))
         while True:
             try:
                 idx = self.buf.index(0)
@@ -295,7 +297,16 @@ async def schema_discovery(state: DaemonState) -> dict[str, Any]:
         state.active_schema = None
         state.latest_discover_status = None
         await set_state(state, "discovering")
-        frame = RawFrame(TYPE_IDS["DISCOVER"], state.allocate_frame_id(), build_discover_payload(state.host_max_decoded_frame, state.requested_features, state.response_timeout_ms, state.host_name))
+        frame = RawFrame(
+            TYPE_IDS["DISCOVER"],
+            state.allocate_frame_id(),
+            build_discover_payload(
+                state.host_max_decoded_frame,
+                state.requested_features,
+                state.response_timeout_ms,
+                state.host_name,
+            ),
+        )
         await log_event(state, "local", "DISCOVER", {"frame_id": hex64(frame.frame_id)})
         await state.tx_queue.put(frame)
         deadline = time.monotonic() + state.schema_timeout_s

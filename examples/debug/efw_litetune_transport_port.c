@@ -49,6 +49,7 @@ static efw_status_t app_debug_transport_write_bytes(const uint8_t *data, uint16_
 
 static efw_status_t app_debug_litetune_send(const void *data, uint16_t len)
 {
+    /* This example uses a blocking write, so EFW completes TX on return. */
     return app_debug_transport_write_bytes((const uint8_t *)data, len);
 }
 
@@ -60,6 +61,7 @@ efw_status_t app_debug_transport_start(const char *device_name, uint16_t telemet
         .device_name = device_name ? device_name : "efw-board",
         .features = 0,
         .telemetry_period_ms = telemetry_period_ms,
+        .send_mode = EFW_DEBUG_LITETUNE_SEND_SYNC,
     };
 
     return efw_debug_litetune_init(&config);
@@ -69,6 +71,9 @@ void app_debug_transport_on_rx(const uint8_t *data, uint16_t len)
 {
     (void)efw_debug_litetune_rx(data, len);
 }
+
+/* For a DMA/interrupt transport, configure EFW_DEBUG_LITETUNE_SEND_ASYNC and
+ * call efw_debug_litetune_tx_complete() from the TX-complete callback. */
 
 void app_debug_transport_poll_1ms(uint16_t telemetry_period_ms)
 {

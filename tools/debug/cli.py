@@ -15,19 +15,14 @@ from __future__ import annotations
 
 import argparse
 import json
-import signal
 import sys
-import time
-from datetime import datetime, timezone
-from pathlib import Path
-from typing import Any
 
 
 def cmd_ports(args: argparse.Namespace) -> int:
     """列出可用串口"""
-    from .collector import list_serial_ports
-    
-    ports = list_serial_ports()
+    from tools.api import device as device_api
+
+    ports = device_api.list_device_ports()
     
     if not ports:
         print("未找到串口设备")
@@ -42,16 +37,13 @@ def cmd_ports(args: argparse.Namespace) -> int:
 
 def cmd_snapshot(args: argparse.Namespace) -> int:
     """读取单次快照"""
-    from .collector import DebugCollector
-    
     try:
-        with DebugCollector(port=args.port, baud=args.baud) as collector:
-            snapshot = collector.read_snapshot()
-            
-            if args.pretty:
-                print(json.dumps(snapshot, indent=2, ensure_ascii=False))
-            else:
-                print(json.dumps(snapshot, ensure_ascii=False))
+        from tools.api import device as device_api
+        snapshot = device_api.snapshot_device(port=args.port, baud=args.baud)
+        if args.pretty:
+            print(json.dumps(snapshot, indent=2, ensure_ascii=False))
+        else:
+            print(json.dumps(snapshot, ensure_ascii=False))
         
         return 0
     except Exception as e:
@@ -61,16 +53,13 @@ def cmd_snapshot(args: argparse.Namespace) -> int:
 
 def cmd_schema(args: argparse.Namespace) -> int:
     """获取 MCU schema"""
-    from .collector import DebugCollector
-    
     try:
-        with DebugCollector(port=args.port, baud=args.baud) as collector:
-            schema = collector.get_schema()
-            
-            if args.pretty:
-                print(json.dumps(schema, indent=2, ensure_ascii=False))
-            else:
-                print(json.dumps(schema, ensure_ascii=False))
+        from tools.api import device as device_api
+        schema = device_api.read_device_schema(port=args.port, baud=args.baud)
+        if args.pretty:
+            print(json.dumps(schema, indent=2, ensure_ascii=False))
+        else:
+            print(json.dumps(schema, ensure_ascii=False))
         
         return 0
     except Exception as e:
@@ -80,15 +69,12 @@ def cmd_schema(args: argparse.Namespace) -> int:
 
 def cmd_list_points(args: argparse.Namespace) -> int:
     """列出调试监控点"""
-    from .collector import DebugCollector
-    
     try:
-        with DebugCollector(port=args.port, baud=args.baud) as collector:
-            points = collector.read_debug_points()
-            
-            print(f"找到 {len(points)} 个调试监控点:")
-            for p in points:
-                print(f"  {p['name']:<30} type={p['type']:<8} id=0x{p['param_id']:04X}")
+        from tools.api import device as device_api
+        points = device_api.read_debug_points(port=args.port, baud=args.baud)
+        print(f"找到 {len(points)} 个调试监控点:")
+        for p in points:
+            print(f"  {p['name']:<30} type={p['type']:<8} id=0x{p['param_id']:04X}")
         
         return 0
     except Exception as e:
@@ -98,15 +84,28 @@ def cmd_list_points(args: argparse.Namespace) -> int:
 
 def cmd_stats(args: argparse.Namespace) -> int:
     """读取 EFW debug 模块统计"""
-    from .collector import DebugCollector
-
     try:
-        with DebugCollector(port=args.port, baud=args.baud) as collector:
-            stats = collector.read_debug_stats()
-            if args.pretty:
-                print(json.dumps(stats, indent=2, ensure_ascii=False))
-            else:
-                print(json.dumps(stats, ensure_ascii=False))
+        from tools.api import device as device_api
+        stats = device_api.read_debug_stats(port=args.port, baud=args.baud)
+        if args.pretty:
+            print(json.dumps(stats, indent=2, ensure_ascii=False))
+        else:
+            print(json.dumps(stats, ensure_ascii=False))
+        return 0
+    except Exception as e:
+        print(f"错误: {e}", file=sys.stderr)
+        return 1
+
+
+def cmd_perf(args: argparse.Namespace) -> int:
+    """读取 EFW debug/LiteTune 性能指标"""
+    try:
+        from tools.api import device as device_api
+        perf = device_api.read_debug_perf(port=args.port, baud=args.baud)
+        if args.pretty:
+            print(json.dumps(perf, indent=2, ensure_ascii=False))
+        else:
+            print(json.dumps(perf, ensure_ascii=False))
         return 0
     except Exception as e:
         print(f"错误: {e}", file=sys.stderr)
@@ -115,78 +114,26 @@ def cmd_stats(args: argparse.Namespace) -> int:
 
 def cmd_record(args: argparse.Namespace) -> int:
     """持续记录数据"""
-    from .collector import DebugCollector
-    from .comparator import DebugComparator
-    from .recorder import RecordingSession
-    
     try:
-        # 创建采集器
-        collector = DebugCollector(port=args.port, baud=args.baud)
-        collector.connect()
-        
-        # 创建比对器（如果指定了预期配置）
-        comparator = None
+        from tools.api import device as device_api
         if args.expected:
-            comparator = DebugComparator.from_file(args.expected)
             print(f"已加载预期配置: {args.expected}")
-        
-        # 创建记录会话
-        with RecordingSession(
-            args.output,
-            comparator=comparator,
-            auto_compare=bool(comparator),
-        ) as session:
-            print(f"开始记录到: {args.output}")
-            print("按 Ctrl+C 停止记录...")
-            
-            # 设置信号处理
-            stop = False
-            def signal_handler(sig, frame):
-                nonlocal stop
-                stop = True
-            
-            signal.signal(signal.SIGINT, signal_handler)
-            
-            # 记录循环
-            interval = args.interval / 1000.0
-            count = 0
-            
-            while not stop:
-                try:
-                    snapshot = collector.read_snapshot()
-                    issues = session.process(snapshot)
-                    count += 1
-                    
-                    # 实时显示
-                    if args.verbose:
-                        params = snapshot.get("params", {})
-                        print(f"[{count}] {len(params)} params", end="")
-                        if issues:
-                            print(f", {len(issues)} issues", end="")
-                        print()
-                    
-                    if issues and args.show_issues:
-                        for issue in issues:
-                            print(f"  ⚠ {issue['name']}: {issue['detail']}")
-                    
-                    time.sleep(interval)
-                    
-                    # 检查最大数量
-                    if args.max_count and count >= args.max_count:
-                        break
-                
-                except Exception as e:
-                    print(f"采集错误: {e}", file=sys.stderr)
-                    time.sleep(1)
-            
-            # 停止并显示统计
-            stats = session.stop()
-            print(f"\n记录完成:")
-            print(f"  快照数: {stats.get('total_snapshots', 0)}")
-            print(f"  问题数: {stats.get('total_issues', 0)}")
-            print(f"  输出文件: {args.output}")
-        
-        collector.disconnect()
+        print(f"开始记录到: {args.output}")
+        print("按 Ctrl+C 停止记录...")
+        stats = device_api.record_device_count(
+            port=args.port,
+            baud=args.baud,
+            output=args.output,
+            interval_ms=args.interval,
+            max_count=args.max_count,
+            expected=args.expected,
+            verbose=args.verbose,
+            show_issues=args.show_issues,
+        )
+        print("\n记录完成:")
+        print(f"  快照数: {stats.get('total_snapshots', stats.get('sample_count', 0))}")
+        print(f"  问题数: {stats.get('total_issues', 0)}")
+        print(f"  输出文件: {args.output}")
         return 0
     
     except Exception as e:
@@ -223,46 +170,16 @@ def cmd_compare(args: argparse.Namespace) -> int:
 
 def cmd_analyze(args: argparse.Namespace) -> int:
     """分析记录文件"""
-    from .analyzer import DebugAnalyzer
-    
     try:
-        analyzer = DebugAnalyzer(args.log_file)
-        
-        if args.action == "summary":
-            analyzer.print_summary()
-        
-        elif args.action == "issues":
-            issues = analyzer.find_all_issues()
-            if args.param:
-                issues = [i for i in issues if i.get("name") == args.param]
-            
-            for issue in issues[:args.limit]:
-                print(json.dumps(issue, ensure_ascii=False))
-        
+        from tools.api import device as device_api
+        result = device_api.analyze_recording(args.log_file, action=args.action, param=args.param, output=args.output, limit=args.limit)
+        if args.action in {"issues", "anomalies"}:
+            for item in result:
+                print(json.dumps(item, ensure_ascii=False))
         elif args.action == "stats":
-            if args.param:
-                stats = analyzer.get_param_stats(args.param)
-            else:
-                stats = analyzer.get_all_param_stats()
-            
-            print(json.dumps(stats, indent=2, ensure_ascii=False))
-        
+            print(json.dumps(result, indent=2, ensure_ascii=False))
         elif args.action == "export":
-            if not args.output:
-                print("导出操作需要 --output 参数", file=sys.stderr)
-                return 1
-            
-            analyzer.export_csv(args.output, params=[args.param] if args.param else None)
-            print(f"已导出到: {args.output}")
-        
-        elif args.action == "anomalies":
-            if not args.param:
-                print("异常检测需要 --param 参数", file=sys.stderr)
-                return 1
-            
-            anomalies = analyzer.find_anomalies(args.param)
-            for a in anomalies[:args.limit]:
-                print(json.dumps(a, ensure_ascii=False))
+            print(f"已导出到: {result['output']}")
         
         return 0
     
@@ -284,10 +201,9 @@ def cmd_panel(args: argparse.Namespace) -> int:
 
 def cmd_transport_template(args: argparse.Namespace) -> int:
     """安装调试协议传输适配模板"""
-    from .transport import install_transport_template
-
     try:
-        result = install_transport_template(args.output, protocol=args.protocol, transport=args.transport, force=args.force)
+        from tools.api import device as device_api
+        result = device_api.install_debug_transport_template(args.output, protocol=args.protocol, transport=args.transport, force=args.force)
         print(f"已生成 {result.protocol}({result.transport}) 传输适配文件: {result.output}")
         print("只需要修改其中的 app_debug_transport_write_bytes() 绑定 UART/USB CDC。")
         return 0
@@ -335,6 +251,13 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--baud", type=int, default=115200, help="波特率")
     p.add_argument("--pretty", action="store_true", help="美化输出")
     p.set_defaults(func=cmd_stats)
+
+    # perf 命令
+    p = subparsers.add_parser("perf", help="读取 EFW debug/LiteTune 性能指标")
+    p.add_argument("--port", required=True, help="串口设备路径")
+    p.add_argument("--baud", type=int, default=115200, help="波特率")
+    p.add_argument("--pretty", action="store_true", help="美化输出")
+    p.set_defaults(func=cmd_perf)
     
     # record 命令
     p = subparsers.add_parser("record", help="持续记录数据")

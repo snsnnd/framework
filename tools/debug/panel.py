@@ -205,10 +205,10 @@ class DebugPanel(QWidget):
     
     def refresh_ports(self):
         """刷新串口列表"""
-        from .collector import list_serial_ports
-        
+        from tools.api import device as device_api
+
         self.port_combo.clear()
-        ports = list_serial_ports()
+        ports = device_api.list_device_ports()
         for p in ports:
             self.port_combo.addItem(p["device"])
         
@@ -226,8 +226,8 @@ class DebugPanel(QWidget):
     
     def connect(self):
         """连接到 MCU"""
-        from .collector import DebugCollector
-        
+        from tools.api import device as device_api
+
         port = self.port_combo.currentText()
         baud = self.baud_spin.value()
         
@@ -239,8 +239,7 @@ class DebugPanel(QWidget):
             self.status_bar.showMessage("正在连接...")
             self.repaint()
             
-            self.collector = DebugCollector(port=port, baud=baud)
-            self.collector.connect()
+            self.collector = device_api.open_device_session(port=port, baud=baud)
             
             # 启动数据采集线程
             self.collection_thread = DataCollectionThread(self.collector, interval_ms=100)
@@ -308,7 +307,7 @@ class DebugPanel(QWidget):
         
         # 记录
         if self.recorder:
-            self.recorder.record(snapshot)
+            self.recorder.record_snapshot(snapshot)
             for issue in issues:
                 self.recorder.record_issue(issue)
         
@@ -417,8 +416,8 @@ class DebugPanel(QWidget):
     
     def start_recording(self):
         """开始记录"""
-        from .recorder import DebugRecorder
-        
+        from tools.api import device as device_api
+
         # 选择保存路径
         default_name = f"debug_{datetime.now().strftime('%Y%m%d_%H%M%S')}.jsonl"
         path, _ = QFileDialog.getSaveFileName(
@@ -428,8 +427,7 @@ class DebugPanel(QWidget):
         if not path:
             return
         
-        self.recorder = DebugRecorder(path)
-        self.recorder.start()
+        self.recorder = device_api.start_debug_recording(path)
         
         self.record_btn.setText("停止记录")
         self.status_bar.showMessage(f"记录中: {path}")

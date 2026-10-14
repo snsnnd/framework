@@ -26,6 +26,7 @@ class MCUType(str, Enum):
     STM32F103 = "STM32F103"  # Cortex-M3, 72MHz
     STM32F407 = "STM32F407"  # Cortex-M4, 168MHz
     STM32F411 = "STM32F411"  # Cortex-M4, 100MHz
+    STM32G431 = "STM32G431"  # Cortex-M4F, 170MHz (CT117E-M4 Lanqiao board)
     ESP32 = "ESP32"          # Xtensa LX6, 240MHz
 
 
@@ -214,7 +215,7 @@ class MCUSimulator:
         elif "F4" in family:
             mcu_type = MCUType.STM32F407
         elif "G4" in family:
-            mcu_type = MCUType.STM32F411  # 使用 F411 作为替代
+            mcu_type = MCUType.STM32G431
         else:
             mcu_type = MCUType.STM32F407
         

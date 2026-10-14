@@ -33,15 +33,35 @@ class CodegenSnapshotTest(unittest.TestCase):
         main_c = files["main.c"]
 
         self.assertIn("efw_status_t app_main(void);", bootstrap_h)
-        self.assertIn("efw_status_t app_dispatch_event(const char *event_name, uint16_t topic_id, const void *data, uint16_t size);", bootstrap_h)
+        self.assertIn("efw_status_t app_post_event(const char *event_name, uint16_t topic_id, const void *data, uint16_t size);", bootstrap_h)
         self.assertIn("efw_status_t app_publish_publish_battery_value(float value);", bootstrap_h)
         self.assertIn("app_process_event_queue", bootstrap_c)
         self.assertIn("app_update_1ms", bootstrap_c)
+        self.assertIn('    .name = "task/battery_sample_20ms"', bootstrap_c)
+        self.assertIn('    .name = "task/heartbeat_100ms"', bootstrap_c)
+        self.assertIn('    .name = "app/tail"', bootstrap_c)
+        self.assertIn("efw_scheduler_register(&g_app_scheduler_task_battery_sample_20ms_task)", bootstrap_c)
+        self.assertIn("efw_scheduler_register(&g_app_scheduler_task_heartbeat_100ms_task)", bootstrap_c)
+        self.assertIn("efw_scheduler_register(&g_app_scheduler_tail_task)", bootstrap_c)
+        self.assertIn("return efw_scheduler_tick(app_elapsed_ms());", bootstrap_c)
+        self.assertNotIn("app_elapsed_ms() %", bootstrap_c)
         self.assertIn("app_publish_publish_battery_auto", bootstrap_c)
         self.assertIn("app_components_register", components_c)
         self.assertIn("app_platform_register", platform_c)
         self.assertIn("APP_TOPIC_TOPIC_BATTERY", manifest_h)
         self.assertIn("app_poll_forever", main_c)
+        self.assertIn("if (app_board_init() != EFW_OK)", main_c)
+
+    def test_board_init_is_called_when_board_adapter_implements_it(self) -> None:
+        graph = self.load_graph("examples/graphs/generic_embedded_app.json")
+        graph["board_adapters"] = [{
+            "path": "board_adapter.c",
+            "content": '#include "efw/efw.h"\nefw_status_t app_board_init(void) { return EFW_OK; }\n',
+        }]
+        main_c = self.render_graph(graph)["main.c"]
+        self.assertIn("extern efw_status_t app_board_init(void);", main_c)
+        self.assertIn("if (app_board_init() != EFW_OK)", main_c)
+        self.assertEqual(main_c.count("if (app_init() != EFW_OK)"), 1)
 
     def test_runtime_summary_values_for_generic_embedded_app(self) -> None:
         ctx = validate_graph(self.load_graph("examples/graphs/generic_embedded_app.json"))
@@ -50,7 +70,7 @@ class CodegenSnapshotTest(unittest.TestCase):
         self.assertEqual(len(summary["publishers"]), 1)
         publisher = summary["publishers"][0]
         self.assertEqual(publisher["id"], "publish_battery")
-        self.assertEqual(publisher["mode"], "expr/size")
+        self.assertEqual(publisher["mode"], "source-auto")
         self.assertEqual(publisher["stage"], "module.poll")
         self.assertEqual(publisher["source_kind"], "sensor.custom")
         self.assertEqual(publisher["payload_c_type"], "float")
@@ -59,6 +79,23 @@ class CodegenSnapshotTest(unittest.TestCase):
         self.assertEqual(project_module["module_id"], "system_core")
         self.assertEqual(len(project_module["publishers"]), 1)
         self.assertEqual(len(project_module["state_machines"]), 0)
+
+    def test_scheduler_registration_preserves_release_order(self) -> None:
+        files = self.render_graph(self.load_graph("examples/graphs/line_tracking_car_with_custom_code.json"))
+        bootstrap_c = files["app_bootstrap.c"]
+
+        flow = bootstrap_c.index("efw_scheduler_register(&g_app_scheduler_flow_line_follower_task)")
+        task_10ms = bootstrap_c.index("efw_scheduler_register(&g_app_scheduler_task_custom_task_10ms_task)")
+        task_20ms = bootstrap_c.index("efw_scheduler_register(&g_app_scheduler_task_battery_service_20ms_task)")
+        tail = bootstrap_c.index("efw_scheduler_register(&g_app_scheduler_tail_task)")
+        self.assertLess(flow, task_20ms)
+        self.assertLess(task_20ms, task_10ms)
+        self.assertLess(task_10ms, tail)
+        self.assertIn('    .name = "flow/line_follower"', bootstrap_c)
+        self.assertIn('    .name = "task/custom_task_10ms"', bootstrap_c)
+        self.assertIn('    .name = "task/battery_service_20ms"', bootstrap_c)
+        self.assertIn('    .name = "app/tail"', bootstrap_c)
+        self.assertNotIn("app_elapsed_ms() %", bootstrap_c)
 
     def test_state_machine_runtime_surfaces(self) -> None:
         graph = {
@@ -93,6 +130,9 @@ class CodegenSnapshotTest(unittest.TestCase):
         self.assertIn("app_sm_root_state_machine_main_transition_to", bootstrap_c)
         self.assertIn("app_bootstrap_event_matches", bootstrap_c)
         self.assertIn("topic:root__topic__start_evt", bootstrap_c)
+        self.assertIn("static efw_sm_context_t g_root_state_machine_main_sm;", bootstrap_c)
+        self.assertIn("efw_sm_init(&g_root_state_machine_main_sm", bootstrap_c)
+        self.assertIn("efw_sm_register(&g_root_state_machine_main_sm)", bootstrap_c)
 
     def test_module_source_auto_publish_surfaces(self) -> None:
         graph = {
@@ -142,7 +182,7 @@ class CodegenSnapshotTest(unittest.TestCase):
             "custom_files": [{
                 "path": "app_custom.c",
                 "content": '#include "efw/efw.h"\n'
-                           'efw_status_t app_read_sensor(void *ctx, void *out){EFW_UNUSED(ctx); if(out) *(float*)out = 1.0f; return EFW_OK;}\n'
+                           'efw_status_t app_read_sensor(void *ctx, void *out, uint16_t out_size){EFW_UNUSED(ctx); EFW_UNUSED(out_size); if(out) *(float*)out = 1.0f; return EFW_OK;}\n'
                            'efw_status_t app_process(void *ctx, const efw_app_multi_input_t *in, void *out){const efw_app_input_view_t *sensor = efw_app_multi_input_get(in, "sensor"); EFW_UNUSED(ctx); if(sensor && sensor->data && out) *(float*)out = *(const float*)sensor->data; return EFW_OK;}\n'
             }],
             "ui": {"positions": {}},
@@ -174,7 +214,7 @@ class CodegenSnapshotTest(unittest.TestCase):
             "custom_files": [{
                 "path": "app_custom.c",
                 "content": '#include "efw/efw.h"\n'
-                           'efw_status_t app_read_sensor(void *ctx, void *out){EFW_UNUSED(ctx); if(out) *(float*)out = 1.0f; return EFW_OK;}\n'
+                           'efw_status_t app_read_sensor(void *ctx, void *out, uint16_t out_size){EFW_UNUSED(ctx); EFW_UNUSED(out_size); if(out) *(float*)out = 1.0f; return EFW_OK;}\n'
                            'efw_status_t app_process(void *ctx, const efw_app_multi_input_t *in, void *out){EFW_UNUSED(ctx); EFW_UNUSED(in); EFW_UNUSED(out); return EFW_OK;}\n'
                            'void app_on_evt(uint16_t topic_id, const void *data, uint16_t size, void *user){EFW_UNUSED(topic_id); EFW_UNUSED(data); EFW_UNUSED(size); EFW_UNUSED(user);}\n'
             }],
@@ -224,7 +264,7 @@ class CodegenSnapshotTest(unittest.TestCase):
             "custom_files": [{
                 "path": "app_custom.c",
                 "content": '#include "efw/efw.h"\n'
-                           'efw_status_t app_read_sensor(void *ctx, void *out){EFW_UNUSED(ctx); if(out) *(float*)out = 1.0f; return EFW_OK;}\n'
+                           'efw_status_t app_read_sensor(void *ctx, void *out, uint16_t out_size){EFW_UNUSED(ctx); EFW_UNUSED(out_size); if(out) *(float*)out = 1.0f; return EFW_OK;}\n'
                            'efw_status_t app_process(void *ctx, const efw_app_multi_input_t *in, void *out){const efw_app_input_view_t *sensor = efw_app_multi_input_get(in, "sensor"); EFW_UNUSED(ctx); if(sensor && sensor->data && out) *(float*)out = *(const float*)sensor->data; return EFW_OK;}\n'
                            'efw_status_t app_run_algo(void *ctx, const efw_app_multi_input_t *in, void *out){const efw_app_input_view_t *processor = efw_app_multi_input_get(in, "processor"); EFW_UNUSED(ctx); if(processor && processor->data && out) *(float*)out = *(const float*)processor->data; return EFW_OK;}\n'
             }],
@@ -261,7 +301,8 @@ class CodegenSnapshotTest(unittest.TestCase):
         }
         files = self.render_graph(graph)
         self.assertIn("app_subscriber_sub_proxy", files["app_bootstrap.c"])
-        self.assertIn("app_cache_processor_proc_event(data, size);", files["app_bootstrap.c"])
+        self.assertIn("efw_topic_subscribe(5u, app_subscriber_sub_proxy, 0)", files["app_bootstrap.c"])
+        self.assertIn('app_processor_proc_run_port("event", data, size', files["app_bootstrap.c"])
 
     def test_module_custom_poll_uses_multi_input_bridge(self) -> None:
         graph = {
@@ -281,7 +322,7 @@ class CodegenSnapshotTest(unittest.TestCase):
             "custom_files": [{
                 "path": "app_custom.c",
                 "content": '#include "efw/efw.h"\n'
-                           'efw_status_t app_read_sensor(void *ctx, void *out){EFW_UNUSED(ctx); if(out) *(float*)out = 1.0f; return EFW_OK;}\n'
+                           'efw_status_t app_read_sensor(void *ctx, void *out, uint16_t out_size){EFW_UNUSED(ctx); EFW_UNUSED(out_size); if(out) *(float*)out = 1.0f; return EFW_OK;}\n'
                            'efw_status_t app_process(void *ctx, const efw_app_multi_input_t *in, void *out){const efw_app_input_view_t *sensor = efw_app_multi_input_get(in, "sensor"); EFW_UNUSED(ctx); if(sensor && sensor->data && out) *(float*)out = *(const float*)sensor->data; return EFW_OK;}\n'
                            'efw_status_t app_poll_module(void *ctx, const efw_app_multi_input_t *in){const efw_app_input_view_t *module_input = efw_app_multi_input_get(in, "module_input"); EFW_UNUSED(ctx); EFW_UNUSED(module_input); return EFW_OK;}\n'
             }],
@@ -289,7 +330,6 @@ class CodegenSnapshotTest(unittest.TestCase):
         }
         files = self.render_graph(graph)
         self.assertIn("app_module_mod_poll_bridge", files["app_bootstrap.c"])
-        self.assertIn("app_cache_module_mod_module_input", files["app_bootstrap.c"])
         self.assertIn(".poll = app_module_mod_poll_bridge", files["app_components.c"])
 
     def test_subscriber_targeting_algorithm_triggers_event_runtime(self) -> None:
@@ -313,15 +353,14 @@ class CodegenSnapshotTest(unittest.TestCase):
                 "path": "app_custom.c",
                 "content": '#include "efw/efw.h"\n'
                            'efw_status_t app_run_algo(void *ctx, const efw_app_multi_input_t *in, void *out){EFW_UNUSED(ctx); EFW_UNUSED(in); if(out) *(float*)out = 1.0f; return EFW_OK;}\n'
-                           'efw_status_t app_write_motor(void *ctx, const void *cmd){EFW_UNUSED(ctx); EFW_UNUSED(cmd); return EFW_OK;}\n'
+                           'efw_status_t app_write_motor(void *ctx, const void *cmd, uint16_t cmd_size){EFW_UNUSED(ctx); EFW_UNUSED(cmd); EFW_UNUSED(cmd_size); return EFW_OK;}\n'
                            'void app_on_evt(uint16_t topic_id, const void *data, uint16_t size, void *user){EFW_UNUSED(topic_id); EFW_UNUSED(data); EFW_UNUSED(size); EFW_UNUSED(user);}\n'
             }],
             "ui": {"positions": {}},
         }
         files = self.render_graph(graph)
-        self.assertIn("app_subscriber_sub_proxy", files["app_bootstrap.c"])
-        self.assertIn("app_cache_algorithm_algo_event(data, size);", files["app_bootstrap.c"])
-        self.assertIn("app_algorithm_algo_trigger_event", files["app_bootstrap.c"])
+        self.assertIn("efw_topic_subscribe(6u, app_subscriber_sub_proxy, 0)", files["app_bootstrap.c"])
+        self.assertIn("app_algorithm_algo_dispatch", files["app_bootstrap.c"])
 
     def test_module_custom_event_can_optionally_trigger_poll_immediately(self) -> None:
         graph = {
@@ -347,8 +386,8 @@ class CodegenSnapshotTest(unittest.TestCase):
             "ui": {"positions": {}},
         }
         files = self.render_graph(graph)
-        self.assertIn("app_cache_module_mod_event(data, size);", files["app_bootstrap.c"])
-        self.assertIn("app_record_immediate_status(\"module:mod\", \"event\", s);", files["app_bootstrap.c"])
+        self.assertIn("app_module_mod_poll_bridge", files["app_bootstrap.c"])
+        self.assertIn(".poll = app_module_mod_poll_bridge", files["app_components.c"])
 
     def test_event_contract_mismatch_is_rejected(self) -> None:
         graph = {
@@ -400,8 +439,8 @@ class CodegenSnapshotTest(unittest.TestCase):
             "ui": {"positions": {}},
         }
         files = self.render_graph(graph)
-        self.assertIn("app_last_immediate_status", files["app_bootstrap.h"])
-        self.assertIn("app_record_immediate_status", files["app_bootstrap.c"])
+        self.assertIn("app_process_event_queue", files["app_bootstrap.h"])
+        self.assertIn("app_dispatch_event_fn", files["app_bootstrap.c"])
 
     def test_processor_mapping_only_generates_struct_mapping(self) -> None:
         graph = {
@@ -441,7 +480,7 @@ class CodegenSnapshotTest(unittest.TestCase):
             "custom_files": [{
                 "path": "app_custom.c",
                 "content": '#include "efw/efw.h"\n'
-                           'efw_status_t app_read_sensor(void *ctx, void *out){EFW_UNUSED(ctx); if(out) *(float*)out = 2.0f; return EFW_OK;}\n'
+                           'efw_status_t app_read_sensor(void *ctx, void *out, uint16_t out_size){EFW_UNUSED(ctx); EFW_UNUSED(out_size); if(out) *(float*)out = 2.0f; return EFW_OK;}\n'
             }],
             "ui": {"positions": {}},
         }
@@ -483,7 +522,7 @@ class CodegenSnapshotTest(unittest.TestCase):
             "custom_files": [{
                 "path": "app_custom.c",
                 "content": '#include "efw/efw.h"\n'
-                           'efw_status_t app_read_sensor(void *ctx, void *out){EFW_UNUSED(ctx); if(out) *(float*)out = 2.0f; return EFW_OK;}\n'
+                           'efw_status_t app_read_sensor(void *ctx, void *out, uint16_t out_size){EFW_UNUSED(ctx); EFW_UNUSED(out_size); if(out) *(float*)out = 2.0f; return EFW_OK;}\n'
                            'efw_status_t app_process(void *ctx, const efw_app_multi_input_t *in, void *out){EFW_UNUSED(ctx); EFW_UNUSED(in); EFW_UNUSED(out); return EFW_OK;}\n'
             }],
             "ui": {"positions": {}},
@@ -491,7 +530,7 @@ class CodegenSnapshotTest(unittest.TestCase):
         files = self.render_graph(graph)
         bootstrap_c = files["app_bootstrap.c"]
         self.assertIn("app_processor_proc_apply_mapping(&multi, out)", bootstrap_c)
-        self.assertIn("return app_process(ctx ? ctx : 0, &multi, out);", bootstrap_c)
+        self.assertIn("return app_process(0, &multi, out);", bootstrap_c)
 
     def test_algorithm_mapping_only_generates_output_mapping(self) -> None:
         graph = {
@@ -525,7 +564,7 @@ class CodegenSnapshotTest(unittest.TestCase):
             "custom_files": [{
                 "path": "app_custom.c",
                 "content": '#include "efw/efw.h"\n'
-                           'efw_status_t app_read_sensor(void *ctx, void *out){EFW_UNUSED(ctx); if(out) *(float*)out = 3.0f; return EFW_OK;}\n'
+                           'efw_status_t app_read_sensor(void *ctx, void *out, uint16_t out_size){EFW_UNUSED(ctx); EFW_UNUSED(out_size); if(out) *(float*)out = 3.0f; return EFW_OK;}\n'
             }],
             "ui": {"positions": {}},
         }
@@ -566,7 +605,7 @@ class CodegenSnapshotTest(unittest.TestCase):
             "custom_files": [{
                 "path": "app_custom.c",
                 "content": '#include "efw/efw.h"\n'
-                           'efw_status_t app_read_sensor(void *ctx, void *out){EFW_UNUSED(ctx); if(out) *(float*)out = 3.0f; return EFW_OK;}\n'
+                           'efw_status_t app_read_sensor(void *ctx, void *out, uint16_t out_size){EFW_UNUSED(ctx); EFW_UNUSED(out_size); if(out) *(float*)out = 3.0f; return EFW_OK;}\n'
                            'efw_status_t app_run_algo(void *ctx, const efw_app_multi_input_t *in, void *out){EFW_UNUSED(ctx); EFW_UNUSED(in); EFW_UNUSED(out); return EFW_OK;}\n'
             }],
             "ui": {"positions": {}},
@@ -609,7 +648,7 @@ class CodegenSnapshotTest(unittest.TestCase):
             "custom_files": [{
                 "path": "app_custom.c",
                 "content": '#include "efw/efw.h"\n'
-                           'efw_status_t app_read_sensor(void *ctx, void *out){EFW_UNUSED(ctx); if(out) *(float*)out = 4.0f; return EFW_OK;}\n'
+                           'efw_status_t app_read_sensor(void *ctx, void *out, uint16_t out_size){EFW_UNUSED(ctx); EFW_UNUSED(out_size); if(out) *(float*)out = 4.0f; return EFW_OK;}\n'
                            'efw_status_t app_poll_module(void *ctx, const efw_app_multi_input_t *in){EFW_UNUSED(ctx); EFW_UNUSED(in); return EFW_OK;}\n'
             }],
             "ui": {"positions": {}},
@@ -633,7 +672,7 @@ class CodegenSnapshotTest(unittest.TestCase):
             ],
             "flows": [],
             "tasks": [],
-            "custom_files": [{"path": "app_custom.c", "content": '#include "efw/efw.h"\nefw_status_t app_read_sensor(void *ctx, void *out){EFW_UNUSED(ctx); EFW_UNUSED(out); return EFW_OK;}\n'}],
+            "custom_files": [{"path": "app_custom.c", "content": '#include "efw/efw.h"\nefw_status_t app_read_sensor(void *ctx, void *out, uint16_t out_size){EFW_UNUSED(ctx); EFW_UNUSED(out); EFW_UNUSED(out_size); return EFW_OK;}\n'}],
             "ui": {"positions": {}},
         }
         files = self.render_graph(graph)

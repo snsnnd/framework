@@ -200,7 +200,7 @@ efw_status_t efw_sensor_register(const efw_sensor_ops_t *ops);
 按名称读取传感器数据。
 
 ```c
-efw_status_t efw_sensor_read(const char *name, void *out);
+efw_status_t efw_sensor_read(const char *name, void *out, uint16_t out_size);
 ```
 
 ### `efw_sensor_ops_t` 结构体
@@ -214,7 +214,7 @@ typedef struct {
     const char *comm_name;
     void *ctx;
     efw_status_t (*init)(void *ctx);
-    efw_status_t (*read)(void *ctx, void *out);
+    efw_status_t (*read)(void *ctx, void *out, uint16_t out_size);
 } efw_sensor_ops_t;
 ```
 
@@ -235,7 +235,7 @@ efw_status_t efw_actuator_register(const efw_actuator_ops_t *ops);
 ```c
 efw_status_t efw_actuator_enable(const char *name);
 efw_status_t efw_actuator_disable(const char *name);
-efw_status_t efw_actuator_write(const char *name, const void *cmd);
+efw_status_t efw_actuator_write(const char *name, const void *cmd, uint16_t cmd_size);
 ```
 
 ---
@@ -255,7 +255,8 @@ efw_status_t efw_algo_register(const efw_algo_ops_t *ops);
 按名称运行算法 = 查找 + 调用 run 回调。
 
 ```c
-efw_status_t efw_algo_run(const char *name, const void *in, void *out);
+efw_status_t efw_algo_run(const char *name, const void *in, uint16_t in_size,
+                          void *out, uint16_t out_size);
 ```
 
 ### `efw_algo_ops_t` 结构体
@@ -265,7 +266,8 @@ typedef struct {
     const char *name;
     efw_algo_type_t type;
     void *ctx;
-    efw_status_t (*run)(void *ctx, const void *in, void *out);
+    efw_status_t (*run)(void *ctx, const void *in, uint16_t in_size,
+                        void *out, uint16_t out_size);
 } efw_algo_ops_t;
 ```
 
@@ -281,7 +283,8 @@ typedef struct {
 } efw_pid_t;
 
 void efw_pid_reset(efw_pid_t *pid);
-efw_status_t efw_pid_run(void *ctx, const void *in, void *out);
+efw_status_t efw_pid_run(void *ctx, const void *in, uint16_t in_size,
+                         void *out, uint16_t out_size);
 ```
 
 ---
@@ -497,7 +500,7 @@ void app_loop(void) {
 
 ## 11. 调度器
 
-多周期任务调度器。注册任务时指定周期，tick 时自动执行到期任务。
+固定相位、协作式多周期任务调度器。任务按注册顺序执行；迟到时只执行一次并跳过已经过期的 release，下一次执行仍保持原周期相位，避免追赶风暴和永久漂移。
 
 ### `efw_scheduler_init()`
 
@@ -512,18 +515,24 @@ efw_status_t efw_scheduler_init(void);
 注册一个周期任务。
 
 ```c
-efw_status_t efw_scheduler_register(const efw_scheduler_task_t *task);
+efw_status_t efw_scheduler_register(const efw_scheduler_task_def_t *task);
+efw_status_t efw_scheduler_register_at(const efw_scheduler_task_def_t *task,
+                                       uint32_t first_release_ms);
 ```
 
 ### `efw_scheduler_tick()`
 
-主循环调用，执行所有到期任务。
+主循环调用，执行所有到期任务。正常 `uint32_t` 时间回绕安全，周期必须不大于 `INT32_MAX`。任务 callback 内不得注册、注销、暂停或恢复任务。
 
 ```c
 efw_status_t efw_scheduler_tick(uint32_t elapsed_ms);
 ```
 
-### `efw_scheduler_task_t` 结构体
+### 统计和高精度计时
+
+`efw_scheduler_get()` 或 `efw_scheduler_enumerate()` 可读取每个任务的 `run_count`、`missed_releases`、启动延迟、微秒运行时间和 overrun，累计计数达到 `UINT32_MAX` 后饱和。平台可在注册任务前通过 `efw_scheduler_set_time_providers()` 注入同一时间域的毫秒时钟和微秒计时器；任务存在时切换 provider 会返回 `EFW_ERR_NOT_READY`。未提供微秒时钟时，运行时间统计为 0。
+
+### `efw_scheduler_task_def_t` 结构体
 
 ```c
 typedef struct {
@@ -531,7 +540,7 @@ typedef struct {
     uint32_t period_ms;
     efw_task_fn_t fn;      // efw_status_t (*)(void *ctx)
     void *ctx;
-} efw_scheduler_task_t;
+} efw_scheduler_task_def_t;
 ```
 
 ### 示例
@@ -544,10 +553,11 @@ static efw_status_t read_sensors(void *ctx) {
 }
 
 static efw_status_t update_pid(void *ctx) {
-    return efw_algo_run("motor_pid", &pid_in, &pid_out);
+    return efw_algo_run("motor_pid", &pid_in, sizeof(pid_in),
+                        &pid_out, sizeof(pid_out));
 }
 
-static const efw_scheduler_task_t s_tasks[] = {
+static const efw_scheduler_task_def_t s_tasks[] = {
     { .name = "sensor_read", .period_ms = 10, .fn = read_sensors, .ctx = &sensor_data },
     { .name = "pid_update",  .period_ms = 1,  .fn = update_pid,  .ctx = 0 },
 };

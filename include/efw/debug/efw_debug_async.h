@@ -4,6 +4,7 @@
  *
  * 使用 DMA 或中断驱动实现后台数据传输，
  * 完全不阻塞主循环。
+ * 环形缓冲区为 SPSC：只能有一个 write 调用上下文和一个完成/消费上下文。
  *
  * 适用场景：
  *   - 高频率控制循环（1kHz+）
@@ -33,6 +34,28 @@ extern "C" {
 /** @brief 单次传输最大字节数 */
 #ifndef EFW_DEBUG_BATCH_SIZE
 #define EFW_DEBUG_BATCH_SIZE 64
+#endif
+
+/*
+ * 如果 write、flush、完成回调或状态查询可能互相抢占，请成对覆盖这两个宏。
+ * 平台实现必须保存并恢复进入临界区前的中断状态；默认空实现只适合调用已
+ * 被外部串行化的场景。
+ */
+#if defined(EFW_DEBUG_ASYNC_CRITICAL_ENTER) != defined(EFW_DEBUG_ASYNC_CRITICAL_EXIT)
+#error "Define both EFW_DEBUG_ASYNC_CRITICAL_ENTER and EFW_DEBUG_ASYNC_CRITICAL_EXIT"
+#endif
+#ifndef EFW_DEBUG_ASYNC_CRITICAL_ENTER
+#define EFW_DEBUG_ASYNC_CRITICAL_ENTER() do { } while (0)
+#define EFW_DEBUG_ASYNC_CRITICAL_EXIT()  do { } while (0)
+#endif
+
+/* 编译器或平台需要不同 ISR/DMA 内存屏障时可覆盖此宏。 */
+#ifndef EFW_DEBUG_ASYNC_MEMORY_BARRIER
+#if defined(__GNUC__) || defined(__clang__)
+#define EFW_DEBUG_ASYNC_MEMORY_BARRIER() __sync_synchronize()
+#else
+#define EFW_DEBUG_ASYNC_MEMORY_BARRIER() do { } while (0)
+#endif
 #endif
 
 /* ==================================================================
@@ -110,7 +133,7 @@ efw_status_t efw_debug_async_write(const void *data, uint16_t length);
  * 此函数应在定时器中断或 DMA 完成中断中调用
  * 如果当前有传输在进行，会跳过本次
  *
- * @return EFW_OK 成功，EFW_ERR_BUSY 传输忙
+ * @return EFW_OK 已启动、当前正忙或没有待发送数据；其他值表示 DMA 启动失败
  */
 efw_status_t efw_debug_async_flush(void);
 
@@ -122,7 +145,7 @@ efw_status_t efw_debug_async_flush(void);
 void efw_debug_async_tx_complete(void);
 
 /**
- * @��检查是否有待传输数据
+ * @brief 检查是否有待传输数据
  * @return 1 有数据，0 无数据
  */
 int efw_debug_async_has_data(void);
@@ -132,6 +155,12 @@ int efw_debug_async_has_data(void);
  * @return 使用百分比 (0-100)
  */
 uint8_t efw_debug_async_usage(void);
+
+/** @brief 复制当前异步传输统计信息。 */
+efw_status_t efw_debug_async_get_stats(uint32_t *bytes_written,
+                                       uint32_t *bytes_sent,
+                                       uint32_t *tx_count,
+                                       uint32_t *overflow_count);
 
 /* ==================================================================
  *  平台相关接口（需要用户实现）

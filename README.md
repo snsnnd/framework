@@ -135,7 +135,7 @@ python3 tools/efw.py studio
 ### 一次生成最终对外分发包
 
 ```bash
-python3 tools/package_release.py
+python3 packaging/package_release.py
 ```
 
 输出：
@@ -146,7 +146,7 @@ python3 tools/package_release.py
 ### 单独生成 Runtime SDK
 
 ```bash
-python3 tools/package_efw.py
+python3 packaging/package_efw.py
 ```
 
 输出：
@@ -158,7 +158,7 @@ python3 tools/package_efw.py
 如果仓库内已经存在 Windows `.venv/`（包含 `Scripts/python.exe` 和 PyQt 依赖），可以直接生成便携目录：
 
 ```bash
-python3 tools/package_studio_portable.py
+python3 packaging/package_studio_portable.py
 ```
 
 输出：
@@ -262,6 +262,8 @@ cmake --build build-min
 - 内置 PID 与滑动均值算法
 - 循迹便捷控制：`efw_line_tracking_follow_diff()` 一次完成读取、误差、PID、左右电机差速输出
 - STATE MACHINE 注册和查找
+- 固定相位协作式 Scheduler：迟到跳过、无追赶风暴、任务级 lateness/runtime/missed/overrun 统计
+- Graph 生成应用统一使用核心 Scheduler，不再维护独立的取模调度语义
 
 ## 示例
 - `application/line_tracking_car/`：基础 5 路循迹小车应用结构，拆分为平台适配、组件注册、应用逻辑和入口文件。
@@ -337,6 +339,8 @@ efw_topic_publish(1, &data, sizeof(data));
 ```
 
 当前内置竞赛算法包括 PID、滑动均值、低通滤波、斜坡限速、编码器测速和互补滤波姿态解算。
+
+调度器默认按注册顺序执行同一时刻到期的任务。平台可在注册任务前用 `efw_scheduler_set_time_providers()` 注入毫秒时钟和微秒计时器，并通过 `efw_scheduler_get()` 或 LiteTune scheduler trace 查看启动延迟、跳过周期、运行时间和 overrun。所有任务仍是协作式任务，callback 必须有界且不可阻塞。
 
 简单验证或低频脚本可以使用字符串便捷 API：
 

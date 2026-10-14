@@ -103,6 +103,7 @@ typedef struct {
 
 /** @brief 调试监控点遍历回调 */
 typedef void (*efw_debug_point_iter_fn)(const efw_debug_point_t *point, void *user);
+typedef void (*efw_debug_event_sink_fn)(const char *event, const char *name, const char *detail, void *user);
 
 /* ==================================================================
  *  核心 API
@@ -135,6 +136,9 @@ efw_status_t efw_debug_update(void);
  * @return EFW_OK 成功，其他值表示失败
  */
 efw_status_t efw_debug_get_stats(efw_debug_stats_t *stats);
+void efw_debug_set_event_sink(efw_debug_event_sink_fn sink, void *user);
+void efw_debug_emit_event(const char *event, const char *name, const char *detail);
+void efw_debug_attach_runtime_trace(void);
 
 /**
  * @brief 获取已注册监控点数量
@@ -166,18 +170,29 @@ int efw_debug_register_efw_hal(void);
 /**
  * @brief 注册所有传感器数据为监控点
  *
- * 自动遍历传感器注册表，为每个已注册的传感器创建监控点。
- * 监控点名称格式: "sensor.{name}"
+ * 传感器输出类型和存储不属于 efw_sensor_ops_t，故本函数不会把 opaque
+ * ops->ctx 猜测为 float 读数，也不会自动创建虚假监控点。应用应在持有
+ * 最新值存储时调用 efw_debug_register_sensor_value()。
  *
  * @return 成功注册的监控点数量，负值表示错误
  */
 int efw_debug_register_efw_sensors(void);
 
 /**
+ * @brief 注册应用拥有的传感器最新值。
+ *
+ * 传感器 ctx 是不透明的，调试模块不会把它当作读数解释；应用负责更新
+ * latest_value，并保证该地址在监控点注销前一直有效。
+ */
+efw_status_t efw_debug_register_sensor_value(const char *sensor_name,
+                                             efw_debug_type_t type,
+                                             const void *latest_value);
+
+/**
  * @brief 注册所有算法数据为监控点
  *
  * 自动遍历算法注册表，为每个已注册的算法创建监控点。
- * 监控点名称格式: "algo.{name}"
+ * 监控点名称格式: "algo.{name}.type", "algo.{name}.ctx"
  *
  * @return 成功注册的监控点数量，负值表示错误
  */
@@ -187,7 +202,7 @@ int efw_debug_register_efw_algorithms(void);
  * @brief 注册所有状态机数据为监控点
  *
  * 自动遍历状态机注册表，为每个已注册的状态机创建监控点。
- * 监控点名称格式: "sm.{name}.state" (当前状态名称)
+ * 监控点名称格式: "sm.{name}.state_hash", "sm.{name}.time_ms"
  *
  * @return 成功注册的监控点数量，负值表示错误
  */
@@ -201,6 +216,9 @@ int efw_debug_register_efw_state_machines(void);
  *   efw_debug_register_efw_sensors();
  *   efw_debug_register_efw_algorithms();
  *   efw_debug_register_efw_state_machines();
+ *
+ * 其中传感器需要应用通过 efw_debug_register_sensor_value() 显式描述
+ * 最新值类型和地址。
  *
  * @return 总共注册的监控点数量，负值表示错误
  */

@@ -9,7 +9,10 @@ without changing the graph format.
 import json
 from pathlib import Path
 
-from codegen.graph import NODE_CONTRACTS, node_generation_label
+try:
+    from codegen.graph import NODE_CONTRACTS, node_generation_label
+except ImportError:  # Package import from the repository root.
+    from tools.codegen.graph import NODE_CONTRACTS, node_generation_label
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DATA_DIR = REPO_ROOT / "data"
@@ -114,6 +117,7 @@ def _convert_board_profile(board_data: dict) -> dict | None:
         "mcu": board_data.get("mcu", ""),
         "core": board_data.get("core", ""),
         "clock_mhz": board_data.get("frequency_mhz", board_data.get("clock", {}).get("sysclk_mhz", 0)),
+        "clock": board_data.get("clock", {}),
         "flash_kb": board_data.get("flash_kb", 0),
         "ram_kb": board_data.get("ram_kb", 0),
         "package": board_data.get("package", ""),
@@ -123,6 +127,9 @@ def _convert_board_profile(board_data: dict) -> dict | None:
         "pwm_channels": _extract_pwm_channels(board_data),
         "gpio_pins": board_data.get("gpio_pins", []),
         "peripherals": board_data.get("peripherals", {}),
+        "pins": board_data.get("pins", {}),
+        "board_type": board_data.get("board_type", ""),
+        "sources": board_data.get("sources", []),
         "notes": board_data.get("description", ""),
     }
 

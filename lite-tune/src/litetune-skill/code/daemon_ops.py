@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""UDS request handling and high-level operations for LiteTune daemon."""
+"""TCP request handling and high-level operations for LiteTune daemon."""
 
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
 import os
 
@@ -25,6 +26,7 @@ from daemon_state import (
     DaemonState,
     FrameTooLargeError,
     NotFoundError,
+    UnauthorizedError,
     json_dumps,
     json_response,
     log_event,
@@ -33,18 +35,25 @@ from daemon_state import (
 from litetune_protocol import ProtocolError
 
 
-async def run_uds_server(state: DaemonState) -> None:
-    try:
-        os.unlink(state.socket_path)
-    except FileNotFoundError:
-        pass
-    os.makedirs(os.path.dirname(state.socket_path), exist_ok=True)
-    state.server = await asyncio.start_unix_server(lambda r, w: handle_uds_client(state, r, w), path=state.socket_path, limit=1024 * 1024)
+async def start_tcp_server(state: DaemonState) -> None:
+    """Bind TCP server and update daemon.json with the assigned port."""
+    state.server = await asyncio.start_server(lambda r, w: handle_tcp_client(state, r, w), host=state.bind_host, port=state.bind_port, limit=1024 * 1024)
+    for sock in state.server.sockets:
+        addr = sock.getsockname()
+        if len(addr) == 2:
+            state.bind_port = addr[1]
+            break
+    from daemon_state import write_daemon_json
+    await write_daemon_json(state)
+
+
+async def serve_tcp_forever(state: DaemonState) -> None:
+    """Serve TCP clients until the server is closed."""
     async with state.server:
         await state.server.serve_forever()
 
 
-async def handle_uds_client(state: DaemonState, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+async def handle_tcp_client(state: DaemonState, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
     request: dict[str, Any] | None = None
     try:
         raw = await reader.readline()
@@ -55,15 +64,21 @@ async def handle_uds_client(state: DaemonState, reader: asyncio.StreamReader, wr
         if not raw.endswith(b"\n"):
             raise BadRequestError("request must be newline terminated")
         request = decode_request(raw)
-        state.stats["uds_requests"] += 1
-        await log_event(state, "local", "UDS_REQUEST", request)
-        result = await dispatch_uds_request(state, request)
+        state.stats["tcp_requests"] += 1
+        await log_event(
+            state,
+            "local",
+            "TCP_REQUEST",
+            redact_session_token({"id": request.get("id"), "op": request.get("op")}, state.session_token),
+        )
+        result = await dispatch_tcp_request(state, request)
         response = json_response(request.get("id"), True, result)
     except DaemonError as exc:
         response = json_response(request.get("id") if request else None, False, error=response_error(exc)["error"])
     except Exception as exc:
         response = json_response(request.get("id") if request else None, False, error={"code": "INTERNAL_ERROR", "message": str(exc)})
-    await log_event(state, "local", "UDS_RESPONSE", response)
+    response = redact_session_token(response, state.session_token)
+    await log_event(state, "local", "TCP_RESPONSE", response)
     writer.write((json_dumps(response) + "\n").encode("utf-8"))
     try:
         await writer.drain()
@@ -82,7 +97,23 @@ def decode_request(raw: bytes) -> dict[str, Any]:
     return request
 
 
-async def dispatch_uds_request(state: DaemonState, request: dict[str, Any]) -> dict[str, Any]:
+def redact_session_token(value: Any, session_token: str) -> Any:
+    if isinstance(value, dict):
+        return {key: redact_session_token(item, session_token) for key, item in value.items() if key != "session_token"}
+    if isinstance(value, list):
+        return [redact_session_token(item, session_token) for item in value]
+    if isinstance(value, tuple):
+        return tuple(redact_session_token(item, session_token) for item in value)
+    if isinstance(value, str):
+        return value.replace(session_token, "[REDACTED]")
+    return value
+
+
+async def dispatch_tcp_request(state: DaemonState, request: dict[str, Any]) -> dict[str, Any]:
+    supplied_token = request.get("session_token")
+    candidate = supplied_token if isinstance(supplied_token, str) else ""
+    if not hmac.compare_digest(candidate, state.session_token):
+        raise UnauthorizedError("request authentication failed")
     op = request.get("op")
     params = request.get("params") if isinstance(request.get("params"), dict) else request
     match op:
@@ -121,7 +152,8 @@ def daemon_status(state: DaemonState) -> dict[str, Any]:
         "pid": os.getpid(),
         "port": state.port,
         "baud": state.baud,
-        "socket_path": state.socket_path,
+        "bind_host": state.bind_host,
+        "bind_port": state.bind_port,
         "log_path": state.log_path,
         "schema_ready": state.schema_ready.is_set(),
         "schema_digest": (state.active_schema or {}).get("schema_digest"),

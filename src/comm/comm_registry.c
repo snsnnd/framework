@@ -42,7 +42,9 @@ static const efw_comm_ops_t **g_comms = g_comm_default_pool; /**< COMM ops 指�
 static size_t g_comm_cap = EFW_MAX_COMMS;
 static size_t g_comm_n;                              /**< 已注册 COMM 数量 */
 
-/* ====== 初始化 ====== */
+/* ====== 初始化 ======
+ * COMM 的注册表只存放协议对象指针；hal_name 是跨注册表的逻辑外键。
+ */
 
 efw_status_t efw_comm_registry_init(void) { g_comms = g_comm_default_pool; g_comm_cap = EFW_MAX_COMMS; g_comm_n = 0; return EFW_OK; }
 efw_status_t efw_comm_registry_init_pool(const efw_comm_ops_t **pool, size_t capacity) {
@@ -53,9 +55,10 @@ efw_status_t efw_comm_registry_init_pool(const efw_comm_ops_t **pool, size_t cap
 /* ====== 注册 (含 HAL 绑定校验) ====== */
 
 efw_status_t efw_comm_register(const efw_comm_ops_t *ops) {
+    /* send/recv 是协议层不可缺少的两个方向；open/close 则允许为空。 */
     if (!ops || !ops->name || !ops->send || !ops->recv) return EFW_ERR_INVALID;
 
-    /* ★ 注册时 HAL 绑定校验 */
+    /* ★ 注册时 HAL 绑定校验：尽早失败，避免运行期才发现断链。 */
     if (ops->hal_name) {
 #if EFW_ENABLE_HAL
         const efw_hal_ops_t *hal;

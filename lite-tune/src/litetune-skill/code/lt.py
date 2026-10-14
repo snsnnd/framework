@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Agent-facing LiteTune CLI.
 The CLI is intentionally thin: it starts/stops daemon.py, validates runtime
-state, sends one NDJSON request over a Unix Domain Socket, and prints JSON.
+state, sends one NDJSON request over a TCP socket, and prints JSON.
 """
 
 from __future__ import annotations
@@ -99,8 +99,13 @@ def daemon_json_path(runtime: str) -> str:
     return os.path.join(runtime, "daemon.json")
 
 
-def default_socket_path(runtime: str) -> str:
-    return os.path.join(runtime, "litetune.sock")
+def default_daemon_address(runtime: str) -> tuple[str, int]:
+    meta = daemon_meta(runtime)
+    host = meta.get("bind_host")
+    port = meta.get("bind_port")
+    if isinstance(host, str) and host and isinstance(port, int) and port > 0:
+        return (host, port)
+    return ("127.0.0.1", 0)
 
 
 def emit(data: dict[str, Any], pretty: bool = False) -> None:
@@ -129,12 +134,25 @@ def daemon_meta(runtime: str) -> dict[str, Any]:
     return read_json(daemon_json_path(runtime)) or {}
 
 
-def socket_path(runtime: str) -> str:
+def daemon_address(runtime: str) -> tuple[str, int]:
     meta = daemon_meta(runtime)
-    value = meta.get("socket_path") or meta.get("socket") or meta.get("uds_path") or meta.get("uds")
-    if isinstance(value, str) and value:
-        return value if os.path.isabs(value) else os.path.abspath(os.path.join(runtime, value))
-    return default_socket_path(runtime)
+    host = meta.get("bind_host")
+    port = meta.get("bind_port")
+    if isinstance(host, str) and host and isinstance(port, int) and port > 0:
+        return (host, port)
+    return default_daemon_address(runtime)
+
+
+def daemon_connection(runtime: str) -> tuple[tuple[str, int], str]:
+    meta = daemon_meta(runtime)
+    host = meta.get("bind_host")
+    port = meta.get("bind_port")
+    token = meta.get("session_token")
+    if not isinstance(host, str) or not host or not isinstance(port, int) or port <= 0:
+        raise DaemonConnectError("daemon address is unavailable", {"runtime": runtime})
+    if not isinstance(token, str) or not token:
+        raise DaemonConnectError("daemon session token is unavailable", {"runtime": runtime})
+    return (host, port), token
 
 
 def pid_from_meta(meta: dict[str, Any]) -> int | None:
@@ -229,29 +247,32 @@ def ensure_status_matches_requested(args: argparse.Namespace, status_payload: di
 
 
 # ---------------------------------------------------------------------------
-# UDS NDJSON client
+# TCP NDJSON client
 
 
 def json_line(data: dict[str, Any]) -> bytes:
     raw = json.dumps(data, ensure_ascii=False, separators=(",", ":")).encode("utf-8") + b"\n"
     if len(raw) > MAX_LINE_BYTES:
-        raise ProtocolError("request exceeds UDS line limit")
+        raise ProtocolError("request exceeds line limit")
     return raw
 
 
-def connect(path: str, timeout: float) -> socket.socket:
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+def connect(address: tuple[str, int], timeout: float) -> socket.socket:
+    if address[1] <= 0:
+        raise DaemonConnectError("daemon address is unavailable", {"address": address})
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.settimeout(timeout)
     try:
-        sock.connect(path)
+        sock.connect(address)
     except socket.timeout as exc:
         sock.close()
-        raise TimeoutError("timed out connecting to daemon", {"socket_path": path}) from exc
+        raise TimeoutError("timed out connecting to daemon", {"address": address}) from exc
     except OSError as exc:
         sock.close()
-        if exc.errno in (errno.ENOENT, errno.ECONNREFUSED, errno.ENOTSOCK, errno.EACCES):
-            raise DaemonConnectError("daemon is not connectable", {"socket_path": path, "errno": exc.errno, "error": str(exc)})
-        raise LocalIOError("socket connect failed", {"socket_path": path, "errno": exc.errno, "error": str(exc)}) from exc
+        connect_errors = {errno.ECONNREFUSED, getattr(errno, "WSAECONNREFUSED", errno.ECONNREFUSED)}
+        if exc.errno in connect_errors:
+            raise DaemonConnectError("daemon is not connectable", {"address": address, "errno": exc.errno, "error": str(exc)})
+        raise LocalIOError("socket connect failed", {"address": address, "errno": exc.errno, "error": str(exc)}) from exc
     return sock
 
 
@@ -279,8 +300,9 @@ def decode_response(line: bytes) -> dict[str, Any]:
 
 
 def daemon_request(runtime: str, op: str, params: dict[str, Any] | None = None, timeout: float = DEFAULT_TIMEOUT) -> dict[str, Any]:
-    request = {"id": str(uuid.uuid4()), "op": op, "params": params or {}}
-    sock = connect(socket_path(runtime), timeout)
+    address, session_token = daemon_connection(runtime)
+    request = {"id": str(uuid.uuid4()), "op": op, "params": params or {}, "session_token": session_token}
+    sock = connect(address, timeout)
     try:
         with sock.makefile("rwb", buffering=0) as file_obj:
             file_obj.write(json_line(request))
@@ -314,19 +336,19 @@ def daemon_request(runtime: str, op: str, params: dict[str, Any] | None = None, 
 
 def daemon_status_payload(args: argparse.Namespace, require_connect: bool) -> dict[str, Any]:
     meta = daemon_meta(args.runtime)
+    public_meta = {key: value for key, value in meta.items() if key != "session_token"}
     pid = pid_from_meta(meta)
-    path = socket_path(args.runtime)
+    addr = daemon_address(args.runtime)
     result: dict[str, Any] = {
         "ok": True,
         "runtime": args.runtime,
         "daemon_json_path": daemon_json_path(args.runtime),
         "daemon_json_exists": bool(meta),
-        "socket_path": path,
-        "socket_exists": os.path.exists(path),
+        "address": list(addr),
         "pid": pid,
         "pid_alive": None,
         "connectable": False,
-        "metadata": meta,
+        "metadata": public_meta,
     }
     try:
         status = daemon_request(args.runtime, "daemon.status", timeout=args.timeout)
@@ -370,8 +392,9 @@ def daemon_port(args: argparse.Namespace) -> str:
 def cmd_daemon_start(args: argparse.Namespace) -> dict[str, Any]:
     os.makedirs(args.runtime, exist_ok=True)
     existing = daemon_status_payload(args, require_connect=False)
+    hint = "daemon runs in background — use 'lt.py daemon stop' to shut it down"
     if existing.get("connectable") and existing.get("ok"):
-        return {"ok": True, "started": False, "reason": "already_running", "status": existing}
+        return {"ok": True, "started": False, "reason": "already_running", "hint": hint, "status": existing}
     daemon_py = daemon_py_path()
     if not os.path.exists(daemon_py):
         raise LocalIOError("daemon.py not found", {"path": daemon_py})
@@ -400,15 +423,18 @@ def cmd_daemon_start(args: argparse.Namespace) -> dict[str, Any]:
     except OSError as exc:
         raise LocalIOError("cannot open daemon stdio file", {"errno": exc.errno, "error": str(exc), "path": stdout_path}) from exc
     try:
-        proc = subprocess.Popen(
-            cmd,
-            cwd=code_dir(),
-            stdin=stdin,
-            stdout=stdout,
-            stderr=subprocess.STDOUT,
-            close_fds=os.name != "nt",
-            start_new_session=os.name != "nt",
-        )
+        popen_kwargs: dict[str, Any] = {
+            "cwd": code_dir(),
+            "stdin": stdin,
+            "stdout": stdout,
+            "stderr": subprocess.STDOUT,
+        }
+        if os.name == "nt":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP  # type: ignore[attr-defined]
+        else:
+            popen_kwargs["close_fds"] = True
+            popen_kwargs["start_new_session"] = True
+        proc = subprocess.Popen(cmd, **popen_kwargs)
     except OSError as exc:
         raise LocalIOError("failed to launch daemon", {"errno": exc.errno, "error": str(exc), "cmd": cmd}) from exc
     finally:
@@ -418,19 +444,22 @@ def cmd_daemon_start(args: argparse.Namespace) -> dict[str, Any]:
     last: dict[str, Any] | None = None
     while time.monotonic() < deadline:
         if proc.poll() is not None:
-            raise LocalIOError("daemon exited during startup", {"returncode": proc.returncode, "stdout": stdout_path})
+            return {"ok": False, "started": False, "reason": "exited_early", "returncode": proc.returncode, "stdout": stdout_path, "hint": hint, "last_status": last}
         last = daemon_status_payload(args, require_connect=False)
         if last.get("connectable"):
-            return {"ok": True, "started": True, "pid": proc.pid, "stdout": stdout_path, "status": last}
+            return {"ok": True, "started": True, "pid": proc.pid, "stdout": stdout_path, "hint": hint, "status": last}
         time.sleep(0.1)
-    raise TimeoutError("daemon did not become connectable", {"pid": proc.pid, "stdout": stdout_path, "last_status": last})
+    # If daemon process is still alive, it may become connectable later — check daemon.json
+    if proc.poll() is None:
+        return {"ok": True, "started": True, "pid": proc.pid, "stdout": stdout_path, "hint": hint, "warning": "startup poll timed out but process is alive — check daemon status", "last_status": last}
+    return {"ok": False, "started": False, "reason": "timeout", "stdout": stdout_path, "hint": hint, "last_status": last}
 
 
 def cmd_daemon_stop(args: argparse.Namespace) -> dict[str, Any]:
     daemon_status_payload(args, require_connect=False)
     try:
         result = daemon_request(args.runtime, "daemon.stop", timeout=args.timeout)
-        return {"ok": True, "stopped": True, "via": "uds", "daemon": result}
+        return {"ok": True, "stopped": True, "via": "tcp", "daemon": result}
     except DaemonConnectError as exc:
         if not getattr(args, "force", False):
             raise
@@ -634,5 +663,10 @@ def main(argv: list[str] | None = None) -> int:
     except LtError as exc:
         emit({"ok": False, "error": error_body(exc)})
         return exc.exit_code
+    except KeyboardInterrupt:
+        return EXIT_OK
 if __name__ == "__main__":
-    sys.exit(main())
+    rc = main()
+    # Prevent KeyboardInterrupt noise during Python shutdown on Windows
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+    sys.exit(rc)

@@ -180,6 +180,7 @@ efw_status_t efw_line_tracking_follow_diff(const char *sensor_name, const char *
     pid_in.setpoint = 0.0f;
     pid_in.feedback = error;
     pid_in.dt = dt;
+    pid_in.feedforward = 0.0f;
 
     /* ③ PID 计算 */
     s = efw_algo_run(pid_name, &pid_in, sizeof(pid_in), &pid_out, sizeof(pid_out));

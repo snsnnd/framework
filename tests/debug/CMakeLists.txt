@@ -47,6 +47,20 @@ add_executable(efw_overhead_test
 )
 target_link_libraries(efw_overhead_test m)
 
+add_executable(debug_behavior_test
+    test_debug_behavior.c
+    ../../src/debug/efw_debug_fast.c
+    ../../src/debug/efw_debug_async.c
+)
+
+add_executable(litetune_tx_test
+    test_litetune_tx.c
+    ../../src/debug/efw_debug_litetune.c
+)
+target_compile_definitions(litetune_tx_test PRIVATE EFW_ENABLE_DEBUG=1 EFW_ENABLE_LITETUNE=1)
+
 # 添加测试
 enable_testing()
 add_test(NAME debug_perf_test COMMAND debug_perf_test)
+add_test(NAME debug_behavior_test COMMAND debug_behavior_test)
+add_test(NAME litetune_tx_test COMMAND litetune_tx_test)

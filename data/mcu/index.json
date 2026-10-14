@@ -64,5 +64,16 @@
     "gpio_count": 38,
     "board": "Nucleo G431CB",
     "path": "STM32G4/STM32G431CBT6.json"
+  },
+  "STM32G431RBT6": {
+    "family": "STM32G4",
+    "core": "ARM Cortex-M4F",
+    "frequency_mhz": 170,
+    "flash_kb": 128,
+    "ram_kb": 32,
+    "package": "LQFP64",
+    "gpio_count": 51,
+    "board": "CT117E-M4 (Lanqiao)",
+    "path": "STM32G4/STM32G431RBT6.json"
   }
 }

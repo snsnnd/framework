@@ -1,0 +1,28 @@
+﻿=Sep 13 2026 14?[CLK] boost ok: 80MHz
+
+==================================================
+  EFW ARCADE boot  (STM32G431RBT6 @80MHz)
+  IDCODE=0x20026468  sysclk=80MHz  build=Sep 13 2026 14?[CLK] boost ok: 80MHz
+
+==============================================
+  EFW ARCADE boot  (STM32G431RBT6 @80MHz)
+  IDCODE=0x20026468  sysclk=80MHz  build=Sep 13 2026 14:09:08
+==================================================
+==== QUICK SELFTEST ====
+[TEST] core_init ......... PASS
+[PERF] efw_init = 12 us
+[TEST] hal_registry ......... PASS
+[TEST] comm_registry ......... PASS
+[TEST] sensor_registry ......... PASS
+[TEST] algo_pid ......... PASS
+[TEST] state_machine ......... PASS
+    sm transitions: IDLE->RUN RUN->STOP 
+[TEST] event_topic ......... PASS
+    LCD controller ID=0x00009325
+[PERF] LCD_Clear = 21 ms (76800 px)
+[PERF] LCD_FillArea 100x200 = 6013 us
+[PERF] LCD text line = 2022 us
+[TEST] lcd_panel ......... PASS
+==== QUICK SELFTEST: 8/8 PASS ====
+[ARCADE] booted, menu up
+[BOT] QA attract engage

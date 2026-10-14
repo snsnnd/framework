@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Any
 
 from tools.api.capabilities import register_capability
-from tools.project.core import load_project, write_json
 
 try:
     from studio.model import load_board_profiles
@@ -29,9 +28,11 @@ def list_profiles() -> dict[str, dict[str, Any]]:
 
 def get_profile(profile: str) -> dict[str, Any]:
     profiles = list_profiles()
-    if profile not in profiles:
-        raise KeyError(f"找不到 profile: {profile}")
-    return profiles[profile]
+    matches = {name.casefold(): name for name in profiles}
+    canonical = matches.get(profile.strip().casefold())
+    if canonical is None:
+        raise ValueError(f"找不到 profile: {profile}")
+    return profiles[canonical]
 
 
 def import_profile(file: str | Path, *, name: str | None = None, output_dir: str | Path = "data/board_profiles") -> Path:
@@ -52,8 +53,14 @@ def import_profile(file: str | Path, *, name: str | None = None, output_dir: str
 
 
 def set_project_profile(project_ref: str | Path, profile: str) -> Path:
-    get_profile(profile)
-    path, project = load_project(project_ref)
-    project["board_profile"] = profile
-    write_json(path, project)
-    return path
+    from tools.target import GENERIC_BOARD_PROFILES, load_targets
+    concrete = {name.casefold(): name for target in load_targets().values() for name in target.board_profiles}
+    key = profile.strip().casefold()
+    if key in GENERIC_BOARD_PROFILES:
+        canonical = key
+    elif key in concrete:
+        canonical = concrete[key]
+    else:
+        raise ValueError(f"找不到可构建 profile: {profile}")
+    from tools.api.project import set_project_fields
+    return set_project_fields(project_ref, board=canonical)

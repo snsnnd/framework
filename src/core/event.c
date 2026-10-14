@@ -18,6 +18,10 @@ static uint8_t g_eq_head;
 static uint8_t g_eq_tail;
 static uint8_t g_eq_count;
 
+/*
+ * 话题发布是同步路径，队列处理是异步路径：前者适合低延迟通知，后者
+ * 通过复制消息把生产者与消费者解耦。实现没有锁，默认调用方保证并发安全。
+ */
 efw_status_t efw_topic_clear(void) {
     g_sub_n = 0;
     return EFW_OK;
@@ -58,12 +62,18 @@ efw_status_t efw_event_queue_init(void) {
 }
 
 static efw_status_t queue_post(uint16_t topic_id, const char *event_name, const void *data, uint16_t size) {
+    /* 先检查容量和边界，再写 tail，确保失败不会改变队列状态。 */
     if (g_eq_count >= EFW_EVENT_QUEUE_CAPACITY) return EFW_ERR_FULL;
     if (size > 0 && !data) return EFW_ERR_INVALID;
     if (size > EFW_EVENT_ITEM_MAX_SIZE) return EFW_ERR_RANGE;
+    if (event_name && strlen(event_name) >= EFW_EVENT_NAME_MAX_LEN) return EFW_ERR_RANGE;
     efw_event_item_t *item = &g_event_queue[g_eq_tail];
     item->topic_id = topic_id;
-    item->event_name = event_name;
+    if (event_name) {
+        memcpy(item->event_name, event_name, strlen(event_name) + 1u);
+    } else {
+        item->event_name[0] = '\0';
+    }
     item->size = size;
     if (data && size > 0) {
         memcpy(item->data, data, size);
@@ -82,6 +92,7 @@ efw_status_t efw_event_queue_post_named(uint16_t topic_id, const char *event_nam
 }
 
 efw_status_t efw_event_queue_process(void) {
+    /* 只处理进入本函数时已经存在的消息；回调中新发布的消息留到下轮。 */
     uint8_t to_process = g_eq_count;
     while (to_process > 0 && g_eq_count > 0) {
         efw_event_item_t *item = &g_event_queue[g_eq_head];
@@ -106,7 +117,7 @@ efw_status_t efw_event_queue_process_ex(efw_event_dispatch_fn dispatch) {
         g_eq_head = (uint8_t)((g_eq_head + 1u) % EFW_EVENT_QUEUE_CAPACITY);
         g_eq_count--;
         to_process--;
-        dispatch(item->event_name, item->topic_id,
+        dispatch(item->event_name[0] ? item->event_name : 0, item->topic_id,
                  item->size > 0 ? item->data : 0, item->size);
     }
     return EFW_OK;

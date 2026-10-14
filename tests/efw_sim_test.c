@@ -330,6 +330,21 @@ static void test_pid_reset(void) {
     PASS();
 }
 
+static void test_encoder_speed_wraparound(void) {
+    TEST("L1/Encoder speed: signed counter wrap is defined");
+    efw_encoder_speed_t estimator = { .pulses_per_unit = 1.0f };
+    efw_encoder_speed_input_t input = { .count = INT32_MAX - 1, .dt = 1.0f };
+    float speed = 0.0f;
+    ASSERT_OK(efw_encoder_speed_run(&estimator, &input, sizeof(input), &speed, sizeof(speed)));
+    input.count = INT32_MIN + 1;
+    ASSERT_OK(efw_encoder_speed_run(&estimator, &input, sizeof(input), &speed, sizeof(speed)));
+    CHECK(speed == 3.0f, "counter wrap should produce modular delta of 3");
+    input.count = INT32_MAX - 1;
+    ASSERT_OK(efw_encoder_speed_run(&estimator, &input, sizeof(input), &speed, sizeof(speed)));
+    CHECK(speed == -3.0f, "reverse wrap should produce modular delta of -3");
+    PASS();
+}
+
 /* ========================================================================
  *  L1: 单元测试 — 状态机引擎
  * ======================================================================== */
@@ -339,6 +354,7 @@ static uint32_t g_sm_enter_count, g_sm_tick_count, g_sm_exit_count;
 static efw_status_t sm_on_enter(void *ctx) { (void)ctx; g_sm_enter_count++; return EFW_OK; }
 static efw_status_t sm_on_tick(void *ctx) { (void)ctx; g_sm_tick_count++; return EFW_OK; }
 static efw_status_t sm_on_exit(void *ctx) { (void)ctx; g_sm_exit_count++; return EFW_OK; }
+static efw_status_t sm_enter_fail(void *ctx) { (void)ctx; return EFW_ERR_NOT_READY; }
 
 static int g_sm_cond = 0;
 static int sm_cond(void) { return g_sm_cond; }
@@ -428,7 +444,7 @@ static void test_sm_priority_ordering(void) {
 static efw_sm_context_t *g_sm_snapshot_ptr;
 static efw_status_t tick_and_transition(void *ctx) {
     (void)ctx;
-    efw_state_def_t target = { .name = "b", .on_tick = sm_on_tick };
+    static efw_state_def_t target = { .name = "b", .on_tick = sm_on_tick };
     efw_sm_transition_to(g_sm_snapshot_ptr, &target);
     return EFW_OK;
 }
@@ -436,7 +452,6 @@ static efw_status_t tick_and_transition(void *ctx) {
 static void test_sm_snapshot_protection(void) {
     TEST("L1/SM: snapshot prevents double transition");
     efw_state_def_t s1 = { .name = "a", .on_tick = tick_and_transition };
-    efw_state_def_t s2 = { .name = "b", .on_tick = sm_on_tick };
     efw_state_def_t s3 = { .name = "c", .on_tick = sm_on_tick };
     efw_sm_transition_t trans[] = {
         { .from = &s1, .to = &s3, .condition = sm_cond, .priority = 10 },
@@ -470,6 +485,19 @@ static void test_sm_dynamic_transitions(void) {
     PASS();
 }
 
+static void test_sm_enter_failure_rolls_back(void) {
+    TEST("L1/SM: failed enter restores previous state");
+    efw_state_def_t idle = { .name = "idle", .on_enter = sm_on_enter, .on_tick = sm_on_tick };
+    efw_state_def_t bad = { .name = "bad", .on_enter = sm_enter_fail, .on_tick = sm_on_tick };
+    efw_sm_context_t sm;
+    g_sm_enter_count = 0u;
+    ASSERT_OK(efw_sm_init(&sm, "rollback", &idle, 0, 0));
+    CHECK(efw_sm_transition_to(&sm, &bad) == EFW_ERR_NOT_READY, "enter error should propagate");
+    CHECK(efw_sm_current_def(&sm) == &idle, "previous state should be restored");
+    CHECK(g_sm_enter_count == 2u, "previous state should be re-entered");
+    PASS();
+}
+
 static void test_sm_registry(void) {
     TEST("L1/SM: context register/get/unregister");
     efw_sm_registry_init();
@@ -491,9 +519,22 @@ static void test_sm_registry(void) {
  * ======================================================================== */
 
 static uint32_t g_task_1ms_n, g_task_5ms_n, g_task_10ms_n;
+static uint32_t g_scheduler_now_ms, g_scheduler_now_us;
 static efw_status_t t_1ms(void *ctx) { (void)ctx; g_task_1ms_n++; return EFW_OK; }
 static efw_status_t t_5ms(void *ctx) { (void)ctx; g_task_5ms_n++; return EFW_OK; }
 static efw_status_t t_10ms(void *ctx) { (void)ctx; g_task_10ms_n++; return EFW_OK; }
+static uint32_t scheduler_test_ms(void *ctx) { (void)ctx; return g_scheduler_now_ms; }
+static uint32_t scheduler_test_us(void *ctx) { (void)ctx; return g_scheduler_now_us; }
+static efw_status_t scheduler_timed_task(void *ctx) {
+    (void)ctx;
+    g_task_5ms_n++;
+    g_scheduler_now_us += 6000u;
+    return EFW_OK;
+}
+static efw_status_t scheduler_mutating_task(void *ctx) {
+    (void)ctx;
+    return efw_scheduler_unregister("mutating");
+}
 
 static void test_scheduler_multi_period(void) {
     TEST("L1/Scheduler: 1ms + 5ms + 10ms over 100ms");
@@ -540,6 +581,91 @@ static void test_scheduler_unregister(void) {
     PASS();
 }
 
+static void test_scheduler_fixed_phase_and_stats(void) {
+    TEST("L1/Scheduler: fixed phase skip and runtime stats");
+    const efw_scheduler_slot_t *slot = 0;
+    efw_scheduler_task_def_t task = { .name = "timed", .period_ms = 5, .fn = scheduler_timed_task };
+    efw_scheduler_init();
+    g_task_5ms_n = 0;
+    g_scheduler_now_ms = 0;
+    g_scheduler_now_us = 100u;
+    ASSERT_OK(efw_scheduler_set_time_providers(scheduler_test_ms, scheduler_test_us, 0));
+    ASSERT_OK(efw_scheduler_register_at(&task, 5u));
+
+    g_scheduler_now_ms = 17u;
+    ASSERT_OK(efw_scheduler_tick(17u));
+    ASSERT_OK(efw_scheduler_get("timed", &slot));
+    CHECK(g_task_5ms_n == 1u, "late task should run once");
+    CHECK(slot->next_release_ms == 20u, "release phase should stay anchored");
+    CHECK(slot->missed_releases == 2u, "two releases should be skipped");
+    CHECK(slot->last_start_lateness_ms == 12u, "lateness mismatch");
+    CHECK(slot->last_runtime_us == 6000u, "runtime mismatch");
+    CHECK(slot->overrun_count == 1u, "runtime over period should overrun");
+
+    g_scheduler_now_ms = 20u;
+    ASSERT_OK(efw_scheduler_tick(20u));
+    CHECK(slot->next_release_ms == 25u, "next release should remain phased");
+    CHECK(slot->run_count == 2u, "run count mismatch");
+    efw_scheduler_init();
+    ASSERT_OK(efw_scheduler_set_time_providers(0, 0, 0));
+    PASS();
+}
+
+static void test_scheduler_rejects_callback_mutation(void) {
+    TEST("L1/Scheduler: callback cannot mutate task table");
+    efw_scheduler_task_def_t task = { .name = "mutating", .period_ms = 1, .fn = scheduler_mutating_task };
+    efw_scheduler_init();
+    ASSERT_OK(efw_scheduler_register(&task));
+    CHECK(efw_scheduler_tick(1u) == EFW_ERR_NOT_READY, "mutation should fail and propagate");
+    CHECK(efw_scheduler_task_count() == 1u, "task table must remain stable");
+    PASS();
+}
+
+static void test_scheduler_dynamic_register_and_idempotent_resume(void) {
+    TEST("L1/Scheduler: dynamic register uses last tick and resume is idempotent");
+    const efw_scheduler_slot_t *slot = 0;
+    efw_scheduler_task_def_t first = { .name = "first", .period_ms = 10, .fn = t_10ms };
+    efw_scheduler_task_def_t later = { .name = "later", .period_ms = 10, .fn = t_10ms };
+    efw_scheduler_init();
+    g_task_10ms_n = 0;
+    ASSERT_OK(efw_scheduler_register(&first));
+    ASSERT_OK(efw_scheduler_tick(1000u));
+    ASSERT_OK(efw_scheduler_register(&later));
+    ASSERT_OK(efw_scheduler_get("later", &slot));
+    CHECK(slot->next_release_ms == 1010u, "dynamic task should release after registration time");
+    ASSERT_OK(efw_scheduler_resume("later"));
+    ASSERT_OK(efw_scheduler_tick(1001u));
+    CHECK(slot->run_count == 0u, "resuming active task must not force release");
+    PASS();
+}
+
+static void scheduler_enumerate_mutation(const efw_scheduler_slot_t *slot, void *user) {
+    efw_status_t *status = (efw_status_t *)user;
+    *status = efw_scheduler_unregister(slot->def.name);
+}
+
+static void test_scheduler_enumerate_blocks_mutation(void) {
+    TEST("L1/Scheduler: enumerate blocks task table mutation");
+    efw_status_t status = EFW_OK;
+    efw_scheduler_task_def_t task = { .name = "enum", .period_ms = 1, .fn = t_1ms };
+    efw_scheduler_init();
+    ASSERT_OK(efw_scheduler_register(&task));
+    efw_scheduler_enumerate(scheduler_enumerate_mutation, &status);
+    CHECK(status == EFW_ERR_NOT_READY, "enumeration mutation should be rejected");
+    CHECK(efw_scheduler_task_count() == 1u, "task table must stay unchanged");
+    PASS();
+}
+
+static void test_scheduler_rejects_provider_switch(void) {
+    TEST("L1/Scheduler: time provider cannot switch with registered tasks");
+    efw_scheduler_task_def_t task = { .name = "provider", .period_ms = 1, .fn = t_1ms };
+    efw_scheduler_init();
+    ASSERT_OK(efw_scheduler_register(&task));
+    CHECK(efw_scheduler_set_time_providers(scheduler_test_ms, scheduler_test_us, 0) == EFW_ERR_NOT_READY,
+          "provider switch should be rejected");
+    PASS();
+}
+
 /* ========================================================================
  *  L1: 单元测试 — 事件系统
  * ======================================================================== */
@@ -548,6 +674,7 @@ static uint32_t g_evt_count;
 static uint16_t g_last_topic;
 static uint16_t g_last_size;
 static uint32_t g_repost_count;
+static char g_dispatched_event_name[EFW_EVENT_NAME_MAX_LEN];
 
 static void evt_cb(uint16_t id, const void *data, uint16_t size, void *user) {
     (void)data; (void)user;
@@ -562,6 +689,15 @@ static void repost_cb(uint16_t id, const void *data, uint16_t size, void *user) 
         efw_event_queue_post(id, &v, sizeof(v));
         g_repost_count++;
     }
+}
+
+static void named_event_dispatch(const char *event_name, uint16_t topic_id,
+                                 const void *data, uint16_t size) {
+    (void)topic_id;
+    (void)data;
+    (void)size;
+    snprintf(g_dispatched_event_name, sizeof(g_dispatched_event_name), "%s",
+             event_name ? event_name : "");
 }
 
 static void test_event_subscribe_publish(void) {
@@ -645,6 +781,18 @@ static void test_event_queue_process_limited(void) {
     PASS();
 }
 
+static void test_event_queue_copies_name(void) {
+    TEST("L1/Event: deferred event owns its name");
+    char event_name[] = "start";
+    efw_event_queue_init();
+    g_dispatched_event_name[0] = '\0';
+    ASSERT_OK(efw_event_queue_post_named(0u, event_name, 0, 0));
+    event_name[0] = 'X';
+    ASSERT_OK(efw_event_queue_process_ex(named_event_dispatch));
+    CHECK(strcmp(g_dispatched_event_name, "start") == 0, "queued name should be copied");
+    PASS();
+}
+
 /* ========================================================================
  *  L1: 单元测试 — 诊断系统
  * ======================================================================== */
@@ -674,10 +822,37 @@ static void test_diag_history(void) {
 
 #if EFW_ENABLE_DEBUG
 static uint32_t g_debug_iter_count;
+static const efw_debug_point_t *g_debug_found_point;
+static uint32_t g_debug_event_count;
+static char g_debug_last_event[32];
+static char g_debug_last_name[32];
+static char g_debug_last_detail[96];
+
 static void debug_iter_count_cb(const efw_debug_point_t *point, void *user) {
     (void)point;
     uint32_t *count = (uint32_t *)user;
     (*count)++;
+}
+
+static void debug_find_point_cb(const efw_debug_point_t *point, void *user) {
+    const char *name = (const char *)user;
+    if (point && strncmp(point->name, name, EFW_DEBUG_NAME_MAX_LEN) == 0) {
+        g_debug_found_point = point;
+    }
+}
+
+static const efw_debug_point_t *debug_find_point(const char *name) {
+    g_debug_found_point = 0;
+    efw_debug_foreach_point(debug_find_point_cb, (void *)name);
+    return g_debug_found_point;
+}
+
+static void debug_test_event_sink(const char *event, const char *name, const char *detail, void *user) {
+    (void)user;
+    g_debug_event_count++;
+    snprintf(g_debug_last_event, sizeof(g_debug_last_event), "%s", event ? event : "");
+    snprintf(g_debug_last_name, sizeof(g_debug_last_name), "%s", name ? name : "");
+    snprintf(g_debug_last_detail, sizeof(g_debug_last_detail), "%s", detail ? detail : "");
 }
 
 static void test_debug_foreach_point(void) {
@@ -689,6 +864,95 @@ static void test_debug_foreach_point(void) {
     efw_debug_foreach_point(debug_iter_count_cb, &g_debug_iter_count);
     CHECK(g_debug_iter_count == 1, "should enumerate one point");
     ASSERT_OK(efw_debug_unregister("test.value"));
+    PASS();
+}
+
+static void test_debug_auto_register_algorithms(void) {
+    TEST("L1/Debug: auto-register algorithm points");
+    float algo_ctx = 0.0f;
+    efw_algo_ops_t algo = { .name = "dbg_algo", .type = EFW_ALGO_CUSTOM, .ctx = &algo_ctx, .run = mock_algo_double };
+
+    efw_algo_registry_init();
+    ASSERT_OK(efw_algo_register(&algo));
+    ASSERT_OK(efw_debug_init());
+    CHECK(efw_debug_register_efw_algorithms() == 2, "algorithm should register type and ctx points");
+
+    const efw_debug_point_t *type_point = debug_find_point("algo.dbg_algo.type");
+    const efw_debug_point_t *ctx_point = debug_find_point("algo.dbg_algo.ctx");
+    CHECK(type_point != 0, "missing algorithm type point");
+    CHECK(ctx_point != 0, "missing algorithm ctx point");
+    CHECK(type_point->source == EFW_DEBUG_SOURCE_ALGORITHM, "wrong algorithm source");
+    CHECK(type_point->type == EFW_DEBUG_TYPE_U32, "wrong algorithm type point type");
+    CHECK(*(const uint32_t *)type_point->value_ptr == (uint32_t)EFW_ALGO_CUSTOM, "wrong algorithm type value");
+    CHECK(*(const uint32_t *)ctx_point->value_ptr != 0u, "ctx point should contain a non-zero address token");
+    PASS();
+}
+
+static void test_debug_auto_register_state_machines(void) {
+    TEST("L1/Debug: auto-register state machine points");
+    efw_state_def_t idle = { .name = "idle", .on_tick = sm_on_tick };
+    efw_state_def_t run = { .name = "run", .on_tick = sm_on_tick };
+    efw_sm_transition_t trans[] = {
+        { .from = &idle, .to = &run, .condition = sm_cond, .priority = 10 },
+    };
+    efw_sm_context_t sm;
+
+    efw_sm_registry_init();
+    g_sm_cond = 0;
+    ASSERT_OK(efw_sm_init(&sm, "dbg_sm", &idle, trans, 1));
+    ASSERT_OK(efw_sm_register(&sm));
+    ASSERT_OK(efw_debug_init());
+    CHECK(efw_debug_register_efw_state_machines() == 2, "state machine should register state_hash and time_ms points");
+
+    const efw_debug_point_t *state_point = debug_find_point("sm.dbg_sm.state_hash");
+    const efw_debug_point_t *time_point = debug_find_point("sm.dbg_sm.time_ms");
+    CHECK(state_point != 0, "missing state hash point");
+    CHECK(time_point != 0, "missing state time point");
+    CHECK(state_point->source == EFW_DEBUG_SOURCE_STATE_MACHINE, "wrong state machine source");
+    CHECK(state_point->type == EFW_DEBUG_TYPE_U32, "wrong state hash point type");
+
+    uint32_t idle_hash = *(const uint32_t *)state_point->value_ptr;
+    efw_sm_set_elapsed(&sm, 25u);
+    ASSERT_OK(efw_debug_update());
+    CHECK(*(const uint32_t *)time_point->value_ptr == 25u, "time point should update from state machine");
+
+    g_sm_cond = 1;
+    ASSERT_OK(efw_sm_tick(&sm));
+    efw_sm_set_elapsed(&sm, 40u);
+    ASSERT_OK(efw_debug_update());
+    CHECK(strcmp(efw_sm_current_state(&sm), "run") == 0, "state machine should transition");
+    CHECK(*(const uint32_t *)state_point->value_ptr != idle_hash, "state hash should update after transition");
+    CHECK(*(const uint32_t *)time_point->value_ptr == 15u, "time point should track time in current state");
+    PASS();
+}
+
+static void test_debug_state_machine_transition_trace(void) {
+    TEST("L1/Debug: state machine transition trace event");
+    efw_state_def_t idle = { .name = "idle", .on_tick = sm_on_tick };
+    efw_state_def_t run = { .name = "run", .on_tick = sm_on_tick };
+    efw_sm_transition_t trans[] = {
+        { .from = &idle, .to = &run, .condition = sm_cond, .priority = 10 },
+    };
+    efw_sm_context_t sm;
+
+    ASSERT_OK(efw_debug_init());
+    efw_debug_set_event_sink(debug_test_event_sink, 0);
+    efw_debug_attach_runtime_trace();
+    g_debug_event_count = 0;
+    g_debug_last_event[0] = '\0';
+    g_debug_last_name[0] = '\0';
+    g_debug_last_detail[0] = '\0';
+
+    g_sm_cond = 1;
+    ASSERT_OK(efw_sm_init(&sm, "trace_sm", &idle, trans, 1));
+    efw_sm_set_elapsed(&sm, 33u);
+    ASSERT_OK(efw_sm_tick(&sm));
+
+    CHECK(g_debug_event_count == 1u, "transition should emit one event");
+    CHECK(strcmp(g_debug_last_event, "sm.transition") == 0, "wrong event name");
+    CHECK(strcmp(g_debug_last_name, "sm.trace_sm") == 0, "wrong trace name");
+    CHECK(strstr(g_debug_last_detail, "from=idle") != 0, "missing from state");
+    CHECK(strstr(g_debug_last_detail, "to=run") != 0, "missing to state");
     PASS();
 }
 
@@ -720,6 +984,38 @@ static void test_debug_litetune_init_and_stats(void) {
     ASSERT_OK(efw_debug_handle_command("debug.stats", 0, 0, response, sizeof(response)));
     CHECK(response[0] >= 1u, "stats should report registered points");
     ASSERT_OK(efw_debug_unregister("lt.value"));
+    PASS();
+}
+
+static void test_debug_litetune_trace_budget(void) {
+    TEST("L1/Debug: LiteTune trace queue uses idle budget");
+    uint32_t value = 456;
+    uint16_t sent_before;
+    efw_debug_litetune_perf_t perf;
+    efw_debug_litetune_config_t cfg = {
+        .send = litetune_test_send,
+        .next_frame_id = 0,
+        .device_name = "efw-test",
+        .features = 0,
+        .telemetry_period_ms = 10,
+    };
+
+    g_litetune_sent_bytes = 0u;
+    ASSERT_OK(efw_debug_init());
+    ASSERT_OK(efw_debug_register_custom("lt.budget", EFW_DEBUG_TYPE_U32, &value));
+    ASSERT_OK(efw_debug_litetune_init(&cfg));
+
+    sent_before = g_litetune_sent_bytes;
+    efw_debug_emit_event("test.event", "budget", "status=0 mcu_time_ms=1 duration_ms=0");
+    ASSERT_OK(efw_debug_litetune_get_perf(&perf));
+    CHECK(perf.events_received == 1u, "event should be received");
+    CHECK(perf.current_queue_depth == 1u, "event should remain queued before process");
+    CHECK(g_litetune_sent_bytes == sent_before, "event should not synchronously send bytes");
+
+    efw_debug_litetune_process_budget(1u);
+    ASSERT_OK(efw_debug_litetune_get_perf(&perf));
+    CHECK(perf.current_queue_depth == 1u, "queue should be retained before host connects");
+    CHECK(perf.events_flushed == 0u, "event should not flush before host connects");
     PASS();
 }
 #endif
@@ -1157,6 +1453,7 @@ int main(void) {
     test_pid_output_clamp();
     test_pid_integral();
     test_pid_reset();
+    test_encoder_speed_wraparound();
     test_sm_basic_tick();
     test_sm_null_tick_is_valid();
     test_sm_condition_transition();
@@ -1164,10 +1461,16 @@ int main(void) {
     test_sm_priority_ordering();
     test_sm_snapshot_protection();
     test_sm_dynamic_transitions();
+    test_sm_enter_failure_rolls_back();
     test_sm_registry();
     test_scheduler_multi_period();
     test_scheduler_pause_resume();
     test_scheduler_unregister();
+    test_scheduler_fixed_phase_and_stats();
+    test_scheduler_rejects_callback_mutation();
+    test_scheduler_dynamic_register_and_idempotent_resume();
+    test_scheduler_enumerate_blocks_mutation();
+    test_scheduler_rejects_provider_switch();
     test_event_subscribe_publish();
     test_event_queue_basic();
     test_event_queue_null_data_size_zero();
@@ -1175,12 +1478,17 @@ int main(void) {
     test_event_queue_overflow();
     test_event_queue_large_data();
     test_event_queue_process_limited();
+    test_event_queue_copies_name();
     test_diag_basic();
     test_diag_history();
 #if EFW_ENABLE_DEBUG
     test_debug_foreach_point();
+    test_debug_auto_register_algorithms();
+    test_debug_auto_register_state_machines();
+    test_debug_state_machine_transition_trace();
 #if EFW_ENABLE_LITETUNE
     test_debug_litetune_init_and_stats();
+    test_debug_litetune_trace_budget();
 #endif
 #endif
     test_ringbuf_push_pop();

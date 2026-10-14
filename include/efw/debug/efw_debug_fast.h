@@ -161,6 +161,12 @@ efw_status_t efw_debug_fast_update(void);
  */
 efw_status_t efw_debug_fast_sync(void);
 
+/** 获取当前已编码的数据批次；数据在 release 前保持有效。 */
+efw_status_t efw_debug_fast_acquire(const uint8_t **data, uint16_t *size);
+
+/** 释放 efw_debug_fast_acquire() 返回的数据批次。 */
+void efw_debug_fast_release(void);
+
 /**
  * @brief 注册监控点（高性能版本）
  */

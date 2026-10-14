@@ -196,60 +196,39 @@ class DebugStage:
     @staticmethod
     def connect(project: ProjectManager, port: str, baud: int = 115200):
         """连接MCU"""
-        from debug.collector import DebugCollector
+        from tools.api import device as device_api
         
         print(f"连接MCU: {port} @ {baud}")
-        
-        collector = DebugCollector(port=port, baud=baud)
-        collector.connect()
+        device_api.snapshot_device(port=port, baud=baud)
         
         print("✓ 连接成功")
-        return collector
+        return {"port": port, "baud": baud}
     
     @staticmethod
-    def snapshot(collector) -> dict:
+    def snapshot(connection) -> dict:
         """获取快照"""
-        return collector.read_snapshot()
+        from tools.api import device as device_api
+
+        return device_api.snapshot_device(port=connection["port"], baud=int(connection.get("baud", 115200)))
     
     @staticmethod
     def record(project: ProjectManager, port: str, duration_sec: float, output: Path):
         """录制数据"""
-        from debug.collector import DebugCollector
-        from debug.recorder import DebugRecorder
+        from tools.api import device as device_api
         
         print(f"录制数据: {duration_sec}秒 -> {output}")
+        stats = device_api.record_device(port=port, output=output, duration=duration_sec)
         
-        collector = DebugCollector(port=port)
-        collector.connect()
-        
-        recorder = DebugRecorder(output)
-        recorder.start()
-        
-        import time
-        start = time.time()
-        
-        while time.time() - start < duration_sec:
-            snapshot = collector.read_snapshot()
-            recorder.record(snapshot)
-            time.sleep(0.1)
-        
-        stats = recorder.stop()
-        collector.disconnect()
-        
-        print(f"✓ 录制完成: {stats['record_count']} 条记录")
+        print(f"✓ 录制完成: {stats.get('record_count', stats.get('sample_count', 0))} 条记录")
         return stats
     
     @staticmethod
     def analyze(project: ProjectManager, log_path: Path):
         """分析数据"""
-        from debug.analyzer import DebugAnalyzer
+        from tools.api import device as device_api
         
         print(f"分析数据: {log_path}")
-        
-        analyzer = DebugAnalyzer(log_path)
-        analyzer.print_summary()
-        
-        return analyzer
+        return device_api.analyze_recording(log_path)
 
 
 class DeployStage:

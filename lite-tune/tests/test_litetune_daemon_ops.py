@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+import asyncio
+import base64
+import json
 import os
+import stat
 import sys
 import tempfile
 import unittest
@@ -14,7 +18,7 @@ import daemon_frames
 import daemon_ops
 import litetune_protocol as proto
 from daemon_frames import ensure_raw_fits, make_cmd_request_frame, make_param_get_frame, make_param_set_frame
-from daemon_state import BadRequestError, BusinessDaemonError, DaemonState, FrameTooLargeError, NotFoundError, NotReadyError, TimeoutDaemonError
+from daemon_state import BadRequestError, BusinessDaemonError, DaemonState, FrameTooLargeError, NotFoundError, NotReadyError, TimeoutDaemonError, UnauthorizedError, write_daemon_json
 
 
 class LiteTuneDaemonOpsTests(unittest.IsolatedAsyncioTestCase):
@@ -23,7 +27,8 @@ class LiteTuneDaemonOpsTests(unittest.IsolatedAsyncioTestCase):
         state = DaemonState(
             port="fake-port",
             baud=115200,
-            socket_path=os.path.join(runtime, "litetune.sock"),
+            bind_host="127.0.0.1",
+            bind_port=0,
             log_path=os.path.join(runtime, "daemon.jsonl"),
             daemon_json_path=os.path.join(runtime, "daemon.json"),
             runtime_dir=runtime,
@@ -44,6 +49,12 @@ class LiteTuneDaemonOpsTests(unittest.IsolatedAsyncioTestCase):
         }
         state.schema_ready.set()
         return state
+
+    def test_session_token_has_256_bits_of_randomness(self) -> None:
+        first = self.make_state().session_token
+        second = self.make_state().session_token
+        self.assertNotEqual(first, second)
+        self.assertEqual(len(base64.urlsafe_b64decode(first + "=")), 32)
 
     async def test_param_get_builds_request_and_returns_param_map(self) -> None:
         state = self.make_state()
@@ -190,13 +201,83 @@ class LiteTuneDaemonOpsTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(FrameTooLargeError):
             ensure_raw_fits(state, b"xx")
 
-    async def test_dispatch_uds_request_aliases_and_unknown_op(self) -> None:
+    async def test_dispatch_tcp_request_aliases_and_unknown_op(self) -> None:
         state = self.make_state()
-        status = await daemon_ops.dispatch_uds_request(state, {"op": "status"})
+        auth = {"session_token": state.session_token}
+        status = await daemon_ops.dispatch_tcp_request(state, {"op": "status", **auth})
         self.assertEqual(status["daemon_id"], state.daemon_id)
-        self.assertEqual((await daemon_ops.dispatch_uds_request(state, {"op": "param.list"}))["params"], state.active_schema["params"])
+        self.assertEqual(status["bind_host"], state.bind_host)
+        self.assertEqual(status["bind_port"], state.bind_port)
+        self.assertEqual((await daemon_ops.dispatch_tcp_request(state, {"op": "param.list", **auth}))["params"], state.active_schema["params"])
         with self.assertRaises(BadRequestError):
-            await daemon_ops.dispatch_uds_request(state, {"op": "does.not.exist"})
+            await daemon_ops.dispatch_tcp_request(state, {"op": "does.not.exist", **auth})
+
+    async def test_tcp_auth_rejects_missing_and_wrong_token_before_op(self) -> None:
+        state = self.make_state()
+        with mock.patch.object(daemon_ops, "daemon_status", wraps=daemon_ops.daemon_status) as status:
+            with self.assertRaises(UnauthorizedError):
+                await daemon_ops.dispatch_tcp_request(state, {"op": "status"})
+            with self.assertRaises(UnauthorizedError):
+                await daemon_ops.dispatch_tcp_request(state, {"op": "status", "session_token": "wrong"})
+            status.assert_not_called()
+
+            result = await daemon_ops.dispatch_tcp_request(
+                state,
+                {"op": "status", "session_token": state.session_token},
+            )
+            self.assertEqual(result["daemon_id"], state.daemon_id)
+            status.assert_called_once_with(state)
+
+    async def test_daemon_json_is_private_and_contains_token(self) -> None:
+        state = self.make_state()
+        with open(state.daemon_json_path, "w", encoding="utf-8") as f:
+            f.write("{}\n")
+        os.chmod(state.daemon_json_path, 0o644)
+        await write_daemon_json(state)
+        with open(state.daemon_json_path, "r", encoding="utf-8") as f:
+            metadata = json.load(f)
+        self.assertEqual(metadata["session_token"], state.session_token)
+        if os.name == "posix":
+            self.assertEqual(stat.S_IMODE(os.stat(state.daemon_json_path).st_mode), 0o600)
+
+    async def test_tcp_logs_and_response_do_not_leak_token(self) -> None:
+        state = self.make_state()
+        reader = asyncio.StreamReader()
+        reader.feed_data(
+            json.dumps(
+                {
+                    "id": state.session_token,
+                    "op": f"status-{state.session_token}",
+                    "session_token": state.session_token,
+                }
+            ).encode()
+            + b"\n"
+        )
+        reader.feed_eof()
+
+        class Writer:
+            def __init__(self):
+                self.data = b""
+
+            def write(self, data):
+                self.data += data
+
+            async def drain(self):
+                pass
+
+            def close(self):
+                pass
+
+            async def wait_closed(self):
+                pass
+
+        writer = Writer()
+        await daemon_ops.handle_tcp_client(state, reader, writer)
+        events = []
+        while not state.log_queue.empty():
+            events.append(state.log_queue.get_nowait())
+        self.assertNotIn(state.session_token, json.dumps(events))
+        self.assertNotIn(state.session_token.encode(), writer.data)
 
     async def test_schema_discovery_surfaces_latest_status(self) -> None:
         state = self.make_state()

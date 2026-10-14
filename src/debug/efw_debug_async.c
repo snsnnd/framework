@@ -52,11 +52,17 @@ static inline uint32_t ring_writable(const efw_debug_ring_t *ring)
  */
 static int ring_write(efw_debug_ring_t *ring, const uint8_t *data, uint32_t length)
 {
+    uint32_t write_pos;
+
+    EFW_DEBUG_ASYNC_CRITICAL_ENTER();
     if (ring_writable(ring) < length) {
+        EFW_DEBUG_ASYNC_CRITICAL_EXIT();
         return -1;  /* 空间不足 */
     }
-    
-    uint32_t pos = ring->write_pos & ring->mask;
+    write_pos = ring->write_pos;
+    EFW_DEBUG_ASYNC_CRITICAL_EXIT();
+
+    uint32_t pos = write_pos & ring->mask;
     uint32_t to_end = EFW_DEBUG_RING_SIZE - pos;
     
     if (length <= to_end) {
@@ -68,25 +74,19 @@ static int ring_write(efw_debug_ring_t *ring, const uint8_t *data, uint32_t leng
         memcpy(&ring->buffer[0], data + to_end, length - to_end);
     }
     
-    /* 内存屏障，确保数据写入完成后再更新位置 */
-#if defined(__arm__) || defined(__aarch64__)
-    __asm volatile("dmb" ::: "memory");
-#elif defined(__x86_64__) || defined(__i386__)
-    __asm volatile("mfence" ::: "memory");
-#else
-    /* 通用编译器屏障 */
-    __asm volatile("" ::: "memory");
-#endif
-    
-    ring->write_pos += length;
-    
+    /* 先保证 payload 对消费者可见，再发布 write_pos。 */
+    EFW_DEBUG_ASYNC_CRITICAL_ENTER();
+    EFW_DEBUG_ASYNC_MEMORY_BARRIER();
+    ring->write_pos = write_pos + length;
+    EFW_DEBUG_ASYNC_CRITICAL_EXIT();
+
     return 0;
 }
 
 /**
  * @brief 从环形缓冲区读取
  */
-static int ring_read(efw_debug_ring_t *ring, uint8_t *data, uint32_t length)
+static int ring_peek(const efw_debug_ring_t *ring, uint8_t *data, uint32_t length)
 {
     if (ring_readable(ring) < length) {
         return -1;  /* 数据不足 */
@@ -101,8 +101,6 @@ static int ring_read(efw_debug_ring_t *ring, uint8_t *data, uint32_t length)
         memcpy(data, &ring->buffer[pos], to_end);
         memcpy(data + to_end, &ring->buffer[0], length - to_end);
     }
-    
-    ring->read_pos += length;
     
     return 0;
 }
@@ -136,11 +134,15 @@ efw_status_t efw_debug_async_write(const void *data, uint16_t length)
     
     /* 尝试写入环形缓冲区 */
     if (ring_write(&g_async.ring, (const uint8_t *)data, length) != 0) {
+        EFW_DEBUG_ASYNC_CRITICAL_ENTER();
         g_async.stats.overflow_count++;
+        EFW_DEBUG_ASYNC_CRITICAL_EXIT();
         return EFW_ERR_FULL;
     }
     
+    EFW_DEBUG_ASYNC_CRITICAL_ENTER();
     g_async.stats.bytes_written += length;
+    EFW_DEBUG_ASYNC_CRITICAL_EXIT();
     
     return EFW_OK;
 }
@@ -151,59 +153,98 @@ efw_status_t efw_debug_async_flush(void)
         return EFW_ERR_NOT_READY;
     }
     
-    /* 检查是否有数据且当前无传输 */
-    if (g_async.tx_busy || ring_readable(&g_async.ring) == 0) {
+    /* Copy without consuming: read_pos advances only after DMA completion. */
+    static uint8_t tx_buffer[EFW_DEBUG_BATCH_SIZE];
+    uint32_t available;
+    uint16_t tx_length;
+
+    EFW_DEBUG_ASYNC_CRITICAL_ENTER();
+    if (g_async.tx_busy || ring_readable(&g_async.ring) == 0u) {
+        EFW_DEBUG_ASYNC_CRITICAL_EXIT();
         return EFW_OK;
     }
-    
-    /* 计算本次传输长度 */
-    uint32_t available = ring_readable(&g_async.ring);
-    uint16_t tx_length = (available > EFW_DEBUG_BATCH_SIZE) 
-                         ? EFW_DEBUG_BATCH_SIZE 
-                         : (uint16_t)available;
-    
-    /* 读取数据到传输缓冲区 */
-    /* 注意：这里简化处理，实际可能需要使用静态缓冲区 */
-    static uint8_t tx_buffer[EFW_DEBUG_BATCH_SIZE];
-    
-    if (ring_read(&g_async.ring, tx_buffer, tx_length) != 0) {
+    available = ring_readable(&g_async.ring);
+    tx_length = (available > EFW_DEBUG_BATCH_SIZE)
+                ? EFW_DEBUG_BATCH_SIZE
+                : (uint16_t)available;
+    EFW_DEBUG_ASYNC_MEMORY_BARRIER();
+    if (ring_peek(&g_async.ring, tx_buffer, tx_length) != 0) {
+        EFW_DEBUG_ASYNC_CRITICAL_EXIT();
         return EFW_ERR_IO;
     }
-    
-    /* 启动 DMA 传输 */
     g_async.tx_busy = 1;
     g_async.tx_buffer = tx_buffer;
-    
+    g_async.transfer.data = tx_buffer;
+    g_async.transfer.length = tx_length;
+    g_async.transfer.complete = 0u;
+    EFW_DEBUG_ASYNC_CRITICAL_EXIT();
+
+    /* 不能把平台驱动调用放在临界区内，避免阻塞 ISR 或扩大关中断时间。 */
     efw_status_t ret = efw_debug_start_dma(tx_buffer, tx_length);
     if (ret != EFW_OK) {
+        EFW_DEBUG_ASYNC_CRITICAL_ENTER();
         g_async.tx_busy = 0;
+        g_async.transfer.data = NULL;
+        g_async.transfer.length = 0u;
+        EFW_DEBUG_ASYNC_CRITICAL_EXIT();
         return ret;
     }
-    
-    g_async.stats.bytes_sent += tx_length;
-    g_async.stats.tx_count++;
-    
+
     return EFW_OK;
 }
 
 void efw_debug_async_tx_complete(void)
 {
-    /* DMA 传输完成，清除忙标志 */
+    EFW_DEBUG_ASYNC_CRITICAL_ENTER();
+    if (!g_async.tx_busy) {
+        EFW_DEBUG_ASYNC_CRITICAL_EXIT();
+        return;
+    }
+
+    EFW_DEBUG_ASYNC_MEMORY_BARRIER();
+    g_async.ring.read_pos += g_async.transfer.length;
+    g_async.stats.bytes_sent += g_async.transfer.length;
+    g_async.stats.tx_count++;
+    g_async.transfer.complete = 1u;
+    g_async.transfer.data = NULL;
+    g_async.transfer.length = 0u;
     g_async.tx_busy = 0;
-    
-    /* 可以立即触发下一次传输 */
-    /* efw_debug_async_flush(); */
+    EFW_DEBUG_ASYNC_CRITICAL_EXIT();
 }
 
 int efw_debug_async_has_data(void)
 {
-    return ring_readable(&g_async.ring) > 0;
+    int has_data;
+    EFW_DEBUG_ASYNC_CRITICAL_ENTER();
+    has_data = ring_readable(&g_async.ring) > 0;
+    EFW_DEBUG_ASYNC_CRITICAL_EXIT();
+    return has_data;
 }
 
 uint8_t efw_debug_async_usage(void)
 {
-    uint32_t used = ring_readable(&g_async.ring);
+    uint32_t used;
+    EFW_DEBUG_ASYNC_CRITICAL_ENTER();
+    used = ring_readable(&g_async.ring);
+    EFW_DEBUG_ASYNC_CRITICAL_EXIT();
     return (uint8_t)((used * 100) / EFW_DEBUG_RING_SIZE);
+}
+
+efw_status_t efw_debug_async_get_stats(uint32_t *bytes_written,
+                                       uint32_t *bytes_sent,
+                                       uint32_t *tx_count,
+                                       uint32_t *overflow_count)
+{
+    if (!g_async.initialized) {
+        return EFW_ERR_NOT_READY;
+    }
+    EFW_DEBUG_ASYNC_CRITICAL_ENTER();
+    if (bytes_written) *bytes_written = g_async.stats.bytes_written;
+    if (bytes_sent) *bytes_sent = g_async.stats.bytes_sent;
+    if (tx_count) *tx_count = g_async.stats.tx_count;
+    if (overflow_count) *overflow_count = g_async.stats.overflow_count;
+    EFW_DEBUG_ASYNC_CRITICAL_EXIT();
+    return EFW_OK;
 }
 
 /* ==================================================================

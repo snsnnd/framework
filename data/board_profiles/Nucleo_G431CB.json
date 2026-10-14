@@ -1,18 +1,30 @@
 {
-  "name": "Nucleo G431CB",
+  "name": "Custom STM32G431CB",
   "mcu": "STM32G431C(6-8-B)Tx",
-  "description": "Nucleo G431CB (STM32G431CBT6)",
+  "board_type": "custom",
+  "description": "Legacy profile name Nucleo_G431CB. ST does not publish a NUCLEO-G431CB board; board-mounted LED/button routing is intentionally unset.",
   "clock": {
+    "source": "HSI",
+    "source_hz": 16000000,
+    "bypass": false,
+    "pll": {"m": 4, "n": 85, "p": 2, "q": 2, "r": 2},
+    "flash_latency": 8,
     "sysclk_mhz": 170,
     "hclk_mhz": 170,
-    "pclk1_mhz": 42,
-    "pclk2_mhz": 85
+    "pclk1_mhz": 170,
+    "pclk2_mhz": 170
   },
   "pins": {
     "led": {},
     "button": {},
-    "uart_debug": {},
-    "i2c_sensor": {},
-    "spi_display": {}
-  }
+    "uart_debug": {"instance": "USART2", "tx": "PA2", "rx": "PA3", "baud": 115200, "connection": "recommended header routing"},
+    "i2c_sensor": {"instance": "I2C1", "scl": "PB8", "sda": "PB9", "connection": "recommended routing"},
+    "spi_display": {"instance": "SPI1", "sck": "PA5", "miso": "PA6", "mosi": "PA7", "cs": "PA4", "connection": "recommended routing"}
+  },
+  "sources": [
+    "data/mcu/STM32G4/STM32G431CBT6.json",
+    "https://github.com/zephyrproject-rtos/zephyr/tree/main/boards/st/nucleo_g431kb",
+    "https://github.com/zephyrproject-rtos/zephyr/tree/main/boards/st/nucleo_g431rb"
+  ],
+  "source_note": "Official NUCLEO-G431KB/RB data is reference-only and is not used for board-mounted LED/button pins because package and board differ."
 }

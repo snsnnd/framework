@@ -11,6 +11,7 @@ static const efw_algo_ops_t **g_algos = g_algo_default_pool;
 static size_t g_algo_cap = EFW_MAX_ALGOS;
 static size_t g_algo_n;
 
+/* 算法注册表只管理算法入口和 ctx，不解释 in/out 的具体数据类型。 */
 efw_status_t efw_algo_registry_init(void) { g_algos = g_algo_default_pool; g_algo_cap = EFW_MAX_ALGOS; g_algo_n = 0; return EFW_OK; }
 efw_status_t efw_algo_registry_init_pool(const efw_algo_ops_t **pool, size_t capacity) {
     if (!pool || capacity == 0) { efw_diag_set(EFW_ERR_INVALID, "algo", 0, "invalid pool"); return EFW_ERR_INVALID; }
@@ -57,6 +58,7 @@ void efw_algo_enumerate(efw_algo_enumerate_fn fn, void *user) {
 }
 
 efw_status_t efw_algo_run(const char *name, const void *in, uint16_t in_size, void *out, uint16_t out_size) {
+    /* 这是易用路径：每次运行做一次线性名称查找；高频场景应缓存 ops。 */
     const efw_algo_ops_t *ops;
     efw_status_t s = efw_algo_get(name, &ops);
     if (s != EFW_OK) return s;

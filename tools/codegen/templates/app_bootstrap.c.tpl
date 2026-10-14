@@ -38,6 +38,27 @@ static const efw_module_ops_t *g_module_pool[APP_MODULE_COUNT];
  * ====================================================================== */
 static uint32_t g_app_elapsed_ms;
 
+typedef union {
+    uint8_t raw[APP_DATAFLOW_BUFFER_SIZE];
+    float align_f;
+    uint32_t align_u32;
+    void *align_ptr;
+} app_dataflow_buffer_t;
+
+static const char *g_app_event_name;
+static uint16_t g_app_event_topic_id;
+static const void *g_app_event_data;
+static uint16_t g_app_event_size;
+
+uint32_t app_elapsed_ms(void) {
+    return g_app_elapsed_ms;
+}
+
+static uint32_t app_trace_time_ms(void *user) {
+    EFW_UNUSED(user);
+    return app_elapsed_ms();
+}
+
 /* ======================================================================
  *  Contract ABI checks
  * ====================================================================== */
@@ -46,6 +67,15 @@ $CONTRACT_SIZE_CHECKS
  *  External declarations
  * ====================================================================== */
 $EXTERNS
+/* ======================================================================
+ *  Generated application runtime
+ * ====================================================================== */
+$STATE_HELPERS$PUBLISHER_RUNTIME$STATE_LOGIC_BLOCKS$DATAFLOW_PIPELINES$LINE_FOLLOWER_DEFS$EVENT_RUNTIME$SCHEDULER_TASKS
+const char *app_current_event_name(void) { return g_app_event_name; }
+uint16_t app_current_event_topic_id(void) { return g_app_event_topic_id; }
+const void *app_current_event_data(void) { return g_app_event_data; }
+uint16_t app_current_event_size(void) { return g_app_event_size; }
+
 /* ======================================================================
  *  Pool initialization
  * ====================================================================== */
@@ -93,7 +123,9 @@ static const efw_app_manifest_t g_app_manifest = {
  *  Application entry points
  * ====================================================================== */
 efw_status_t app_init(void) {
-    efw_status_t s = efw_app_init(&g_app_manifest);
+    efw_status_t s;
+    efw_app_set_time_provider(app_trace_time_ms, 0);
+    s = efw_app_init(&g_app_manifest);
     if (s != EFW_OK) return s;
 #if APP_USE_MODULE
     s = efw_module_init_all();

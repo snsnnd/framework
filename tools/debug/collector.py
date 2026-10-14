@@ -66,27 +66,20 @@ class DebugCollector:
         Args:
             port: 串口设备路径 (如 /dev/ttyUSB0 或 COM3)
             baud: 波特率，默认 115200
-            litetune_root: LiteTune 项目根目录，默认自动查找
-            runtime_dir: LiteTune 运行时目录，默认使用 litetune-skill/runtime
+            litetune_root: 兼容旧参数，当前不再需要外部 lite-tune 仓库
+            runtime_dir: EFW ground-station 运行时目录，默认使用 .efw_runtime/groundstation
         """
         self.port = port
         self.baud = baud
         
-        # 查找 LiteTune 路径
-        if litetune_root:
-            self.litetune_root = Path(litetune_root)
-        else:
-            # 从当前文件向上查找 lite-tune 目录
-            self.litetune_root = self._find_litetune_root()
-        
-        # LiteTune CLI 路径
-        self.lt_py = self.litetune_root / "src" / "litetune-skill" / "code" / "lt.py"
+        self.framework_root = self._find_framework_root()
+        self.litetune_root = Path(litetune_root) if litetune_root else self.framework_root
         
         # 运行时目录
         if runtime_dir:
             self.runtime_dir = Path(runtime_dir)
         else:
-            self.runtime_dir = self.litetune_root / "src" / "litetune-skill" / "runtime"
+            self.runtime_dir = self.framework_root / ".efw_runtime" / "groundstation"
         
         # 连接状态
         self.connected = False
@@ -100,30 +93,16 @@ class DebugCollector:
         self._debug_points: dict[str, dict] = {}
         self._schema: Optional[dict] = None
     
-    def _find_litetune_root(self) -> Path:
-        """自动查找 LiteTune 项目根目录"""
-        # 从当前文件路径推断
+    def _find_framework_root(self) -> Path:
+        """自动查找 EFW framework 根目录"""
         current = Path(__file__).resolve()
-        
-        # 向上查找包含 lite-tune 目录的父目录
         for parent in current.parents:
-            lite_tune = parent / "lite-tune"
-            if lite_tune.exists() and (lite_tune / "src" / "litetune-skill").exists():
-                return lite_tune
-        
-        # 如果找不到，尝试相对于 framework 目录
-        framework_root = current.parent.parent.parent
-        lite_tune = framework_root / "lite-tune"
-        if lite_tune.exists():
-            return lite_tune
-        
-        raise ConnectionError(
-            "无法找到 LiteTune 项目目录。"
-            "请通过 litetune_root 参数指定路径。"
-        )
+            if (parent / "tools" / "groundstation" / "cli.py").exists():
+                return parent
+        raise ConnectionError("无法找到 EFW framework 根目录")
     
     def _run_lt(self, *args: str, timeout: float = 10.0) -> dict:
-        """执行 lt.py 命令
+        """执行 EFW ground-station CLI 命令
         
         Args:
             *args: 命令参数
@@ -134,7 +113,7 @@ class DebugCollector:
         """
         cmd = [
             sys.executable,
-            str(self.lt_py),
+            "-m", "tools.groundstation.cli",
             "--runtime", str(self.runtime_dir),
             "--timeout", str(timeout),
             *args
@@ -146,21 +125,21 @@ class DebugCollector:
                 capture_output=True,
                 text=True,
                 timeout=timeout + 2,
-                cwd=str(self.litetune_root)
+                cwd=str(self.framework_root)
             )
         except subprocess.TimeoutExpired:
-            raise TimeoutError(f"lt.py 命令超时: {' '.join(args)}")
+            raise TimeoutError(f"ground-station 命令超时: {' '.join(args)}")
         except FileNotFoundError:
-            raise ConnectionError(f"找不到 lt.py: {self.lt_py}")
+            raise ConnectionError("找不到 EFW ground-station CLI")
         
         if result.returncode != 0:
             error_msg = result.stderr or result.stdout or "未知错误"
-            raise ProtocolError(f"lt.py 命令失败: {error_msg}")
+            raise ProtocolError(f"ground-station 命令失败: {error_msg}")
         
         try:
             return json.loads(result.stdout)
         except json.JSONDecodeError as e:
-            raise ProtocolError(f"无法解析 lt.py 输出: {e}")
+            raise ProtocolError(f"无法解析 ground-station 输出: {e}")
     
     def connect(self) -> bool:
         """连接到 MCU
@@ -322,6 +301,31 @@ class DebugCollector:
             "update_count": update_count,
             "error_count": error_count,
         }
+
+    def read_debug_perf(self) -> dict[str, Any]:
+        """Read EFW debug/LiteTune transport performance counters."""
+        if not self.connected:
+            raise ConnectionError("未连接到 MCU")
+
+        result = self._run_lt("cmd", "debug.perf")
+        if not result.get("ok"):
+            raise ProtocolError(f"读取调试性能指标失败: {result}")
+
+        payload_hex = result.get("cmd", {}).get("payload_hex", "")
+        raw = bytes.fromhex(payload_hex)
+        if len(raw) < 24:
+            raise ProtocolError(f"debug.perf 响应长度错误: {len(raw)}")
+
+        events_received, events_queued, events_flushed, events_dropped, process_calls, current_depth, max_depth = struct.unpack("<IIIIIHH", raw[:24])
+        return {
+            "events_received": events_received,
+            "events_queued": events_queued,
+            "events_flushed": events_flushed,
+            "events_dropped": events_dropped,
+            "process_calls": process_calls,
+            "current_queue_depth": current_depth,
+            "max_queue_depth": max_depth,
+        }
     
     def get_schema(self) -> dict:
         """获取 MCU 完整 schema
@@ -409,7 +413,7 @@ class DebugCollector:
         
         args = ["cmd", name]
         if payload:
-            args.extend(["--payload", payload])
+            args.extend(["--payload-hex", payload])
         
         result = self._run_lt(*args)
         
@@ -428,7 +432,7 @@ class DebugCollector:
         Returns:
             响应数据
         """
-        socket_path = self.runtime_dir / "litetune.sock"
+        socket_path = self.runtime_dir / "efw-groundstation.sock"
         
         if not socket_path.exists():
             raise ConnectionError(f"daemon socket 不存在: {socket_path}")

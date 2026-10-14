@@ -171,22 +171,13 @@ static void dbuf_init(void)
  */
 static void dbuf_swap(void)
 {
+    uint16_t ready_size = g_debug_fast.dbuf.write_offset;
     uint8_t *temp = g_debug_fast.dbuf.write_buffer;
     g_debug_fast.dbuf.write_buffer = g_debug_fast.dbuf.read_buffer;
     g_debug_fast.dbuf.read_buffer = temp;
     g_debug_fast.dbuf.write_offset = 0;
-    g_debug_fast.dbuf.swap_flag = 0;
-}
-
-/**
- * @brief 写入数据到写缓冲
- */
-static void dbuf_write(const uint8_t *data, uint16_t size)
-{
-    if (g_debug_fast.dbuf.write_offset + size <= EFW_DEBUG_BUFFER_SIZE) {
-        memcpy(&g_debug_fast.dbuf.write_buffer[g_debug_fast.dbuf.write_offset], data, size);
-        g_debug_fast.dbuf.write_offset += size;
-    }
+    g_debug_fast.dbuf.read_offset = ready_size;
+    g_debug_fast.dbuf.swap_flag = 1;
 }
 
 /* ==================================================================
@@ -195,10 +186,6 @@ static void dbuf_write(const uint8_t *data, uint16_t size)
 
 efw_status_t efw_debug_fast_init(void)
 {
-    if (g_debug_fast.initialized) {
-        return EFW_OK;
-    }
-    
     /* 清零所有状态 */
     memset(&g_debug_fast, 0, sizeof(g_debug_fast));
     
@@ -271,7 +258,11 @@ efw_status_t efw_debug_fast_update(void)
 
 efw_status_t efw_debug_fast_sync(void)
 {
+    uint8_t all_written = 1u;
     if (!g_debug_fast.initialized) {
+        return EFW_ERR_NOT_READY;
+    }
+    if (g_debug_fast.dbuf.swap_flag) {
         return EFW_ERR_NOT_READY;
     }
     
@@ -295,10 +286,10 @@ efw_status_t efw_debug_fast_sync(void)
             
             if (new_offset > g_debug_fast.dbuf.write_offset) {
                 g_debug_fast.dbuf.write_offset = new_offset;
+                clear_dirty(i);
+            } else {
+                all_written = 0u;
             }
-            
-            /* 清除脏标记 */
-            clear_dirty(i);
         }
     }
     
@@ -307,10 +298,27 @@ efw_status_t efw_debug_fast_sync(void)
         dbuf_swap();
     }
     
-    g_debug_fast.incr.last_sync_seq = g_debug_fast.incr.update_seq;
+    if (all_written) {
+        g_debug_fast.incr.last_sync_seq = g_debug_fast.incr.update_seq;
+    }
     g_debug_fast.stats.sync_us = efw_debug_get_us() - start_us;
     
     return EFW_OK;
+}
+
+efw_status_t efw_debug_fast_acquire(const uint8_t **data, uint16_t *size)
+{
+    if (!data || !size) return EFW_ERR_INVALID;
+    if (!g_debug_fast.initialized || !g_debug_fast.dbuf.swap_flag) return EFW_ERR_NOT_READY;
+    *data = g_debug_fast.dbuf.read_buffer;
+    *size = g_debug_fast.dbuf.read_offset;
+    return EFW_OK;
+}
+
+void efw_debug_fast_release(void)
+{
+    g_debug_fast.dbuf.read_offset = 0u;
+    g_debug_fast.dbuf.swap_flag = 0u;
 }
 
 void efw_debug_fast_get_stats(uint32_t *update_us, uint32_t *sync_us,
@@ -328,6 +336,10 @@ void efw_debug_fast_get_stats(uint32_t *update_us, uint32_t *sync_us,
 efw_status_t efw_debug_fast_init(void) { return EFW_OK; }
 efw_status_t efw_debug_fast_update(void) { return EFW_OK; }
 efw_status_t efw_debug_fast_sync(void) { return EFW_OK; }
+efw_status_t efw_debug_fast_acquire(const uint8_t **data, uint16_t *size) {
+    (void)data; (void)size; return EFW_ERR_NOT_READY;
+}
+void efw_debug_fast_release(void) {}
 efw_status_t efw_debug_fast_register(const char *n, uint8_t t, const void *p, uint16_t id) {
     (void)n; (void)t; (void)p; (void)id; return EFW_OK;
 }

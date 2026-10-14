@@ -42,6 +42,7 @@ static const efw_actuator_ops_t **g_actuators = g_actuator_default_pool;
 static size_t g_actuator_cap = EFW_MAX_ACTUATORS;
 static size_t g_actuator_n;
 
+/* 执行器表保存“如何写出控制量”的对象，不保存具体命令或运行状态。 */
 efw_status_t efw_actuator_registry_init(void) { g_actuators = g_actuator_default_pool; g_actuator_cap = EFW_MAX_ACTUATORS; g_actuator_n = 0; return EFW_OK; }
 efw_status_t efw_actuator_registry_init_pool(const efw_actuator_ops_t **pool, size_t capacity) {
     if (!pool || capacity == 0) { efw_diag_set(EFW_ERR_INVALID, "actuator", 0, "invalid pool"); return EFW_ERR_INVALID; }
@@ -50,6 +51,7 @@ efw_status_t efw_actuator_registry_init_pool(const efw_actuator_ops_t **pool, si
 
 efw_status_t efw_actuator_register(const efw_actuator_ops_t *ops) {
     if (!ops || !ops->name || !ops->write) { efw_diag_set(EFW_ERR_INVALID, "actuator", 0, "invalid ops"); return EFW_ERR_INVALID; }
+    /* 和传感器一样，跨层名称引用在注册时完成校验。 */
     if (ops->hal_name) {
 #if EFW_ENABLE_HAL
         const efw_hal_ops_t *hal;

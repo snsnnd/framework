@@ -41,11 +41,13 @@ static const efw_module_ops_t **g_modules = g_module_default_pool;
 static size_t g_module_cap = EFW_MAX_MODULES;
 static size_t g_module_n;
 
+/* NULL 生命周期回调代表该阶段不需要动作，而不是错误。 */
 static efw_status_t module_call(const efw_module_ops_t *ops, efw_status_t (*fn)(void *ctx)) {
     return fn ? fn(ops->ctx) : EFW_OK;
 }
 
 static void insert_module_sorted(const efw_module_ops_t *ops) {
+    /* 插入排序保持 priority 非递减；相同优先级保持注册先后顺序。 */
     size_t pos = g_module_n;
     for (size_t i = 0; i < g_module_n; ++i) {
         if (g_modules[i]->priority > ops->priority) {

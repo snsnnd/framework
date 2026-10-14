@@ -14,6 +14,7 @@ CONTRACT_DEFAULTS = BUILTIN_CONTRACTS
 PROCESSOR_INPUT_PORTS = {"sensor", "algorithm", "event", "module_input"}
 ALGORITHM_INPUT_PORTS = {"sensor", "processor", "event"}
 MODULE_INPUT_PORTS = {"module_input", "event"}
+PUBLISHER_SOURCE_TYPES = {"module.custom", "sensor.custom", "sensor.line_tracking", "processor.custom"}
 MULTI_INPUT_PORTS = {
     "processor.custom": PROCESSOR_INPUT_PORTS,
     "algorithm.custom": ALGORITHM_INPUT_PORTS,
@@ -203,6 +204,10 @@ def _set_multi_input_spec(node: dict[str, Any], port: str, spec: dict[str, Any],
 
 def can_connect_ports(src: dict[str, Any], dst: dict[str, Any], from_port: str | None = None, to_port: str | None = None) -> bool:
     """Return whether a visual port connection has a known graph semantic."""
+    if from_port and from_port not in PORT_RULES.get(str(src.get("type")), {}).get("out", []):
+        return False
+    if to_port and to_port not in PORT_RULES.get(str(dst.get("type")), {}).get("in", []):
+        return False
     if dst.get("type") == "custom.interface_card" and to_port == "any":
         return True
     if from_port and to_port:
@@ -210,9 +215,11 @@ def can_connect_ports(src: dict[str, Any], dst: dict[str, Any], from_port: str |
             ("hal", "hal"),
             ("sensor", "sensor"),
             ("sensor", "processor"),
+            ("sensor", "module_input"),
             ("sensor", "event_source"),
             ("algorithm", "algorithm"),
             ("algorithm", "processor"),
+            ("algorithm", "control"),
             ("processor", "processor"),
             ("processor", "algorithm"),
             ("processor", "control"),
@@ -254,7 +261,7 @@ def pair_has_semantics(src: dict[str, Any], dst: dict[str, Any]) -> bool:
         or (src_type == "hal.custom" and dst_type in {"sensor.custom", "actuator.custom"})
         or (src_type == "project.module" and dst_type == "project.module")
         or (src_type == "event.topic" and dst_type in {"event.publisher", "event.subscriber"})
-        or (src_type in {"module.custom", "sensor.custom", "sensor.line_tracking", "processor.custom"} and dst_type == "event.publisher")
+        or (src_type in PUBLISHER_SOURCE_TYPES and dst_type == "event.publisher")
         or (src_type == "event.subscriber" and dst_type in {"module.custom", "processor.custom", "algorithm.custom"})
         or (src_type == "state.machine" and dst_type in {"state.state", "state.transition"})
         or (src_type == "state.state" and dst_type == "state.transition")
@@ -262,7 +269,9 @@ def pair_has_semantics(src: dict[str, Any], dst: dict[str, Any]) -> bool:
         or (src_type in {"sensor.custom", "sensor.line_tracking", "algorithm.pid", "algorithm.custom", "project.module", "event.subscriber"} and dst_type == "processor.custom")
         or (src_type == "processor.custom" and dst_type in {"algorithm.pid", "algorithm.custom", "actuator.motor", "actuator.custom", "module.custom", "project.module", "event.publisher"})
         or (src_type == "task.periodic" and dst_type == "module.custom")
-        or (src_type == "sensor.line_tracking" and dst_type in {"algorithm.pid", "algorithm.custom"})
+        or (src_type in {"sensor.custom", "sensor.line_tracking"} and dst_type in {"algorithm.pid", "algorithm.custom"})
+        or (src_type in {"sensor.custom", "sensor.line_tracking"} and dst_type == "module.custom")
+        or (src_type in {"algorithm.pid", "algorithm.custom"} and dst_type in {"actuator.motor", "actuator.custom"})
         or (src_type == "actuator.motor" and dst_type == "actuator.motor")
         or (src_type == "custom.code" and dst_type in {"sensor.custom", "processor.custom", "algorithm.custom", "module.custom", "actuator.custom", "hal.custom", "task.periodic"})
         or (dst_type == "custom.interface_card")
@@ -292,7 +301,7 @@ def apply_pair_semantics(src: dict[str, Any], dst: dict[str, Any], graph: dict[s
     if src_type == "event.topic" and dst_type in {"event.publisher", "event.subscriber"}:
         set_field(dst, "topic", src.get("id"))
         return True
-    if src_type in {"module.custom", "sensor.custom", "sensor.line_tracking", "processor.custom"} and dst_type == "event.publisher":
+    if src_type in PUBLISHER_SOURCE_TYPES and dst_type == "event.publisher":
         set_field(dst, "source", src.get("id"))
         return True
     if src_type == "event.subscriber" and dst_type in {"module.custom", "processor.custom", "algorithm.custom"}:
@@ -332,6 +341,11 @@ def apply_pair_semantics(src: dict[str, Any], dst: dict[str, Any], graph: dict[s
         return True
     if src_type == "processor.custom" and dst_type == "module.custom":
         _set_multi_input_spec(dst, str(to_port or "module_input"), _output_contract_spec(src, graph), overwrite)
+        return True
+    if src_type in {"sensor.custom", "sensor.line_tracking"} and dst_type == "module.custom":
+        _set_multi_input_spec(dst, str(to_port or "module_input"), _output_contract_spec(src, graph), overwrite)
+        return True
+    if src_type in {"algorithm.pid", "algorithm.custom"} and dst_type in {"actuator.motor", "actuator.custom"}:
         return True
     if src_type == "task.periodic" and dst_type == "module.custom":
         set_field(src, "call", dst.get("poll"))

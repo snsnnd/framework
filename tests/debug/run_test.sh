@@ -32,6 +32,7 @@ echo "  运行测试..."
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 
 cd "${SCRIPT_DIR}"
+ctest --test-dir "${BUILD_DIR}" --output-on-failure
 ./build/debug_perf_test 2>&1 | tee "${RESULTS_DIR}/test_output.txt"
 
 # 复制结果文件

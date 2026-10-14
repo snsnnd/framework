@@ -30,8 +30,8 @@ def graph_as_temp_file(graph: dict[str, Any]) -> Iterator[Path]:
         tmp_path.unlink(missing_ok=True)
 
 
-def validate_graph_data(graph: dict[str, Any]) -> dict[str, Any]:
-    return validate_graph(graph)
+def validate_graph_data(graph: dict[str, Any], *, target_chip: str | None = None) -> dict[str, Any]:
+    return validate_graph(graph, target_chip=target_chip)
 
 
 def preview_graph_generation(graph: dict[str, Any], output_dir: Path) -> list[dict[str, Any]]:

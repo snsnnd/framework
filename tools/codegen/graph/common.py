@@ -36,6 +36,16 @@ VALID_EDGE_KINDS = {
     "event_subscribe",
 }
 
+EDGE_KIND_ALIASES = {
+    "containment": "contains",
+    "module_contains": "contains",
+    "data": "data_flow",
+    "module_data_flow": "data_flow",
+    "control": "control_flow",
+    "state": "state_transition",
+    "event_subscribe": "event",
+}
+
 CALLBACK_SIGNATURES = {
     "hal.init": "void *ctx",
     "hal.read": "void *ctx, void *buf, uint16_t len, uint16_t *actual",
@@ -56,6 +66,8 @@ CALLBACK_SIGNATURES = {
     "processor.process": "void *ctx, const efw_app_multi_input_t *in, void *out",
     "topic.callback": "uint16_t topic_id, const void *data, uint16_t size, void *user",
     "condition": "void",
+    "board.line_input.read": "const app_gpio_pin_t *pins, uint8_t count, efw_line_tracking_data_t *out",
+    "board.motor.write": "app_pwm_channel_t pwm, app_gpio_pin_t dir_pin, const efw_motor_cmd_t *cmd",
 }
 
 CALLBACK_RETURNS = {

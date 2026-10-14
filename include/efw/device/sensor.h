@@ -79,18 +79,30 @@ typedef struct {
 
 /* ====== 传感器注册表 API ====== */
 
+/** @brief 使用默认静态池清空传感器注册表。 */
 efw_status_t efw_sensor_registry_init(void);
+/** @brief 使用调用方提供的指针池清空传感器注册表。 */
 efw_status_t efw_sensor_registry_init_pool(const efw_sensor_ops_t **pool, size_t capacity);
+/** @brief 注册传感器并校验其 HAL/COMM 名称引用。 */
 efw_status_t efw_sensor_register(const efw_sensor_ops_t *ops);
+/** @brief 按名称获取传感器描述。 */
 efw_status_t efw_sensor_get(const char *name, const efw_sensor_ops_t **out_ops);
+/** @brief 移除传感器指针，不调用释放回调。 */
 efw_status_t efw_sensor_unregister(const char *name);
+/** @brief 返回已注册传感器数量。 */
 size_t efw_sensor_count(void);
+/** @brief 遍历传感器注册表。 */
 typedef void (*efw_sensor_enumerate_fn)(const efw_sensor_ops_t *ops, void *user);
 void efw_sensor_enumerate(efw_sensor_enumerate_fn fn, void *user);
+/** @brief 统计指定传感器类型的数量。 */
 size_t efw_sensor_count_by_type(efw_sensor_type_t type);
+/** @brief 解析传感器的 hal_name 并返回对应 HAL。 */
 efw_status_t efw_sensor_bind_hal(const char *sensor_name, const efw_hal_ops_t **out_hal);
+/** @brief 解析传感器的 comm_name 并返回对应 COMM。 */
 efw_status_t efw_sensor_bind_comm(const char *sensor_name, const efw_comm_ops_t **out_comm);
+/** @brief 调用传感器的可选 init 回调。 */
 efw_status_t efw_sensor_init_device(const char *name);
+/** @brief 调用传感器 read 回调，将数据写入 out。 */
 efw_status_t efw_sensor_read(const char *name, void *out, uint16_t out_size);
 
 #endif

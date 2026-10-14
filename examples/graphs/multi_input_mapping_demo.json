@@ -68,7 +68,7 @@
   "custom_files": [
     {
       "path": "app_custom.c",
-      "content": "#include \"efw/efw.h\"\n\nefw_status_t app_read_sensor(void *ctx, void *out, uint16_t out_size){EFW_UNUSED(ctx); if(out) *(float*)out = 1.0f; return EFW_OK;}\nefw_status_t app_run_algo(void *ctx, const efw_app_multi_input_t *in, void *out){EFW_UNUSED(ctx); EFW_UNUSED(in); EFW_UNUSED(out); return EFW_OK;}\nefw_status_t app_poll_module(void *ctx, const efw_app_multi_input_t *in){EFW_UNUSED(ctx); EFW_UNUSED(in); return EFW_OK;}\n"
+      "content": "#include \"efw/efw.h\"\n\nefw_status_t app_read_sensor(void *ctx, void *out, uint16_t out_size){EFW_UNUSED(ctx); EFW_UNUSED(out_size); if(out) *(float*)out = 1.0f; return EFW_OK;}\nefw_status_t app_run_algo(void *ctx, const efw_app_multi_input_t *in, void *out){EFW_UNUSED(ctx); EFW_UNUSED(in); EFW_UNUSED(out); return EFW_OK;}\nefw_status_t app_poll_module(void *ctx, const efw_app_multi_input_t *in){EFW_UNUSED(ctx); EFW_UNUSED(in); return EFW_OK;}\n"
     }
   ],
   "ui": {"positions": {}}

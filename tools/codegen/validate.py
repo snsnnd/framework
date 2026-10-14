@@ -12,10 +12,18 @@ from typing import Any
 
 try:
     from .utils import c_ident, require, nodes_of, BUILTIN_CONTRACTS
-    from .graph import CALLBACK_RETURNS, CALLBACK_SIGNATURES, GENERATED_FILES, NODE_CONTRACTS, SUPPORTED_FLOW_TYPES, SUPPORTED_NODE_TYPES, VALID_EDGE_KINDS, MULTI_INPUT_NODE_PORTS, TRIGGER_POLICY_CHOICES, OUTPUT_MODE_CHOICES, PROCESS_MODE_CHOICES, FIELD_MAPPING_SOURCE_CHOICES, FIELD_MAPPING_TRANSFORM_CHOICES, BUILTIN_STRUCT_FIELD_TYPES, apply_pair_semantics, node_generation_label
+    from .graph import CALLBACK_RETURNS, CALLBACK_SIGNATURES, EDGE_KIND_ALIASES, GENERATED_FILES, NODE_CONTRACTS, PUBLISHER_SOURCE_TYPES, SUPPORTED_FLOW_TYPES, SUPPORTED_NODE_TYPES, VALID_EDGE_KINDS, MULTI_INPUT_NODE_PORTS, TRIGGER_POLICY_CHOICES, OUTPUT_MODE_CHOICES, PROCESS_MODE_CHOICES, FIELD_MAPPING_SOURCE_CHOICES, FIELD_MAPPING_TRANSFORM_CHOICES, BUILTIN_STRUCT_FIELD_TYPES, apply_pair_semantics, can_connect_ports, node_generation_label
 except ImportError:  # pragma: no cover - supports legacy top-level codegen imports
     from codegen.utils import c_ident, require, nodes_of, BUILTIN_CONTRACTS
-    from codegen.graph import CALLBACK_RETURNS, CALLBACK_SIGNATURES, GENERATED_FILES, NODE_CONTRACTS, SUPPORTED_FLOW_TYPES, SUPPORTED_NODE_TYPES, VALID_EDGE_KINDS, MULTI_INPUT_NODE_PORTS, TRIGGER_POLICY_CHOICES, OUTPUT_MODE_CHOICES, PROCESS_MODE_CHOICES, FIELD_MAPPING_SOURCE_CHOICES, FIELD_MAPPING_TRANSFORM_CHOICES, BUILTIN_STRUCT_FIELD_TYPES, apply_pair_semantics, node_generation_label
+    from codegen.graph import CALLBACK_RETURNS, CALLBACK_SIGNATURES, EDGE_KIND_ALIASES, GENERATED_FILES, NODE_CONTRACTS, PUBLISHER_SOURCE_TYPES, SUPPORTED_FLOW_TYPES, SUPPORTED_NODE_TYPES, VALID_EDGE_KINDS, MULTI_INPUT_NODE_PORTS, TRIGGER_POLICY_CHOICES, OUTPUT_MODE_CHOICES, PROCESS_MODE_CHOICES, FIELD_MAPPING_SOURCE_CHOICES, FIELD_MAPPING_TRANSFORM_CHOICES, BUILTIN_STRUCT_FIELD_TYPES, apply_pair_semantics, can_connect_ports, node_generation_label
+
+
+def _target_api():
+    try:
+        from tools import target
+    except ImportError:  # pragma: no cover - legacy top-level codegen import
+        import target
+    return target
 
 
 def node_type(nodes: dict[str, dict[str, Any]], node_id: str | None) -> str | None:
@@ -159,6 +167,31 @@ def runtime_dataflow_paths(raw_nodes: list[dict[str, Any]], raw_edges: list[dict
             seen_keys.add(key)
             unique.append(path)
     return unique
+
+
+def validate_dataflow_acyclic(raw_edges: list[dict[str, Any]]) -> None:
+    adjacency: dict[str, list[str]] = {}
+    for edge in raw_edges:
+        if edge.get("kind") in {"data_flow", "control_flow"}:
+            adjacency.setdefault(str(edge["from"]), []).append(str(edge["to"]))
+    state: dict[str, int] = {}
+    stack: list[str] = []
+
+    def visit(node_id: str) -> None:
+        state[node_id] = 1
+        stack.append(node_id)
+        for next_id in adjacency.get(node_id, []):
+            if state.get(next_id, 0) == 0:
+                visit(next_id)
+            elif state.get(next_id) == 1:
+                start = stack.index(next_id)
+                require(False, f"dataflow/control cycle detected: {' -> '.join([*stack[start:], next_id])}")
+        stack.pop()
+        state[node_id] = 2
+
+    for node_id in list(adjacency):
+        if state.get(node_id, 0) == 0:
+            visit(node_id)
 
 
 def validate_contract_fields(node: dict[str, Any]) -> None:
@@ -490,6 +523,10 @@ def expected_callbacks(ctx: dict[str, Any]) -> dict[str, dict[str, str]]:
             add(node.get(field), signature_key, f"{node['id']}.{field}")
     for task in ctx["tasks"]:
         add(task.get("call"), "task.call", f"task {task.get('id')}.call")
+    if nodes_of(ctx, "hal.gpio_line_input"):
+        add("app_board_read_line_input", "board.line_input.read", "hal.gpio_line_input board adapter")
+    if nodes_of(ctx, "actuator.motor"):
+        add("app_board_write_motor", "board.motor.write", "actuator.motor board adapter")
     return callbacks
 
 
@@ -787,6 +824,8 @@ def validate_node_fields_by_type(node: dict[str, Any], raw_nodes: list[dict[str,
         require(node.get("topic") in nodes_by_id and nodes_by_id[node.get("topic")]["type"] == "event.topic", f"{node['id']}.topic 必须引用一个 event.topic 节点，当前引用 \"{node.get('topic')}\" 不存在")
         if node.get("source"):
             require(node.get("source") in nodes_by_id, f"{node['id']}.source 引用了不存在的节点 \"{node.get('source')}\"，请检查数据来源节点是否存在")
+            source = nodes_by_id[node["source"]]
+            require(source.get("type") in PUBLISHER_SOURCE_TYPES, f"{node['id']}.source 类型 {source.get('type')} 不支持自动发布")
         if node.get("data_expr"):
             require(isinstance(node.get("data_expr"), str) and node.get("data_expr"), f"{node['id']}.data_expr 必须是有效的 C 表达式字符串，如 \"&sensor_value\"")
         if node.get("size_expr"):
@@ -900,13 +939,16 @@ def validate_module_references(raw_nodes: list[dict[str, Any]], module_ids: set[
 def validate_flows(raw_flows: list[dict[str, Any]], nodes_by_id: dict[str, dict[str, Any]], tick_ms: int) -> list[dict[str, Any]]:
     flows = []
     flow_ids = set()
+    flow_idents: dict[str, str] = {}
     for flow in raw_flows:
         require(isinstance(flow, dict), "每个 flow 必须是对象类型")
         require(flow.get("type") in SUPPORTED_FLOW_TYPES, f"不受支持的 flow 类型：{flow.get('type')}，可用类型：{', '.join(SUPPORTED_FLOW_TYPES)}")
         flow_id = flow.get("id")
         require(isinstance(flow_id, str) and flow_id, "每个 flow 必须有非空的 id")
         require(flow_id not in flow_ids, f"flow ID \"{flow_id}\" 重复")
+        require(c_ident(flow_id) not in flow_idents, f"flow IDs {flow_idents.get(c_ident(flow_id))!r} 和 {flow_id!r} 生成相同 C 标识符 {c_ident(flow_id)!r}")
         flow_ids.add(flow_id)
+        flow_idents[c_ident(flow_id)] = flow_id
         sensor = nodes_by_id.get(flow.get("sensor"))
         pid = nodes_by_id.get(flow.get("pid"))
         left_motor = nodes_by_id.get(flow.get("left_motor"))
@@ -930,13 +972,16 @@ def validate_flows(raw_flows: list[dict[str, Any]], nodes_by_id: dict[str, dict[
 def validate_tasks(raw_tasks: list[dict[str, Any]], raw_nodes: list[dict[str, Any]], flow_ids_known: set[str], tick_ms: int) -> list[dict[str, Any]]:
     tasks = []
     task_ids = set()
+    task_idents: dict[str, str] = {}
     for item in raw_tasks + [node for node in raw_nodes if node.get("type") == "task.periodic"]:
         require(isinstance(item, dict), "每个 task 必须是对象类型")
         require(item.get("type", "task.periodic") == "task.periodic", f"不受支持的 task 类型：{item.get('type')}，只支持 task.periodic")
         task_id = item.get("id")
         require(isinstance(task_id, str) and task_id, "每个 task 必须有非空的 id")
         require(task_id not in task_ids, f"task ID \"{task_id}\" 重复")
+        require(c_ident(task_id) not in task_idents, f"task IDs {task_idents.get(c_ident(task_id))!r} 和 {task_id!r} 生成相同 C 标识符 {c_ident(task_id)!r}")
         task_ids.add(task_id)
+        task_idents[c_ident(task_id)] = task_id
         require(item.get("call") or item.get("flow"), f"task \"{task_id}\" 需要设置 call 或 flow 字段（指定要调度执行的函数或流程）")
         if item.get("flow"):
             require(item.get("flow") in flow_ids_known, f"task \"{task_id}\".flow 引用了不存在的 flow \"{item.get('flow')}\"，可用 flow：{', '.join(sorted(flow_ids_known)) if flow_ids_known else '(无)'}")
@@ -959,22 +1004,96 @@ def validate_graph_header(graph: dict[str, Any]) -> tuple[dict[str, Any], int, l
     return project, tick_ms, contracts_decl
 
 
-def validate_board_config(graph: dict[str, Any]) -> dict[str, Any]:
+def _physical_pin(value: object) -> str:
+    match = re.match(r"^P?([A-Z])(\d{1,2})(?:-|$)", str(value or "").strip().upper())
+    return f"P{match.group(1)}{int(match.group(2))}" if match else ""
+
+
+def validate_board_config(
+    graph: dict[str, Any],
+    *,
+    target_chip: str | None = None,
+    node_ids: set[str] | None = None,
+) -> dict[str, Any]:
     board = graph.get("board", {})
     require(isinstance(board, dict), "board 必须是对象类型，请至少设置 {\"profile\": \"stm32-basic\"}")
     if "profile" in board:
         require(isinstance(board.get("profile"), str), "board.profile 必须是字符串，如 \"stm32-basic\" 或真实板卡 profile 名称")
     pin_plan = board.get("pin_plan", [])
     require(isinstance(pin_plan, list), "board.pin_plan must be an array when present")
-    seen_board_pins = set()
+    profile = str(board.get("profile") or "").strip()
+    target = None
+    graph_chip = str(graph.get("project", {}).get("chip") or "").strip()
+    if target_chip or graph_chip:
+        target = _target_api().resolve_target(chip=target_chip or graph_chip, board_profile=profile)
+    elif profile:
+        try:
+            target = _target_api().resolve_target(board_profile=profile)
+        except ValueError:
+            target = None
+
+    gpio_pins: set[str] = set()
+    pwm_outputs: dict[str, str] = {}
+    if target is not None:
+        mcu = _target_api().load_mcu_data(target.chip)
+        gpio_pins = {_physical_pin(pin) for pin in mcu.get("gpio_pins", [])}
+        raw_pwm = mcu.get("peripherals", {}).get("pwm", {}).get("outputs", {})
+        if isinstance(raw_pwm, dict):
+            pwm_outputs = {str(name).upper(): _physical_pin(pin) for name, pin in raw_pwm.items()}
+
+    normalized_plan: list[dict[str, Any]] = []
+    physical_owners: dict[str, str] = {}
+    logical_owners: dict[str, str] = {}
     for index, pin in enumerate(pin_plan):
         require(isinstance(pin, dict), f"board.pin_plan[{index}] must be an object")
         require(isinstance(pin.get("node"), str) and pin.get("node"), f"board.pin_plan[{index}].node must be a non-empty string")
+        if node_ids is not None:
+            require(pin["node"] in node_ids, f"board.pin_plan[{index}].node 引用了不存在的节点 {pin['node']}")
         require(isinstance(pin.get("usage", ""), str), f"board.pin_plan[{index}].usage must be a string")
-        key = (pin.get("node"), pin.get("usage"), str(pin.get("port", "")), str(pin.get("pin", "")), str(pin.get("channel", "")))
-        require(key not in seen_board_pins, f"duplicate board pin plan entry: {key}")
-        seen_board_pins.add(key)
-    return board
+        has_gpio = "port" in pin or "pin" in pin
+        has_pwm = "timer" in pin or "channel" in pin
+        require(has_gpio != has_pwm, f"board.pin_plan[{index}] 必须且只能声明 GPIO(port+pin) 或 PWM(timer+channel)")
+        item = dict(pin)
+        owner = f"{pin['node']}:{pin.get('usage', '')}"
+        if has_gpio:
+            require("port" in pin and "pin" in pin, f"board.pin_plan[{index}] GPIO 必须同时提供 port 和 pin")
+            port_match = re.fullmatch(r"P?([A-Z])", str(pin["port"]).strip().upper())
+            require(port_match is not None, f"board.pin_plan[{index}].port 无效: {pin['port']}")
+            require(not isinstance(pin["pin"], bool), f"board.pin_plan[{index}].pin 必须是整数")
+            try:
+                pin_number = int(pin["pin"])
+            except (TypeError, ValueError):
+                require(False, f"board.pin_plan[{index}].pin 必须是整数")
+            require(0 <= pin_number <= 15, f"board.pin_plan[{index}].pin 必须在 0~15")
+            physical = f"P{port_match.group(1)}{pin_number}"
+            logical = f"GPIO:{physical}"
+            item.update({"port": port_match.group(1), "pin": pin_number})
+            if target is not None:
+                require(physical in gpio_pins, f"board.pin_plan[{index}] 引脚 {physical} 不属于目标 {target.chip} 封装")
+        else:
+            require("timer" in pin and "channel" in pin, f"board.pin_plan[{index}] PWM 必须同时提供 timer 和 channel")
+            require(not isinstance(pin["timer"], bool) and not isinstance(pin["channel"], bool), f"board.pin_plan[{index}] timer/channel 必须是整数")
+            try:
+                timer = int(pin["timer"])
+                channel = int(pin["channel"])
+            except (TypeError, ValueError):
+                require(False, f"board.pin_plan[{index}] timer/channel 必须是整数")
+            require(timer > 0 and channel > 0, f"board.pin_plan[{index}] timer/channel 必须大于 0")
+            pwm = f"TIM{timer}_CH{channel}"
+            logical = f"PWM:{pwm}"
+            physical = pwm_outputs.get(pwm, "")
+            item.update({"timer": timer, "channel": channel})
+            if target is not None:
+                require(physical, f"board.pin_plan[{index}] PWM {pwm} 不属于目标 {target.chip}")
+        require(logical not in logical_owners, f"board.pin_plan 资源冲突: {owner} 与 {logical_owners.get(logical)} 重复使用 {logical}")
+        logical_owners[logical] = owner
+        if physical:
+            require(physical not in physical_owners, f"board.pin_plan 物理引脚冲突: {owner} 与 {physical_owners.get(physical)} 重复使用 {physical}")
+            physical_owners[physical] = owner
+        normalized_plan.append(item)
+    normalized_board = dict(board)
+    normalized_board["pin_plan"] = normalized_plan
+    return normalized_board
 
 
 def collect_raw_sections(graph: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
@@ -991,6 +1110,7 @@ def collect_raw_sections(graph: dict[str, Any]) -> tuple[list[dict[str, Any]], l
 
 def build_nodes_by_id(raw_nodes: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     nodes_by_id: dict[str, dict[str, Any]] = {}
+    node_idents: dict[str, str] = {}
     for node in raw_nodes:
         require(isinstance(node, dict), "每个节点（node）必须是对象类型，请检查 nodes 数组中的元素格式")
         node_id = node.get("id")
@@ -998,7 +1118,9 @@ def build_nodes_by_id(raw_nodes: list[dict[str, Any]]) -> dict[str, dict[str, An
         require(isinstance(node_id, str) and node_id, "每个节点必须有非空的 id 字段（字符串），请为节点设置唯一标识")
         require(node_type_name in SUPPORTED_NODE_TYPES, f"节点 {node_id} 的类型 \"{node_type_name}\" 不受支持，可用类型见模板面板")
         require(node_id not in nodes_by_id, f"节点 ID \"{node_id}\" 重复，请使用唯一的 id（可在属性面板中修改）")
+        require(c_ident(node_id) not in node_idents, f"节点 IDs {node_idents.get(c_ident(node_id))!r} 和 {node_id!r} 生成相同 C 标识符 {c_ident(node_id)!r}")
         nodes_by_id[node_id] = node
+        node_idents[c_ident(node_id)] = node_id
     return nodes_by_id
 
 
@@ -1011,8 +1133,15 @@ def validate_edge_identity(raw_edges: list[dict[str, Any]], nodes_by_id: dict[st
         edge_ids.add(edge_id)
         require(edge.get("from") in nodes_by_id, f"连线 {edge_id} 的 from 字段引用了不存在的节点 \"{edge.get('from')}\"，请检查连线起点")
         require(edge.get("to") in nodes_by_id, f"连线 {edge_id} 的 to 字段引用了不存在的节点 \"{edge.get('to')}\"，请检查连线终点")
+        require(edge.get("from") != edge.get("to"), f"连线 {edge_id} 不能连接节点自身")
         kind = edge.get("kind", "generic")
         require(kind in VALID_EDGE_KINDS, f"连线 {edge_id} 的 kind \"{kind}\" 不受支持，可用类型：{', '.join(sorted(VALID_EDGE_KINDS))}")
+        edge["kind"] = EDGE_KIND_ALIASES.get(str(kind), str(kind))
+        src = nodes_by_id[str(edge["from"])]
+        dst = nodes_by_id[str(edge["to"])]
+        from_port = str(edge.get("from_port") or "")
+        to_port = str(edge.get("to_port") or "")
+        require(can_connect_ports(src, dst, from_port, to_port), f"连线 {edge_id} 的节点/端口组合不受支持: {src['id']}({src['type']}.{from_port or '?'}) -> {dst['id']}({dst['type']}.{to_port or '?'})")
 
 
 # Runtime node types that should be connected to be useful
@@ -1041,13 +1170,14 @@ def validate_orphan_nodes(nodes: list[dict], edges: list[dict]) -> list[str]:
     return warnings
 
 
-def validate_graph(graph: dict[str, Any], print_warnings: bool = False) -> dict[str, Any]:
+def validate_graph(graph: dict[str, Any], print_warnings: bool = False, *, target_chip: str | None = None) -> dict[str, Any]:
     project, tick_ms, _contracts_decl = validate_graph_header(graph)
-    board = validate_board_config(graph)
     raw_nodes, raw_flows, raw_tasks, raw_edges = collect_raw_sections(graph)
     nodes_by_id = build_nodes_by_id(raw_nodes)
+    board = validate_board_config(graph, target_chip=target_chip, node_ids=set(nodes_by_id))
     validate_edge_identity(raw_edges, nodes_by_id)
     validate_single_input_edges(raw_edges, nodes_by_id)
+    validate_dataflow_acyclic(raw_edges)
     apply_edge_semantics(raw_edges, nodes_by_id)
 
     # Warn about orphan runtime nodes
@@ -1062,6 +1192,11 @@ def validate_graph(graph: dict[str, Any], print_warnings: bool = False) -> dict[
     for node in raw_nodes:
         validate_contract_fields(node)
         validate_node_fields_by_type(node, raw_nodes, nodes_by_id, graph, contracts)
+    topic_ids: dict[int, str] = {}
+    for topic in (node for node in raw_nodes if node.get("type") == "event.topic"):
+        topic_id = int(topic["topic_id"])
+        require(topic_id not in topic_ids, f"event.topic topic_id {topic_id} 重复: {topic_ids.get(topic_id)} 和 {topic['id']}")
+        topic_ids[topic_id] = str(topic["id"])
     validate_module_references(raw_nodes, module_ids, contracts)
     validate_event_contract_edges(raw_edges, nodes_by_id, contracts)
 

@@ -39,7 +39,9 @@ class LiteTuneProtocolTests(unittest.TestCase):
         wire = proto.encode_litetune_wire_frame(frame)
         self.assertTrue(wire.endswith(b"\x00"))
         self.assertNotIn(0, wire[:-1])
-        # Serial framing strips the trailing delimiter before COBS decoding.
+        decoded_raw = proto.cobs_decode(wire[:-1])
+        self.assertEqual(decoded_raw, raw)
+        self.assertEqual(struct.unpack("<H", decoded_raw[-2:])[0], proto.crc16_mcrf4xx(decoded_raw[:-2]))
         self.assertEqual(proto.decode_litetune_wire_frame(wire[:-1]), frame)
 
         corrupted = bytearray(raw)

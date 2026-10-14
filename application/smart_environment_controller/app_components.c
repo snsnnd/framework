@@ -191,34 +191,10 @@ static efw_module_ops_t g_control_module = {
     .poll = control_poll,
 };
 
-static efw_state_machine_ops_t g_state_idle = {
-    .name = APP_STATE_IDLE_NAME,
-    .ctx = &g_control_ctx,
-    .on_tick = state_idle_tick,
-};
-
-static efw_state_machine_ops_t g_state_cooling = {
-    .name = APP_STATE_COOLING_NAME,
-    .ctx = &g_control_ctx,
-    .on_tick = state_cooling_tick,
-};
-
-static efw_state_machine_ops_t g_state_fault = {
-    .name = APP_STATE_FAULT_NAME,
-    .ctx = &g_control_ctx,
-    .on_tick = state_fault_tick,
-};
-
 efw_status_t app_components_register(void) {
     efw_status_t s = efw_algo_register(&g_temperature_filter_ops);
     if (s != EFW_OK) return s;
     s = efw_algo_register(&g_attitude_filter_ops);
-    if (s != EFW_OK) return s;
-    s = efw_sm_register(&g_state_idle);
-    if (s != EFW_OK) return s;
-    s = efw_sm_register(&g_state_cooling);
-    if (s != EFW_OK) return s;
-    s = efw_sm_register(&g_state_fault);
     if (s != EFW_OK) return s;
     s = efw_module_register(&g_sampler_module);
     if (s != EFW_OK) return s;

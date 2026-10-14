@@ -2,12 +2,8 @@
 """
 EFW 编译工具
 
-支持多种编译器：
-- ARM GCC (STM32, 通用 ARM)
-- ARM Compiler (Keil MDK)
-- IAR (IAR Embedded Workbench)
-- ESP-IDF GCC (ESP32)
-- TI ARM Clang (MSPM0)
+当前经过端到端验证的编译器：
+- ARM GCC (受支持的 STM32 目标)
 
 功能：
 - 自动检测已安装的编译器
@@ -32,13 +28,17 @@ EFW 编译工具
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
 from pathlib import Path
 from typing import Optional
+
+from tools.target import TargetDescriptor, TargetResolutionError, resolve_target
 
 # Windows 注册表（仅在 Windows 上可用）
 try:
@@ -75,14 +75,16 @@ class CompilerInfo:
         self.version: Optional[str] = None
 
 
-# 支持的编译器列表
+# Only adapters with an authoritative target, SDK resolver, and real build
+# verification are exposed through public toolchain APIs.
+SUPPORTED_COMPILERS = frozenset({"arm-gcc"})
+
+# 编译器元数据列表
 COMPILERS = {
     "arm-gcc": CompilerInfo(
         name="arm-gcc",
         display_name="ARM GCC (arm-none-eabi-gcc)",
-        chip_families=["STM32F0", "STM32F1", "STM32F2", "STM32F3", "STM32F4", 
-                       "STM32F7", "STM32G0", "STM32G4", "STM32H7", "STM32L0", 
-                       "STM32L1", "STM32L4", "STM32L5", "STM32U5", "STM32WB"],
+        chip_families=["STM32F1", "STM32F4", "STM32G4"],
         executable="arm-none-eabi-gcc",
         common_paths=[
             # WSL 访问 Windows 路径
@@ -267,6 +269,8 @@ class CompilerManager:
         self.detected = {}
         
         for name, compiler in COMPILERS.items():
+            if name not in SUPPORTED_COMPILERS:
+                continue
             # 1. 检查用户配置
             if name in self.user_config:
                 path = Path(self.user_config[name])
@@ -340,15 +344,10 @@ class CompilerManager:
     
     def get_compiler_for_chip(self, chip: str) -> Optional[CompilerInfo]:
         """根据芯片获取推荐的编译器"""
-        # 查找芯片对应的编译器
-        compiler_name = None
-        for prefix, name in CHIP_TO_COMPILER.items():
-            if chip.upper().startswith(prefix.upper()):
-                compiler_name = name
-                break
-        
-        if not compiler_name:
-            compiler_name = "arm-gcc"  # 默认使用 ARM GCC
+        try:
+            compiler_name = resolve_target(chip=chip).toolchain
+        except TargetResolutionError:
+            return None
         
         # 检查是否已检测到
         if compiler_name in self.detected:
@@ -374,11 +373,33 @@ class CompilerManager:
                 return compiler
         
         return None
+
+    def get_compiler(self, name: str) -> Optional[CompilerInfo]:
+        """Get a configured compiler by target descriptor name."""
+        if name not in SUPPORTED_COMPILERS or name not in COMPILERS:
+            return None
+        if name in self.detected:
+            return self.detected[name]
+
+        compiler = COMPILERS[name]
+        if name in self.user_config:
+            path = Path(self.user_config[name])
+            if path.exists():
+                compiler.found_path = path
+                compiler.version = self._get_version(compiler)
+                return compiler
+
+        found = shutil.which(compiler.executable)
+        if found:
+            compiler.found_path = Path(found).parent
+            compiler.version = self._get_version(compiler)
+            return compiler
+        return None
     
     def set_compiler_path(self, name: str, path: Path) -> bool:
         """设置编译器路径"""
-        if name not in COMPILERS:
-            print(f"错误: 未知编译器 '{name}'")
+        if name not in SUPPORTED_COMPILERS or name not in COMPILERS:
+            print(f"错误: 编译器 '{name}' 尚无经过验证的端到端构建支持")
             return False
         
         if not path.exists():
@@ -415,6 +436,8 @@ class CompilerManager:
         
         result = []
         for name, compiler in COMPILERS.items():
+            if name not in SUPPORTED_COMPILERS:
+                continue
             info = {
                 "name": name,
                 "display_name": compiler.display_name,
@@ -440,7 +463,7 @@ class CompilerManager:
         """获取当前配置"""
         return {
             "compilers": self.list_compilers(),
-            "user_config": self.user_config,
+            "user_config": {name: path for name, path in self.user_config.items() if name in SUPPORTED_COMPILERS},
         }
 
 
@@ -469,10 +492,7 @@ class ARMGCCAdapter(CompilerAdapter):
         cmd = [
             str(self.compiler.found_path / "arm-none-eabi-gcc"),
             "-c",
-            "-mcpu=cortex-m4",
-            "-mthumb",
-            "-mfloat-abi=hard",
-            "-mfpu=fpv4-sp-d16",
+            *kwargs.get("cpu_flags", ["-mcpu=cortex-m4", "-mthumb"]),
             "-Wall",
             "-fdata-sections",
             "-ffunction-sections",
@@ -497,10 +517,7 @@ class ARMGCCAdapter(CompilerAdapter):
     def get_link_command(self, objects: list[str], output: str, **kwargs) -> list[str]:
         cmd = [
             str(self.compiler.found_path / "arm-none-eabi-gcc"),
-            "-mcpu=cortex-m4",
-            "-mthumb",
-            "-mfloat-abi=hard",
-            "-mfpu=fpv4-sp-d16",
+            *kwargs.get("cpu_flags", ["-mcpu=cortex-m4", "-mthumb"]),
             "-specs=nosys.specs",
             "-specs=nano.specs",
             "-Wl,--gc-sections",
@@ -524,10 +541,10 @@ class ARMGCCAdapter(CompilerAdapter):
 
 def get_adapter(compiler: CompilerInfo, chip: str) -> CompilerAdapter:
     """获取编译器适配器"""
-    if compiler.toolchain_type == "gcc":
-        return ARMGCCAdapter(compiler, chip)
-    else:
-        raise ValueError(f"不支持的编译器类型: {compiler.toolchain_type}")
+    target = resolve_target(chip=chip)
+    if compiler.name != "arm-gcc" or target.toolchain != "arm-gcc" or target.platform != "stm32":
+        raise ValueError(f"目标 {chip} 没有经过验证的编译器适配器: {compiler.name}")
+    return ARMGCCAdapter(compiler, target.chip)
 
 
 # ─── 项目编译器 ──────────────────────────────────────────────────────────────
@@ -535,17 +552,38 @@ def get_adapter(compiler: CompilerInfo, chip: str) -> CompilerAdapter:
 class ProjectCompiler:
     """项目编译器"""
     
-    def __init__(self, project_dir: Path, build_dir: Optional[Path] = None):
+    def __init__(self, project_dir: Path, build_dir: Optional[Path] = None, firmware_manager=None, board_profile: str | None = None):
         self.project_dir = project_dir
         self.build_dir = build_dir or project_dir / "build"
         self.compiler_manager = CompilerManager()
+        self.firmware_manager = firmware_manager
+        self.board_profile = board_profile
     
     def compile(self, chip: str, sources: list[str] = None, **kwargs) -> bool:
         """编译项目"""
-        print(f"编译项目: {chip}")
+        try:
+            target: TargetDescriptor = resolve_target(chip=chip)
+        except TargetResolutionError as exc:
+            print(f"错误: {exc}")
+            return False
+        print(f"编译项目: {target.chip}")
+
+        try:
+            has_user_board = any(
+                re.search(r"\befw_status_t\s+app_board_init\s*\(\s*void\s*\)\s*\{", path.read_text(encoding="utf-8", errors="ignore"))
+                for path in self.project_dir.rglob("*.c") if ".efw_target" not in path.parts and "build" not in path.parts
+            )
+            if self.board_profile and not has_user_board:
+                from tools.board.stm32_bsp import generate_stm32_bsp
+                generate_stm32_bsp(self.project_dir, target, self.board_profile)
+            from tools.firmware.stm32 import prepare_stm32_build
+            resources = prepare_stm32_build(self.project_dir, target, self.firmware_manager)
+        except ValueError as exc:
+            print(f"错误: {exc}")
+            return False
         
         # 检测编译器
-        compiler = self.compiler_manager.get_compiler_for_chip(chip)
+        compiler = self.compiler_manager.get_compiler(target.toolchain)
         if not compiler:
             print("错误: 未找到合适的编译器")
             print("请运行: python3 tools/efw.py build detect")
@@ -555,7 +593,7 @@ class ProjectCompiler:
         print(f"路径: {compiler.found_path}")
         
         # 获取适配器
-        adapter = get_adapter(compiler, chip)
+        adapter = get_adapter(compiler, target.chip)
         
         # 创建构建目录
         self.build_dir.mkdir(parents=True, exist_ok=True)
@@ -564,7 +602,14 @@ class ProjectCompiler:
         
         # 查找源文件
         if sources is None:
-            sources = list(self.project_dir.glob("**/*.c"))
+            sources = [
+                path for path in self.project_dir.rglob("*.c")
+                if "build" not in path.parts and ".efw_target" not in path.parts and ".efw_backup" not in path.parts
+            ]
+        generated_board = self.project_dir / ".efw_target" / "board_adapter.c"
+        if generated_board.is_file() and not has_user_board and generated_board not in {Path(source) for source in sources}:
+            sources.append(generated_board)
+        sources = [*sources, *resources.sources, resources.startup]
         
         if not sources:
             print("错误: 未找到源文件")
@@ -574,15 +619,23 @@ class ProjectCompiler:
         
         # 编译每个源文件
         objects = []
-        for src in sources:
-            obj = obj_dir / src.with_suffix(".o").name
+        for source in sources:
+            src = Path(source)
+            try:
+                relative = src.resolve().relative_to(self.project_dir.resolve())
+                obj = obj_dir / relative.with_suffix(".o")
+            except ValueError:
+                digest = hashlib.sha256(str(src.resolve()).encode()).hexdigest()[:12]
+                obj = obj_dir / digest / src.with_suffix(".o").name
+            obj.parent.mkdir(parents=True, exist_ok=True)
             objects.append(str(obj))
             
             cmd = adapter.get_compile_command(
                 [str(src)],
                 str(obj),
-                includes=[str(self.project_dir / "include")],
-                defines=kwargs.get("defines", []),
+                includes=[str(path) for path in resources.include_dirs],
+                defines=[*target.defines, *kwargs.get("defines", [])],
+                cpu_flags=list(target.cpu_flags),
             )
             
             print(f"编译: {src.name}")
@@ -595,12 +648,11 @@ class ProjectCompiler:
         
         # 链接
         output = self.build_dir / "app.elf"
-        linker_script = self.project_dir / "linker.ld"
-        
         cmd = adapter.get_link_command(
             objects,
             str(output),
-            linker_script=str(linker_script) if linker_script.exists() else None,
+            linker_script=str(resources.linker),
+            cpu_flags=list(target.cpu_flags),
         )
         
         print("链接...")
@@ -610,37 +662,52 @@ class ProjectCompiler:
             print("链接失败")
             print(result.stderr)
             return False
+        if not output.is_file():
+            print(f"链接失败: 未生成产物 {output}")
+            return False
         
         print(f"✓ 编译成功: {output}")
         
         # 生成 .bin 和 .hex
-        self._generate_bin(output)
+        if not self._generate_bin(output, compiler):
+            return False
         
         return True
     
-    def _generate_bin(self, elf_file: Path):
+    def _generate_bin(self, elf_file: Path, compiler: CompilerInfo) -> bool:
         """生成 .bin 和 .hex 文件"""
-        objcopy = self.compiler_manager.detected.get("arm-gcc")
-        if not objcopy:
-            return
-        
         bin_file = elf_file.with_suffix(".bin")
         hex_file = elf_file.with_suffix(".hex")
         
         # 生成 .bin
-        cmd = [str(objcopy.found_path / "arm-none-eabi-objcopy"), "-O", "binary", str(elf_file), str(bin_file)]
-        subprocess.run(cmd, capture_output=True)
+        cmd = [str(compiler.found_path / "arm-none-eabi-objcopy"), "-O", "binary", str(elf_file), str(bin_file)]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print("生成 .bin 失败")
+            print(result.stderr)
+            return False
+        if not bin_file.is_file():
+            print(f"生成 .bin 失败: 未生成产物 {bin_file}")
+            return False
         
         # 生成 .hex
-        cmd = [str(objcopy.found_path / "arm-none-eabi-objcopy"), "-O", "ihex", str(elf_file), str(hex_file)]
-        subprocess.run(cmd, capture_output=True)
+        cmd = [str(compiler.found_path / "arm-none-eabi-objcopy"), "-O", "ihex", str(elf_file), str(hex_file)]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            print("生成 .hex 失败")
+            print(result.stderr)
+            return False
+        if not hex_file.is_file():
+            print(f"生成 .hex 失败: 未生成产物 {hex_file}")
+            return False
         
         # 显示大小
-        size_cmd = [str(objcopy.found_path / "arm-none-eabi-size"), str(elf_file)]
+        size_cmd = [str(compiler.found_path / "arm-none-eabi-size"), str(elf_file)]
         result = subprocess.run(size_cmd, capture_output=True, text=True)
         if result.returncode == 0:
             print(f"\n固件大小:")
             print(result.stdout)
+        return True
 
 
 # ─── CLI 入口 ────────────────────────────────────────────────────────────────
@@ -668,10 +735,8 @@ def cmd_build(argv: list[str]) -> int:
         
         if not detected:
             print("未检测到任何编译器")
-            print("\n请安装以下编译器之一:")
+            print("\n请安装:")
             print("  - ARM GCC: https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads")
-            print("  - Keil MDK: https://www.keil.com/download/")
-            print("  - ESP-IDF: https://docs.espressif.com/projects/esp-idf/")
             return 1
         
         print(f"检测到 {len(detected)} 个编译器:")
@@ -734,7 +799,7 @@ def cmd_build(argv: list[str]) -> int:
         
         if not compiler_name:
             print("错误: 请指定编译器")
-            print("用法: python3 tools/efw.py build unset --compiler riscv-gcc")
+            print("用法: python3 tools/efw.py build unset --compiler arm-gcc")
             return 1
         
         if compiler_name in manager.user_config:
@@ -898,14 +963,12 @@ EFW 编译工具
   
   # 查找特定编译器
   python3 tools/efw.py build find arm-none-eabi-gcc
-  python3 tools/efw.py build find gcc_riscv32
   
   # 设置编译器路径（会自动保存到 ~/.efw/compilers.json）
-  python3 tools/efw.py build set --compiler arm-gcc --path "C:/Keil_v5/ARM/ARMCC/bin"
-  python3 tools/efw.py build set --compiler riscv-gcc --path "/home/aaa/gcc_riscv32/bin"
+  python3 tools/efw.py build set --compiler arm-gcc --path "/opt/arm-gnu-toolchain/bin"
   
   # 删除编译器配置
-  python3 tools/efw.py build unset --compiler riscv-gcc
+  python3 tools/efw.py build unset --compiler arm-gcc
   
   # 查看当前配置
   python3 tools/efw.py build config
@@ -916,12 +979,8 @@ EFW 编译工具
   # 编译项目
   python3 tools/efw.py build compile --chip STM32F407VGT6
 
-支持的编译器:
-  arm-gcc           ARM GCC (STM32)
-  arm-compiler      ARM Compiler (Keil MDK)
-  riscv-gcc         RISC-V GCC
-  esp-idf           ESP-IDF GCC (ESP32)
-  ti-arm-clang      TI ARM Clang (MSPM0)
+经过验证的端到端编译器:
+  arm-gcc           ARM GCC (受支持的 STM32 目标)
 
 配置文件位置:
   ~/.efw/compilers.json

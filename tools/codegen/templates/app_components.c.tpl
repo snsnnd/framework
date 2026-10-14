@@ -27,5 +27,6 @@ $PROJECT_MODULE_RUNTIME_DEFS
  * ====================================================================== */
 efw_status_t app_components_register(void) {
     efw_status_t s;
-$ALGORITHM_REGISTRATIONS$CUSTOM_MODULE_REGISTRATIONS$PROJECT_MODULE_REGISTRATIONS    return EFW_OK;
+$ALGORITHM_REGISTRATIONS$CUSTOM_MODULE_REGISTRATIONS$PROJECT_MODULE_REGISTRATIONS    EFW_UNUSED(s);
+    return EFW_OK;
 }

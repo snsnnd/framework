@@ -1,0 +1,45 @@
+{
+  "family": "STM32G4",
+  "core": "ARM Cortex-M4F",
+  "frequency_mhz": 170,
+  "flash_kb": 128,
+  "ram_kb": 32,
+  "package": "LQFP64",
+  "gpio_count": 51,
+  "board": "CT117E-M4 (Lanqiao)",
+  "default_clock_mhz": 16,
+  "clock_note": "HSI 16MHz default; HSE 24MHz + PLL up to 170MHz",
+  "peripherals": {
+    "adc": {"count": 2, "channels": 16},
+    "pwm": {"count": 10},
+    "uart": {"ports": {"USART1": "PA9/PA10", "USART2": "PA2/PA3", "USART3": "PB10/PB11"}},
+    "i2c": {"ports": {"I2C1": "PB6/PB7", "I2C3": "PA8/PC9"}},
+    "spi": {"ports": {"SPI1": "PA5/PA6/PA7", "SPI2": "PB13/PB14/PB15"}},
+    "can": {"count": 1},
+    "usb": {"present": true}
+  },
+  "board_layout": {
+    "leds": "PC8-PC15 active-low via 74HC573 latch on PD2",
+    "buttons": {"B1": "PB0", "B2": "PB1", "B3": "PB2", "B4": "PA0"},
+    "lcd": {
+      "controller": "ILI932x family (ID 0x9325 observed)",
+      "resolution": "240x320 RGB565",
+      "data_bus": "GPIOC full port",
+      "nCS": "PB9",
+      "RS_DC": "PB8",
+      "nWR": "PB5",
+      "nRD": "PA8"
+    },
+    "debug": "DAPLink (CMSIS-DAP) + UART passthrough on USART1"
+  },
+  "efw_hwtest_measured": {
+    "note": "Measured on silicon 2026-09-12, HSI 16MHz, gcc 10.3.1 -O2, see hwtest_g431/REPORT.md",
+    "efw_init_us": 42,
+    "sensor_lookup_ns_3_entries": 15654,
+    "sensor_lookup_ns_32_entries": 136118,
+    "algo_pid_run_ns": 29930,
+    "topic_publish_ns_4_subs": 10769,
+    "event_queue_roundtrip_ns": 11522,
+    "scheduler_full_load_efficiency": "2786/2800 task runs in 200ms (16x1ms tasks)"
+  }
+}

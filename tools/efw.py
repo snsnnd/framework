@@ -30,10 +30,9 @@ EFW CLI 用户工具链
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
-import time
 from pathlib import Path
-from typing import Any, Optional
 
 
 # ─── 帮助信息 ────────────────────────────────────────────────────────────────
@@ -250,12 +249,14 @@ SVD 数据导入与启动/链接文件生成。
 
 选项:
   --bin FILE          固件文件路径
+  --chip CHIP         目标芯片（如 STM32F407VGT6）
   --port PORT         串口/调试器端口
   --tool TOOL         烧录工具（stlink, jlink, openocd）
   --erase             烧录前擦除
+  --dry-run           仅显示命令，不执行烧录
 
 示例:
-  python3 tools/efw.py flash --bin build/app.bin --port COM3 --tool stlink""",
+  python3 tools/efw.py flash --bin build/app.bin --chip STM32F407VGT6 --port COM3 --tool stlink""",
         
         "build": """用法: python3 tools/efw.py build <subcommand>
 
@@ -414,66 +415,13 @@ def cmd_design(argv: list[str]) -> int:
         print("用法: python3 tools/efw.py design --chip STM32F407VGT6 -o project.json")
         return 1
     
-    from tools.simulator.chip_db import get_chip_database
-    db = get_chip_database()
-    chip_data = db.load_chip(chip)
-    
-    if not chip_data:
-        print(f"未找到芯片: {chip}")
+    from tools.api.legacy import design_graph_for_chip
+
+    try:
+        config = design_graph_for_chip(chip, output)
+    except Exception as exc:
+        print(f"错误: {exc}")
         return 1
-    
-    # 生成项目配置
-    config = {
-        "project": {
-            "name": chip.lower().replace(" ", "_"),
-            "chip": chip,
-            "tick_ms": 1,
-        },
-        "board": {
-            "profile": chip_data.get("board", ""),
-            "pin_plan": [],
-        },
-        "nodes": [
-            {
-                "id": "app_module",
-                "type": "project.module",
-                "display_name": "应用模块",
-                "description": f"{chip} 的默认应用模块。",
-            }
-        ],
-        "edges": [],
-        "flows": [],
-        "tasks": [],
-        "custom_files": [],
-        "metadata": {
-            "kind": "efw.graph",
-            "schema_version": 1,
-        },
-        "chip_data": {
-            "family": chip_data.get("family"),
-            "core": chip_data.get("core"),
-            "clock_mhz": chip_data.get("frequency_mhz"),
-            "flash_kb": chip_data.get("flash_kb"),
-            "ram_kb": chip_data.get("ram_kb"),
-            "gpio_pins": chip_data.get("gpio_pins", []),
-            "peripherals": chip_data.get("peripherals", {}),
-        },
-        # Legacy fields kept for older tools that consume design output directly.
-        "name": chip.lower().replace(" ", "_"),
-        "chip": chip,
-        "family": chip_data.get("family"),
-        "core": chip_data.get("core"),
-        "clock_mhz": chip_data.get("frequency_mhz"),
-        "flash_kb": chip_data.get("flash_kb"),
-        "ram_kb": chip_data.get("ram_kb"),
-        "gpio_pins": chip_data.get("gpio_pins", []),
-        "peripherals": chip_data.get("peripherals", {}),
-        "components": [],
-        "tasks": [],
-    }
-    
-    with open(output, "w", encoding="utf-8") as f:
-        json.dump(config, f, ensure_ascii=False, indent=2)
     
     print(f"✓ 项目配置已生成: {output}")
     print(f"  芯片: {chip}")
@@ -484,41 +432,14 @@ def cmd_design(argv: list[str]) -> int:
     return 0
 
 
-def resolve_graph_path(config_path: Path, config: dict[str, Any]) -> Path:
-    """Resolve a graph JSON from a graph file, project file, or design output."""
-    if "nodes" in config and "project" in config:
-        return config_path
-
-    graph_path = config.get("graph_path")
-    if graph_path:
-        path = Path(graph_path)
-        if not path.is_absolute():
-            path = config_path.parent / path
-        return path
-
-    raise ValueError("输入不是 Graph JSON，也没有 graph_path；请先运行 design 生成 graph 或直接传入 graph.json")
-
-
-def run_codegen(graph_path: Path, output: Path, force: bool = True, dry_run: bool = False) -> int:
-    ensure_project_imports()
-    from codegen.cli import main as codegen_main
-
-    args = [str(graph_path), "-o", str(output)]
-    if force:
-        args.append("--force")
-    if dry_run:
-        args.append("--dry-run")
-    return codegen_main(args)
-
-
 # ─── 代码生成 ────────────────────────────────────────────────────────────────
 
 def cmd_develop(argv: list[str]) -> int:
     """代码生成"""
+    ensure_project_imports()
     print("提示: develop 是旧兼容入口；新项目请使用 `python3 tools/efw.py project generate <project>`。")
     config_path = None
     output = Path("application")
-    integrate_fw = True  # 默认集成固件
     dry_run = False
     
     i = 0
@@ -530,7 +451,6 @@ def cmd_develop(argv: list[str]) -> int:
             output = Path(argv[i + 1])
             i += 2
         elif argv[i] == "--no-firmware":
-            integrate_fw = False
             i += 1
         elif argv[i] == "--dry-run":
             dry_run = True
@@ -549,128 +469,24 @@ def cmd_develop(argv: list[str]) -> int:
     if not config_path.exists():
         print(f"配置文件不存在: {config_path}")
         return 1
-    
-    with open(config_path, "r", encoding="utf-8") as f:
-        config = json.load(f)
 
     try:
-        graph_path = resolve_graph_path(config_path, config)
-        return run_codegen(graph_path, output, force=True, dry_run=dry_run)
-    except ValueError as exc:
-        print(f"警告: {exc}")
-        print("回退到旧版最小应用骨架生成。")
-    
-    output.mkdir(parents=True, exist_ok=True)
-    
-    chip = config.get("chip", "Unknown")
-    clock = config.get("clock_mhz", 168)
-    
-    # 集成固件
-    if integrate_fw:
-        print(f"集成固件库...")
-        try:
-            ensure_project_imports()
-            
-            from tools.firmware.integrator import integrate_firmware
-            
-            generated = integrate_firmware(
-                chip=chip,
-                project_dir=output,
-            )
-            
-            print(f"✓ 固件集成完成:")
-            for name, path in generated.items():
-                print(f"  {name}: {path}")
-        except Exception as e:
-            print(f"警告: 固件集成失败: {e}")
-            print("继续生成应用代码...")
-    
-    # 生成 app_board_config.h
-    board_config = f'''/**
- * @file    app_board_config.h
- * @brief   板级配置
- * @chip    {chip}
- * @clock   {clock} MHz
- */
-
-#ifndef APP_BOARD_CONFIG_H
-#define APP_BOARD_CONFIG_H
-
-#define APP_SYSCLK_MHZ     {clock}
-#define APP_HCLK_MHZ        {clock}
-#define APP_PCLK1_MHZ       {clock / 4}
-#define APP_PCLK2_MHZ       {clock / 2}
-#define APP_TICK_MS          1
-
-#define MOTOR_MAX_RPM        300
-#define MOTOR_PWM_FREQ_HZ    1000
-
-#define LINE_SENSOR_CHANNELS 5
-#define LINE_THRESHOLD       0.5f
-
-#define PID_KP               1.5f
-#define PID_KI               0.3f
-#define PID_KD               0.05f
-
-#endif
-'''
-    (output / "app_board_config.h").write_text(board_config)
-    
-    # 生成 main.c
-    main_c = f'''/**
- * @file    main.c
- * @brief   主程序
- * @chip    {chip}
- */
-
-#include "efw/efw.h"
-#include "app_board_config.h"
-
-void app_init(void)
-{{
-    efw_init();
-    
-    /* TODO: 注册 HAL */
-    /* TODO: 注册传感器 */
-    /* TODO: 注册执行器 */
-    /* TODO: 注册算法 */
-}}
-
-void app_loop_1ms(void)
-{{
-    /* TODO: 读取传感器 */
-    /* TODO: 执行算法 */
-    /* TODO: 输出执行器 */
-}}
-
-int main(void)
-{{
-    app_init();
-    
-    while (1)
-    {{
-        app_loop_1ms();
-    }}
-    
-    return 0;
-}}
-'''
-    (output / "main.c").write_text(main_c)
-    
-    print(f"✓ 代码已生成: {output}/")
-    print(f"  芯片: {chip}")
-    print(f"  文件: app_board_config.h, main.c")
-    
-    return 0
+        from tools.api.legacy import generate_from_config
+        return generate_from_config(config_path, output, force=True, dry_run=dry_run)
+    except Exception as exc:
+        print(f"错误: {exc}")
+        return 1
 
 
 # ─── 仿真验证 ────────────────────────────────────────────────────────────────
 
 def cmd_simulate(argv: list[str]) -> int:
     """仿真验证"""
+    ensure_project_imports()
     chip = None
     duration = 1000
-    
+    workload = "idle"
+
     i = 0
     while i < len(argv):
         if argv[i] == "--chip" and i + 1 < len(argv):
@@ -679,56 +495,50 @@ def cmd_simulate(argv: list[str]) -> int:
         elif argv[i] == "--duration" and i + 1 < len(argv):
             duration = int(argv[i + 1])
             i += 2
+        elif argv[i] == "--workload" and i + 1 < len(argv):
+            workload = argv[i + 1]
+            i += 2
         elif argv[i] in {"help", "-h", "--help"}:
             print_command_help("simulate")
             return 0
         else:
             i += 1
-    
+
     if not chip:
         print("错误: 请指定芯片 (--chip)")
         return 1
-    
-    from tools.simulator.core import MCUSimulator
-    from tools.simulator.perf import PerformanceMonitor
-    
-    print(f"启动仿真: {chip}")
-    
+
+    print(f"启动仿真: {chip} (workload={workload})")
+
     try:
-        mcu = MCUSimulator.from_chip(chip)
+        from tools.api.legacy import simulate_chip
+        report = simulate_chip(chip, duration=duration, workload=workload)
     except Exception as e:
         print(f"错误: {e}")
         return 1
-    
-    print(f"  时钟: {mcu.clock.sysclk_hz / 1_000_000} MHz")
+
+    if report.get("workload") == "efw":
+        # calibrated model report already printed its details
+        print("=" * 60)
+        print("EFW 校准仿真报告（实机测量校准）")
+        print("=" * 60)
+        print(f"  1ms tick 框架开销: {report['cycles_per_tick']} / {report['capacity_cycles_per_tick']} cycles")
+        print(f"  CPU 利用率: {report['utilization']*100:.1f}%   余量: {report['headroom_pct']:.1f}%")
+        print("=" * 60)
+        return 0
+
+    print(f"  时钟: {report['sysclk_hz'] / 1_000_000} MHz")
     print(f"  时长: {duration} ms")
     print()
-    
-    monitor = PerformanceMonitor()
-    monitor.start()
-    
-    cycles_per_ms = mcu.clock.sysclk_hz // 1000
-    start_time = time.time()
-    
-    for i in range(duration):
-        monitor.begin_frame()
-        mcu.tick(cycles_per_ms)
-        monitor.end_frame(cycles=cycles_per_ms, instructions=cycles_per_ms)
-        
-        if (i + 1) % 100 == 0:
-            elapsed = time.time() - start_time
-            print(f"  进度: {i + 1}/{duration} ({elapsed:.1f}s)")
-    
-    elapsed = time.time() - start_time
-    
+
     print()
     print("=" * 60)
     print("仿真报告")
     print("=" * 60)
-    print(f"  仿真时长: {duration} ms")
-    print(f"  实际耗时: {elapsed:.2f} s")
-    print(f"  仿真速度: {duration / 1000 / elapsed:.2f}x")
-    print(f"  总周期数: {monitor._total_cycles:,}")
+    print(f"  仿真时长: {report['duration_ms']} ms")
+    print(f"  实际耗时: {report['elapsed_seconds']:.2f} s")
+    print(f"  仿真速度: {report['speed_x']:.2f}x")
+    print(f"  总周期数: {report['total_cycles']:,}")
     print("=" * 60)
     
     return 0
@@ -770,15 +580,37 @@ def cmd_debug(argv: list[str]) -> int:
                 i += 1
             else:
                 i += 1
-        from debug.transport import install_transport_template
         try:
-            result = install_transport_template(output_path, protocol=protocol, transport=transport, force=force)
+            from tools.api import device as device_api
+            result = device_api.install_debug_transport_template(output_path, protocol=protocol, transport=transport, force=force)
         except Exception as e:
             print(f"错误: {e}")
             return 1
         print(f"已生成 {result.protocol}({result.transport}) 传输适配文件: {result.output}")
         print("只需要修改其中的 app_debug_transport_write_bytes() 绑定 UART/USB CDC。")
         return 0
+
+    if subcmd == "protocol":
+        action = rest[0] if rest else "show"
+        from tools.api import groundstation as groundstation_api
+        try:
+            if action == "init":
+                path = Path(rest[1]) if len(rest) > 1 else Path("efw_protocol_profile.json")
+                force = "--force" in rest[2:]
+                output = groundstation_api.init_profile(path, force=force)
+                print(f"已生成协议 profile: {output}")
+                print("可在项目 .efw_project.json 中设置 protocol_profile 指向该文件。")
+                return 0
+            if action == "show":
+                path = rest[1] if len(rest) > 1 else None
+                profile = groundstation_api.load_profile(path)
+                print(json.dumps(profile, indent=2, ensure_ascii=False))
+                return 0
+        except Exception as e:
+            print(f"错误: {e}")
+            return 1
+        print(f"未知 protocol 子命令: {action}")
+        return 1
     
     port = None
     baud = 115200
@@ -807,18 +639,15 @@ def cmd_debug(argv: list[str]) -> int:
         return 1
     
     if subcmd == "snapshot":
-        from debug.collector import DebugCollector
-        
         print(f"连接 MCU: {port} @ {baud}")
         try:
-            collector = DebugCollector(port=port, baud=baud)
-            collector.connect()
+            from tools.api import device as device_api
+            snapshot = device_api.snapshot_device(port=port, baud=baud)
         except Exception as e:
             print(f"连接失败: {e}")
             return 1
         
         print("✓ 连接成功")
-        snapshot = collector.read_snapshot()
         
         print("\n快照数据:")
         print("-" * 60)
@@ -827,50 +656,30 @@ def cmd_debug(argv: list[str]) -> int:
             unit = info.get("unit", "")
             print(f"  {name}: {value} {unit}")
         
-        collector.disconnect()
         return 0
-    
-    elif subcmd == "record":
-        from debug.collector import DebugCollector
-        from debug.recorder import DebugRecorder
-        
+
+    if subcmd == "perf":
         print(f"连接 MCU: {port} @ {baud}")
         try:
-            collector = DebugCollector(port=port, baud=baud)
-            collector.connect()
+            from tools.api import device as device_api
+            perf = device_api.read_debug_perf(port=port, baud=baud)
         except Exception as e:
             print(f"连接失败: {e}")
             return 1
-        
-        print("✓ 连接成功")
-        
-        recorder = DebugRecorder(output)
-        recorder.start()
-        
-        print(f"录制数据: {duration}秒 -> {output}")
-        print("按 Ctrl+C 停止")
-        
-        start = time.time()
-        count = 0
-        
+        print(json.dumps(perf, indent=2, ensure_ascii=False))
+        return 0
+    
+    elif subcmd == "record":
+        print(f"连接 MCU: {port} @ {baud}")
         try:
-            while time.time() - start < duration:
-                snapshot = collector.read_snapshot()
-                recorder.record(snapshot)
-                count += 1
-                
-                if count % 10 == 0:
-                    elapsed = time.time() - start
-                    print(f"\r  进度: {elapsed:.1f}/{duration}s ({count} 条)", end="")
-                
-                time.sleep(0.1)
-        except KeyboardInterrupt:
-            pass
-        
-        recorder.stop()
-        collector.disconnect()
-        
-        print(f"\n✓ 录制完成: {count} 条记录")
+            from tools.api import device as device_api
+            print("✓ 连接成功")
+            print(f"录制数据: {duration}秒 -> {output}")
+            stats = device_api.record_device(port=port, baud=baud, output=output, duration=duration)
+        except Exception as e:
+            print(f"连接失败: {e}")
+            return 1
+        print(f"✓ 录制完成: {stats.get('sample_count', 0)} 条记录")
         return 0
     
     elif subcmd == "analyze":
@@ -878,10 +687,8 @@ def cmd_debug(argv: list[str]) -> int:
             print(f"日志文件不存在: {output}")
             return 1
         
-        from debug.analyzer import DebugAnalyzer
-        
-        analyzer = DebugAnalyzer(output)
-        analyzer.print_summary()
+        from tools.api import device as device_api
+        device_api.analyze_recording(output)
         return 0
     
     else:
@@ -893,15 +700,21 @@ def cmd_debug(argv: list[str]) -> int:
 
 def cmd_flash(argv: list[str]) -> int:
     """烧录固件"""
+    ensure_project_imports()
     bin_file = None
+    chip = None
     port = None
-    tool = "stlink"
+    tool = None
     erase = False
+    dry_run = False
     
     i = 0
     while i < len(argv):
         if argv[i] == "--bin" and i + 1 < len(argv):
             bin_file = Path(argv[i + 1])
+            i += 2
+        elif argv[i] == "--chip" and i + 1 < len(argv):
+            chip = argv[i + 1]
             i += 2
         elif argv[i] == "--port" and i + 1 < len(argv):
             port = argv[i + 1]
@@ -912,49 +725,48 @@ def cmd_flash(argv: list[str]) -> int:
         elif argv[i] == "--erase":
             erase = True
             i += 1
+        elif argv[i] == "--dry-run":
+            dry_run = True
+            i += 1
         elif argv[i] in {"help", "-h", "--help"}:
             print_command_help("flash")
             return 0
         else:
-            i += 1
+            print(f"错误: 未知烧录参数: {argv[i]}")
+            return 1
     
     if not bin_file:
         print("错误: 请指定固件文件 (--bin)")
         return 1
     
-    if not bin_file.exists():
-        print(f"固件文件不存在: {bin_file}")
-        return 1
-    
     print(f"烧录固件: {bin_file}")
-    print(f"  工具: {tool}")
+    print(f"  工具: {tool or '目标默认'}")
     print(f"  端口: {port or '自动检测'}")
     print()
     
-    # 根据工具类型执行烧录
-    if tool == "stlink":
-        cmd = ["st-flash"]
-        if erase:
-            cmd.append("--reset")
-        cmd.extend(["write", str(bin_file), "0x08000000"])
-    elif tool == "jlink":
-        cmd = ["JLinkExe"]
-        if port:
-            cmd.extend(["-device", "STM32F407VG", "-if", "SWD", "-speed", "4000"])
-    elif tool == "openocd":
-        cmd = ["openocd"]
-        if port:
-            cmd.extend(["-f", "interface/stlink.cfg", "-f", "target/stm32f4x.cfg"])
-    else:
-        print(f"不支持的烧录工具: {tool}")
+    try:
+        from tools.api.flash import run_flash
+        cmd = run_flash(bin_file, chip=chip, tool=tool, port=port, erase=erase, dry_run=dry_run)
+    except FileNotFoundError as exc:
+        print(f"错误: {exc}")
+        return 1
+    except ValueError as exc:
+        print(f"错误: {exc}")
+        return 1
+    except OSError as exc:
+        print(f"错误: 无法启动烧录工具: {exc}")
+        return 1
+    except subprocess.CalledProcessError as exc:
+        print(f"错误: 烧录工具退出码 {exc.returncode}")
+        return exc.returncode or 1
+    except Exception as exc:
+        print(f"错误: {exc}")
         return 1
     
-    print(f"执行: {' '.join(cmd)}")
+    print(f"{'计划' if dry_run else '已执行'}: {' '.join(cmd)}")
     print()
-    print("注意: 烧录功能需要安装对应的烧录工具")
-    print("  - st-flash: https://github.com/stlink-org/stlink")
-    print("  - JLinkExe: https://www.segger.com/downloads/jlink/")
-    print("  - openocd: http://openocd.org/")
+    if dry_run:
+        print("dry-run: 未执行烧录")
     
     return 0
 

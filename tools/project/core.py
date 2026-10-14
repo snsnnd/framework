@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -41,6 +43,41 @@ def load_json(path: Path) -> Any:
 def write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def write_json_transaction(updates: dict[Path, Any]) -> None:
+    serialized = {path: (json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8") for path, data in updates.items()}
+    resolved = [path.resolve() for path in serialized]
+    if len(set(resolved)) != len(resolved):
+        raise ValueError("JSON transaction contains duplicate destination paths")
+    snapshots = {path: path.read_bytes() if path.exists() else None for path in serialized}
+    staged: dict[Path, Path] = {}
+    replaced: list[Path] = []
+    try:
+        for path, content in serialized.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile("wb", dir=path.parent, prefix=f".{path.name}.", delete=False) as handle:
+                handle.write(content)
+                handle.flush()
+                os.fsync(handle.fileno())
+                staged[path] = Path(handle.name)
+        for path, temp_path in staged.items():
+            os.replace(temp_path, path)
+            replaced.append(path)
+    except Exception:
+        for path in reversed(replaced):
+            original = snapshots[path]
+            if original is None:
+                path.unlink(missing_ok=True)
+            else:
+                with tempfile.NamedTemporaryFile("wb", dir=path.parent, prefix=f".{path.name}.rollback.", delete=False) as handle:
+                    handle.write(original)
+                    rollback = Path(handle.name)
+                os.replace(rollback, path)
+        raise
+    finally:
+        for temp_path in staged.values():
+            temp_path.unlink(missing_ok=True)
 
 
 def default_project() -> dict[str, Any]:

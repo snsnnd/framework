@@ -37,6 +37,7 @@ static const efw_sensor_ops_t **g_sensors = g_sensor_default_pool;
 static size_t g_sensor_cap = EFW_MAX_SENSORS;
 static size_t g_sensor_n;
 
+/* 传感器注册表是设备层的“索引”；真正的数据格式仍由 read 回调约定。 */
 efw_status_t efw_sensor_registry_init(void) { g_sensors = g_sensor_default_pool; g_sensor_cap = EFW_MAX_SENSORS; g_sensor_n = 0; return EFW_OK; }
 efw_status_t efw_sensor_registry_init_pool(const efw_sensor_ops_t **pool, size_t capacity) {
     if (!pool || capacity == 0) { efw_diag_set(EFW_ERR_INVALID, "sensor", 0, "invalid pool"); return EFW_ERR_INVALID; }
@@ -45,6 +46,7 @@ efw_status_t efw_sensor_registry_init_pool(const efw_sensor_ops_t **pool, size_t
 
 efw_status_t efw_sensor_register(const efw_sensor_ops_t *ops) {
     if (!ops || !ops->name || !ops->read) { efw_diag_set(EFW_ERR_INVALID, "sensor", 0, "invalid ops"); return EFW_ERR_INVALID; }
+    /* 先验证外部引用，再把传感器放入表中，保证注册成功即表示依赖可解析。 */
     if (ops->hal_name) {
 #if EFW_ENABLE_HAL
         const efw_hal_ops_t *hal;
