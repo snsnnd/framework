@@ -24,7 +24,7 @@
  */
 efw_status_t efw_imu_read(const char *name, efw_imu_data_t *out) {
     if (!out) return EFW_ERR_INVALID;           /* out 为空 → 无法写入 */
-    return efw_sensor_read(name, out);          /* 委托给通用传感器读取 */
+    return efw_sensor_read(name, out, (uint16_t)sizeof(*out));  /* 委托给通用传感器读取 */
 }
 
 #endif /* EFW_ENABLE_SENSOR && EFW_ENABLE_SENSOR_IMU */

@@ -1,65 +1,73 @@
-/**
- * @file    diagnostic.c
- * @brief   诊断系统实现 —— 全局"最后一次错误"记录
- *
- * 本文件只有一个静态全局变量 g_last_error 和三个函数。
- * 由于使用静态全局变量，诊断系统本身是单实例的——整个程序只有一个错误槽位。
- *
- * =========================================================================
- * 实现细节
- * =========================================================================
- *
- *   g_last_error 是 static 变量，仅本文件可见。
- *   线程安全：裸机/单线程环境下天然安全。RTOS 多任务环境需外部加锁。
- *
- *   efw_diag_set 直接覆盖上一次错误——不做历史记录。
- *   如果需要追踪多次错误，在上层用 efw_diag_last_error() 读取后自行保存。
- */
+#include "efw/core/diagnostic.h" // 诊断模块
+#include "efw/core/config.h"
 
-#include "efw/core/diagnostic.h"
-
-/** @brief 全局最后一次错误记录 (static，仅本文件可见) */
 static efw_error_t g_last_error;
+static efw_error_t g_error_history[EFW_ERROR_HISTORY_SIZE];
+static uint8_t g_history_idx;
+static uint32_t g_error_count;
+static efw_diag_hook_fn g_diag_hook;
 
-/**
- * @brief 清除诊断状态
- *
- * code=EFW_OK, module=NULL, name=NULL, message=NULL
- * 代表"没有错误"的初始状态。
- */
+/* 诊断信息只保存指针，不复制文本，因此适合使用字符串常量。 */
 void efw_diag_clear(void) {
-    g_last_error.code = EFW_OK;         /* 状态码 = 成功 (无错误) */
-    g_last_error.module = 0;            /* 模块名 = NULL (不指向任何模块) */
-    g_last_error.name = 0;              /* 组件名 = NULL */
-    g_last_error.message = 0;           /* 错误描述 = NULL */
+    g_last_error.code = EFW_OK;
+    g_last_error.module = 0;
+    g_last_error.name = 0;
+    g_last_error.message = 0;
+    g_history_idx = 0;
+    g_error_count = 0;
+    for (uint8_t i = 0; i < EFW_ERROR_HISTORY_SIZE; ++i) {
+        g_error_history[i].code = EFW_OK;
+        g_error_history[i].module = 0;
+        g_error_history[i].name = 0;
+        g_error_history[i].message = 0;
+    }
 }
 
 /**
- * @brief 设置诊断错误
- *
- * 所有字段直接赋值为传入的指针/值。module/name/message 应指向字符串字面量
- * 或静态缓冲区——本函数不做拷贝，只保存指针。
- *
- * @param code    错误码 (来自 API 返回值)
- * @param module  模块标识字符串 (如 "sensor")
- * @param name    组件名 (如 "line5")，无名称传 NULL
- * @param message 错误描述 (如 "pool full")
+ * @brief 设置诊断错误信息，更新最新错误与环形错误历史
+ * @param code 错误状态码
+ * @param module 所属模块名字符串(必须为静态/常量字符串)
+ * @param name 出错对象名称(必须为静态/常量字符串)
+ * @param message 错误描述文本(必须为静态/常量字符串)
+ * @note 本函数仅保存指针，不拷贝字符串；禁止传入栈临时字符串
  */
-void efw_diag_set(efw_status_t code, const char *module, const char *name, const char *message) {
-    g_last_error.code = code;           /* 错误码 */
-    g_last_error.module = module;       /* 模块名 (字符串字面量指针) */
-    g_last_error.name = name;           /* 组件名 (字符串字面量指针) */
-    g_last_error.message = message;     /* 错误描述 (字符串字面量指针) */
+void efw_diag_set(efw_status_t code, const char* module, const char* name, const char* message) {
+    /* 当前错误单独保存，历史槽位按环形顺序覆盖；两者共享同一条值语义。 */
+    // 更新全局“最后一次错误”
+    g_last_error.code = code;
+    g_last_error.module = module;
+    g_last_error.name = name;
+    g_last_error.message = message;
+
+    // 将本次错误存入环形历史缓冲区的当前位置
+    g_error_history[g_history_idx] = g_last_error;
+    // 环形索引步进，达到缓冲区大小后绕回0，旧记录被新记录覆盖
+    g_history_idx = (uint8_t)((g_history_idx + 1u) % EFW_ERROR_HISTORY_SIZE);
+    // 全局错误发生总计数
+    g_error_count++;
+
+    /* 统一观察点：应用可在此断言/点灯/上报。禁止在钩子里再写诊断（递归）。 */
+    if (g_diag_hook) g_diag_hook(&g_last_error);
 }
 
-/**
- * @brief 获取最后一次错误
- *
- * 返回指向静态 g_last_error 的指针。指针生命周期 = 整个程序运行期。
- * 调用方不应释放此指针，也不应修改其内容。
- *
- * @return 始终有效的 efw_error_t 指针 (不会返回 NULL)
- */
+void efw_diag_set_hook(efw_diag_hook_fn hook) {
+    g_diag_hook = hook;
+}
+
+
 const efw_error_t *efw_diag_last_error(void) {
-    return &g_last_error;               /* 返回静态变量的地址 */
+    return &g_last_error;
+}
+
+uint32_t efw_diag_error_count(void) {
+    return g_error_count;
+}
+
+uint8_t efw_diag_history_size(void) {
+    return EFW_ERROR_HISTORY_SIZE;
+}
+
+const efw_error_t *efw_diag_history_entry(uint8_t index) {
+    if (index >= EFW_ERROR_HISTORY_SIZE) return 0;
+    return &g_error_history[index];
 }

@@ -80,14 +80,25 @@ typedef struct {
 
 /* ====== COMM 注册表 API ====== */
 
+/** @brief 使用默认静态池初始化通信注册表。 */
 efw_status_t efw_comm_registry_init(void);
+/** @brief 使用调用方提供的指针池初始化通信注册表。 */
+efw_status_t efw_comm_registry_init_pool(const efw_comm_ops_t **pool, size_t capacity);
+/** @brief 注册通信实例，并校验其 hal_name 引用。 */
 efw_status_t efw_comm_register(const efw_comm_ops_t *ops);
+/** @brief 按名称获取通信实例描述。 */
 efw_status_t efw_comm_get(const char *name, const efw_comm_ops_t **out_ops);
+/** @brief 统计指定通信类型的实例数量。 */
 size_t efw_comm_count_by_type(efw_comm_type_t type);
+/** @brief 解析 COMM 的 hal_name 并返回对应 HAL。 */
 efw_status_t efw_comm_bind_hal(const char *comm_name, const efw_hal_ops_t **out_hal);
+/** @brief 调用可选 open 回调。 */
 efw_status_t efw_comm_open(const char *name);
+/** @brief 调用可选 close 回调。 */
 efw_status_t efw_comm_close(const char *name);
+/** @brief 调用 send 回调。 */
 efw_status_t efw_comm_send(const char *name, const uint8_t *data, uint16_t len, uint16_t *actual);
+/** @brief 调用 recv 回调。 */
 efw_status_t efw_comm_recv(const char *name, uint8_t *data, uint16_t len, uint16_t *actual);
 
 #endif

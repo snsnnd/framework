@@ -1,0 +1,673 @@
+from __future__ import annotations
+
+import copy
+import json
+import os
+import shutil
+import socket
+import subprocess
+import tempfile
+import threading
+import time
+import tty
+import unittest
+from pathlib import Path
+
+from studio_core import codegen, project, templates
+from studio_core.debug import Session, find_cc, runtime_dir
+from studio_core.fsutil import ServiceError
+from studio_core import model as studio_model
+from studio_core.model import analyze, model_hash, validate
+from studio_core.service import Service
+
+RECIPES = ("thermostat", "traffic", "sampler", "blank")
+
+
+def errors(model):
+    return [d for d in validate(model) if d["level"] == "error"]
+
+
+class Base(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self.tmp.name)
+
+    def tearDown(self):
+        self.tmp.cleanup()
+
+
+class ModelTests(Base):
+    def test_hash_ignores_integral_float_spelling(self):
+        model, _, _ = templates.build("thermostat", "x")
+        base = model_hash(model)
+
+        def as_js(value):  # JavaScript 的 JSON.parse 会把 0.0 变成 0
+            if isinstance(value, float) and value.is_integer():
+                return int(value)
+            if isinstance(value, dict):
+                return {k: as_js(v) for k, v in value.items()}
+            if isinstance(value, list):
+                return [as_js(v) for v in value]
+            return value
+
+        self.assertEqual(base, model_hash(as_js(model)))
+        self.assertNotEqual(base, model_hash({**model, "tick_ms": 2}))
+
+    def test_step_specs_expose_hardware_points_and_usage_tracks_them(self):
+        model, files, _ = templates.build("thermostat", "x")
+        info = analyze(model, {k: v for k, v in files.items() if k.endswith(".c")})
+        specs = {s["kind"]: {f["name"]: f["role"] for f in s["fields"]} for s in info["step_specs"]}
+        # 界面靠这张表渲染“读取/写入”步骤的硬件选择框，缺了就选不了输入输出
+        self.assertEqual(specs["read"].get("input"), "input")
+        self.assertEqual(specs["write"].get("output"), "output")
+        read_at = {r["step"] for r in info["usage"]["inputs"]["sensor"]["steps"]}
+        self.assertIn("read", read_at)
+        written = {r["step"] for r in info["usage"]["outputs"]["heater"]["steps"]}
+        self.assertIn("drive", written)
+
+    def test_sim_specs_cover_every_sim_kind(self):
+        info = analyze({"version": 1, "name": "x", "tick_ms": 1, "signals": [], "inputs": [],
+                        "outputs": [], "events": [], "queues": [], "flows": [], "machines": []}, {})
+        kinds = [s["kind"] for s in info["sim_specs"]]
+        self.assertEqual(set(kinds), set(studio_model.SIM_KINDS))
+        follow = next(s for s in info["sim_specs"] if s["kind"] == "follow")
+        self.assertEqual([f["role"] for f in follow["fields"]][0], "output")
+        self.assertTrue(all(f["min"] == 1 for f in follow["fields"] if f["role"] == "ms"))
+
+    def test_recipes_are_valid_and_fully_implemented(self):
+        for name in RECIPES:
+            model, files, _ = templates.build(name, "x")
+            self.assertEqual(errors(model), [], name)
+            info = analyze(model, {k: v for k, v in files.items() if k.endswith(".c")})
+            self.assertTrue(info["ok"], (name, info["diagnostics"]))
+            self.assertTrue(all(f["defined"] and not f["mismatch"] for f in info["functions"]), name)
+
+    def test_errors_point_to_a_place_and_offer_a_hint(self):
+        model, _, _ = templates.build("thermostat", "x")
+        broken = copy.deepcopy(model)
+        broken["flows"][0]["steps"][1]["from"] = "nope"
+        broken["flows"][0]["period_ms"] = 7
+        broken["flows"][0]["steps"][1]["alpha"] = 3
+        broken["machines"][0]["transitions"][0]["on"] = {"event": "ghost"}
+        errs = errors(broken)
+        self.assertGreaterEqual(len(errs), 3)
+        self.assertTrue(any(e["at"].startswith("flows/control/filter") for e in errs))
+        self.assertTrue(all(e["at"] and e["message"] for e in errs))
+        self.assertTrue(any(e["hint"] for e in errs))
+
+    def test_malformed_models_never_raise(self):
+        for bad in (None, [], "x", {"version": 1}, {"version": 1, "name": "a", "flows": [1, 2]}, {"version": 1, "name": "a", "signals": {"a": 1}},
+                    {"version": 1, "name": "a", "flows": [{"id": "f", "period_ms": "x", "steps": [None]}]},
+                    {"version": 1, "name": "a", "machines": [{"id": "m", "states": "s", "transitions": 3}]}):
+            self.assertIsInstance(validate(bad), list)
+            self.assertIsInstance(analyze(bad, {}), dict)
+
+    def test_one_machine_per_flow_and_signal_writer_warning(self):
+        model, _, _ = templates.build("thermostat", "x")
+        two = copy.deepcopy(model)
+        two["machines"].append({"id": "other", "label": "", "initial": "a", "states": [{"id": "a", "run": ["control"], "set": {}}], "transitions": []})
+        self.assertTrue(any("同时被状态机" in e["message"] for e in errors(two)))
+        warns = [d for d in validate(model) if d["level"] == "warn"]
+        self.assertTrue(any("被多个地方写入" in w["message"] for w in warns))  # duty: control + cooldown
+
+    def test_missing_and_wrong_c_functions_are_reported(self):
+        model, files, _ = templates.build("thermostat", "x")
+        info = analyze(model, {"board/io.c": files["board/io.c"]})
+        missing = [f["name"] for f in info["functions"] if not f["defined"]]
+        self.assertEqual(missing, ["count_fault"])
+        wrong = analyze(model, {**{k: v for k, v in files.items() if k.endswith(".c")}, "src/logic.c": "int count_fault(int x) { return 0; }"})
+        self.assertFalse(wrong["ok"])
+        self.assertTrue(any("签名不符" in d["message"] for d in wrong["diagnostics"]))
+
+
+@unittest.skipUnless(shutil.which("cc") or shutil.which("gcc"), "需要 C 编译器")
+class GeneratedCTests(Base):
+    def compile_check(self, name, virtual):
+        model, files, _ = templates.build(name, "x")
+        out = self.dir / f"{name}-{'v' if virtual else 'r'}"
+        (out / "src").mkdir(parents=True); (out / "board").mkdir()
+        gen = codegen.generate(model)
+        for k, v in gen.items():
+            (out / k).write_text(v)
+        rt = runtime_dir()
+        srcs = [str(out / "app_core.c")] + [str(rt / "src/core" / n) for n in ("scheduler.c", "diagnostic.c", "msgq.c")]
+        defs = []
+        if virtual:
+            srcs.append(str(out / "app_virtual.c")); defs = ["-DAPP_VIRTUAL"]
+        for rel, text in files.items():
+            if virtual and rel.startswith("board/"):
+                continue
+            (out / rel).write_text(text)
+            if rel.endswith(".c"):
+                srcs.append(str(out / rel))
+        cmd = [find_cc(), "-std=c99", "-Wall", "-Wextra", "-Werror", *defs, f"-I{out}", f"-I{rt / 'include'}", "-c"]
+        for s in srcs:  # -c 逐个编译：真机目标没有 main，也能检查签名与声明
+            obj = self.dir / (Path(s).stem + f"-{name}-{virtual}.o")
+            done = subprocess.run([*cmd, s, "-o", str(obj)], capture_output=True, text=True)
+            self.assertEqual(done.returncode, 0, f"{name} {s}\n{done.stderr[:1500]}")
+
+    def test_virtual_and_real_target_builds_are_warning_free(self):
+        for name in RECIPES:
+            with self.subTest(recipe=name, target="virtual"):
+                self.compile_check(name, True)
+            with self.subTest(recipe=name, target="real"):
+                self.compile_check(name, False)
+
+    def test_observe_can_be_compiled_out(self):
+        model, _, _ = templates.build("traffic", "x")
+        (self.dir / "app.h").write_text(codegen.gen_header(model))
+        (self.dir / "app_core.c").write_text(codegen.gen_core(model))
+        rt = runtime_dir()
+        done = subprocess.run([find_cc(), "-std=c99", "-Wall", "-Wextra", "-Werror", "-DAPP_OBSERVE_ENABLE=0", f"-I{self.dir}", f"-I{rt / 'include'}", "-c", str(self.dir / "app_core.c"), "-o", str(self.dir / "o.o")],
+                              capture_output=True, text=True)
+        self.assertEqual(done.returncode, 0, done.stderr[:1500])
+
+
+class FakeBoard:
+    """按真机协议的最小目标：收到 dump 回 hello，之后补 snap；记录收到的命令。"""
+
+    def __init__(self, model_hash: str, tick: int = 1):
+        self.hash = model_hash
+        self.tick = tick
+        self.received: list[str] = []
+        self.stopped = threading.Event()
+
+    def handle(self, line: str, write) -> None:
+        self.received.append(line)
+        if line.startswith("dump"):
+            write(json.dumps({"e": "hello", "hash": self.hash, "tick": self.tick}) + "\n")
+            write(json.dumps({"e": "snap", "t": 300, "s": {"value": 1.5}}) + "\n")
+        elif line.startswith("stop"):
+            self.stopped.set()
+
+    def serve_lines(self, read_line, write) -> None:
+        while not self.stopped.is_set():
+            raw = read_line()
+            if not raw:
+                return
+            self.handle(raw.decode("utf-8", "replace").strip(), write)
+
+
+class TcpBoard(FakeBoard):
+    """回环监听器：真机通过 TCP 连过来。"""
+
+    def __init__(self, model_hash: str, tick: int = 1):
+        super().__init__(model_hash, tick)
+        self.sock = socket.socket()
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind(("127.0.0.1", 0))
+        self.sock.listen(1)
+        self.port = self.sock.getsockname()[1]
+        self.conn: socket.socket | None = None
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _write(self, text: str) -> None:
+        if self.conn:
+            self.conn.sendall(text.encode("utf-8"))
+
+    def _run(self) -> None:
+        conn, _ = self.sock.accept()
+        self.conn = conn
+        f = conn.makefile("rb")
+        self.serve_lines(f.readline, self._write)
+
+    def close(self) -> None:
+        self.stopped.set()
+        for closer in (lambda: self.conn and self.conn.close(), self.sock.close):
+            try:
+                closer()
+            except OSError:
+                pass
+        self.thread.join(timeout=2)
+
+
+class PtyBoard(FakeBoard):
+    """伪终端：真机用 pyserial 打开从设备端，我们在主端说协议。"""
+
+    def __init__(self, model_hash: str, tick: int = 1):
+        super().__init__(model_hash, tick)
+        self.master, self.slave = os.openpty()
+        tty.setraw(self.master)
+        tty.setraw(self.slave)
+        self.port = os.ttyname(self.slave)
+        self.thread = threading.Thread(target=self._run, daemon=True)
+        self.thread.start()
+
+    def _write(self, text: str) -> None:
+        os.write(self.master, text.encode("utf-8"))
+
+    def _run(self) -> None:
+        buf = b""
+        while not self.stopped.is_set():
+            try:
+                chunk = os.read(self.master, 256)
+            except OSError:
+                return
+            if not chunk:
+                return
+            buf += chunk
+            while b"\n" in buf:
+                raw, buf = buf.split(b"\n", 1)
+                self.handle(raw.decode("utf-8", "replace").strip(), self._write)
+
+    def close(self) -> None:
+        self.stopped.set()
+        for fd in (self.master, self.slave):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        self.thread.join(timeout=2)
+
+
+def make_project(base: Path, template: str, name="demo") -> str:
+    project.create_project(str(base / name), name, template)
+    return str(base / name)
+
+
+def run_virtual(path, ms, before=(), snap_only=True):
+    """通过命令行同一实现运行虚拟目标，返回 (最后快照, 事件列表)。"""
+    from studio_core.debug import ProcTransport, build_virtual
+    state = project.open_project(path)
+    transport = ProcTransport(build_virtual(project.project_root(path), state["model"]), project.project_root(path))
+    snaps, events = [], []
+    def pump():
+        for line in transport.lines():
+            if not line.startswith("{"):
+                continue
+            obj = json.loads(line)
+            if obj["e"] == "idle":
+                return
+            (snaps if obj["e"] == "snap" else events).append(obj)
+    try:
+        for cmd in before:
+            transport.write(cmd)
+        transport.write(f"run {ms}")
+        pump()
+    finally:
+        transport.close()
+    return snaps, events
+
+
+@unittest.skipUnless(shutil.which("cc") or shutil.which("gcc"), "需要 C 编译器")
+@unittest.skipUnless(shutil.which("cc") or shutil.which("gcc"), "需要 C 编译器")
+class RuntimeContractTests(Base):
+    """runtime/ 自带契约：聚合头与单编译单元入口必须始终自洽。"""
+
+    def test_aggregate_header_exposes_the_message_queue(self):
+        rt = runtime_dir()
+        prog = self.dir / "main.c"
+        prog.write_text(
+            "#include \"efw/efw.h\"\n"
+            "typedef struct { int v; } item_t;\n"
+            "static efw_msgq_t q;\n"
+            "static item_t pool[4];\n"
+            "int main(void) {\n"
+            "    item_t it = { .v = 7 }, out;\n"
+            "    if (efw_msgq_init(&q, pool, sizeof(item_t), 4, EFW_MSGQ_DROP_OLDEST) != EFW_OK) return 1;\n"
+            "    if (efw_msgq_push(&q, &it) != EFW_OK) return 2;\n"
+            "    if (efw_msgq_count(&q) != 1) return 3;\n"
+            "    if (efw_msgq_pop(&q, &out) != EFW_OK || out.v != 7) return 4;\n"
+            "    return 0;\n"
+            "}\n"
+        )
+        exe = self.dir / "mq"
+        done = subprocess.run([find_cc(), "-std=c99", "-Wall", "-Wextra", "-Werror", f"-I{rt / 'include'}",
+                               str(prog), str(rt / "src" / "core" / "msgq.c"), "-o", str(exe)],
+                              capture_output=True, text=True, timeout=120)
+        self.assertEqual(done.returncode, 0, done.stderr[-2000:])
+        self.assertEqual(subprocess.run([str(exe)], timeout=30).returncode, 0)
+
+    def test_single_translation_unit_entry_compiles(self):
+        # Keil 用户只加 efw_all.c；消息队列没有开关时也要能编过（无 static 符号冲突）
+        rt = runtime_dir()
+        done = subprocess.run([find_cc(), "-std=c99", "-Wall", "-Wextra", "-Werror", f"-I{rt / 'include'}",
+                               "-c", str(rt / "src" / "efw_all.c"), "-o", str(self.dir / "all.o")],
+                              capture_output=True, text=True, timeout=300)
+        self.assertEqual(done.returncode, 0, done.stderr[-3000:])
+        self.assertTrue((self.dir / "all.o").exists())
+
+
+class BehaviourTests(Base):
+    def test_thermostat_closes_the_loop_then_trips_and_recovers(self):
+        path = make_project(self.dir, "thermostat")
+        snaps, events = run_virtual(path, 30000, ["set target 40"])
+        temps = [s["s"]["temp"] for s in snaps]
+        self.assertLess(temps[0], 25)
+        self.assertGreater(temps[-1], 38)              # PID 把仿真对象拉到目标附近
+        self.assertLess(max(temps), 46)                # 没有严重过冲
+        self.assertFalse([e for e in events if e["e"] == "err"])
+        snaps, events = run_virtual(path, 18000, ["set target 90"])   # 目标高于 75 → 触发过热
+        trans = [(e["from"], e["to"], e["by"]) for e in events if e["e"] == "trans"]
+        self.assertEqual(trans[0], ("running", "fault", "trip"))
+        self.assertIn(("fault", "running", "recover"), trans)
+        self.assertGreaterEqual(snaps[-1]["s"]["faults"], 1)      # 用户 C 钩子 count_fault 被调用
+        fault = next(s for s in snaps if s["m"]["mode"]["s"] == "fault")
+        self.assertEqual((fault["f"]["control"]["on"], fault["f"]["cooldown"]["on"]), (0, 1))
+
+    def test_tunable_signal_value_is_echoed_in_params(self):
+        path = make_project(self.dir, "thermostat")
+        snaps, events = run_virtual(path, 1000, ["set target 45"])
+        params = [e for e in events if e["e"] == "params"]
+        self.assertTrue(params, "set 之后应回发 params 帧")
+        self.assertEqual(params[-1]["p"]["target"], 45)           # 可整定信号也会上报
+        self.assertEqual(snaps[-1]["s"]["target"], 45)
+        set_ack = next(e for e in events if e["e"] == "ack" and e.get("c") == "set")
+        self.assertEqual(set_ack.get("msg", ""), "")
+
+    def test_traffic_light_is_pure_state_machine(self):
+        path = make_project(self.dir, "traffic")
+        snaps, events = run_virtual(path, 6500)
+        seq = [(e["t"], e["to"]) for e in events if e["e"] == "trans"]
+        self.assertEqual(seq[:2], [(3000, "green"), (6000, "yellow")])
+        self.assertEqual(snaps[-1]["s"]["yellow"], 1)
+        snaps, events = run_virtual(path, 4000, ["state light green", "fire button"])
+        self.assertTrue(any(e.get("by") == "rush" for e in events if e["e"] == "trans"))
+
+    def test_queue_handoff_and_drop_accounting(self):
+        path = make_project(self.dir, "sampler")
+        snaps, _ = run_virtual(path, 3000)
+        q = snaps[-1]["q"]["samples"]
+        self.assertGreater(q["push"], 500)
+        self.assertEqual(q["drop"], 0)
+        self.assertEqual(snaps[-1]["s"]["batch"], 10)   # 50ms / 5ms
+        snaps, _ = run_virtual(path, 1, ["push samples 1"] * 30)
+        q = snaps[-1]["q"]["samples"]
+        self.assertGreaterEqual(q["drop"], 14)          # 容量 16、drop_oldest：30 次入队至少丢 14 个
+        self.assertEqual(q["hw"], 16)
+
+    def test_force_and_pause_and_ack_errors(self):
+        path = make_project(self.dir, "thermostat")
+        snaps, events = run_virtual(path, 1000, ["force sensor 42", "pause control", "bogus 1", "fire nothing"])
+        self.assertEqual(snaps[-1]["forced"], ["sensor"])
+        self.assertEqual(snaps[-1]["f"]["control"]["on"], 0)
+        self.assertGreater(snaps[-1]["s"]["temp_raw"] + 0, 0)
+
+
+class ProjectTests(Base):
+    def test_user_sources_are_never_touched_by_generation(self):
+        path = make_project(self.dir, "thermostat")
+        state = project.open_project(path)
+        logic = Path(path) / "src/logic.c"
+        logic.write_text(logic.read_text() + "\n/* mine */\n")
+        before = {f: (Path(path) / f).read_bytes() for f in state["files"]}
+        pv = project.preview(path, state["model"])
+        self.assertFalse(pv["blocked"], pv.get("reason"))
+        project.commit(path, state["model"], pv["token"])
+        again = project.preview(path, state["model"])
+        self.assertTrue(all(f["status"] == "same" for f in again["files"]))
+        self.assertEqual(before, {f: (Path(path) / f).read_bytes() for f in state["files"]})
+        self.assertTrue((Path(path) / "generated/app_core.c").exists())
+        self.assertFalse((Path(path) / "generated/app_virtual.c").exists())
+
+    def test_hand_edited_generated_file_is_a_conflict_and_extras_survive(self):
+        path = make_project(self.dir, "traffic")
+        model = project.open_project(path)["model"]
+        project.commit(path, model, project.preview(path, model)["token"])
+        core = Path(path) / "generated/app_core.c"
+        core.write_text(core.read_text() + "/* hand */")
+        (Path(path) / "generated/notes.txt").write_text("keep")
+        model["tick_ms"] = 1
+        model["flows"][0]["period_ms"] = 20
+        pv = project.preview(path, model)
+        self.assertTrue(pv["blocked"])
+        with self.assertRaises(ServiceError):
+            project.commit(path, model, pv["token"])
+        self.assertTrue(core.read_text().endswith("/* hand */"))
+        self.assertEqual((Path(path) / "generated/notes.txt").read_text(), "keep")
+
+    def test_stale_token_and_external_changes(self):
+        path = make_project(self.dir, "traffic")
+        state = project.open_project(path)
+        pv = project.preview(path, state["model"])
+        changed = copy.deepcopy(state["model"]); changed["flows"][0]["period_ms"] = 30
+        with self.assertRaises(ServiceError):
+            project.commit(path, changed, pv["token"])
+        (Path(path) / "efw.json").write_text((Path(path) / "efw.json").read_text() + " ")
+        with self.assertRaises(ServiceError) as ctx:
+            project.save_project(path, state["model"], state["layout"], state["revision"])
+        self.assertEqual(ctx.exception.code, "CONFLICT")
+        f = project.read_file(path, "board/io.c")
+        (Path(path) / "board/io.c").write_text("// external\n")
+        with self.assertRaises(ServiceError):
+            project.write_file(path, "board/io.c", "x", f["revision"])
+
+    def test_layout_changes_do_not_affect_generation(self):
+        path = make_project(self.dir, "thermostat")
+        state = project.open_project(path)
+        a = project.preview(path, state["model"])["token"]
+        project.save_project(path, state["model"], {"machines": {"mode": {"running": {"x": 5, "y": 6}}}}, state["revision"])
+        self.assertEqual(a, project.preview(path, state["model"])["token"])
+
+    def test_paths_are_confined(self):
+        path = make_project(self.dir, "blank")
+        for bad in ("../x.c", "src/../../x.c", "/tmp/x.c", "src\\x.c", "generated/x.c", "src/x.txt"):
+            with self.assertRaises(ServiceError):
+                project.create_file(path, bad)
+        (Path(path) / "src/link").symlink_to(self.dir, target_is_directory=True)
+        with self.assertRaises(ServiceError):
+            project.create_file(path, "src/link/x.c")
+
+    def test_stubs_group_by_target_file(self):
+        model, _, _ = templates.build("thermostat", "x")
+        groups = {g["file"]: g["text"] for g in project.stubs(model, ["sensor_read", "heater_write", "count_fault"])}
+        self.assertEqual(set(groups), {"board/io.c", "src/logic.c"})
+        self.assertIn("efw_status_t sensor_read(float *value)", groups["board/io.c"])
+        self.assertIn("/* EFW USER BEGIN sensor_read */", groups["board/io.c"])
+
+    def test_template_regions_are_protected(self):
+        path = make_project(self.dir, "thermostat")
+        first = project.read_file(path, "src/logic.c")
+        self.assertIn("/* EFW USER BEGIN count_fault */", first["content"])
+        edited = first["content"].replace("app_set_faults(app_get_faults() + 1);", "app_set_faults(7);")
+        project.write_file(path, "src/logic.c", edited, first["revision"])
+        current = project.read_file(path, "src/logic.c")
+        outside = current["content"].replace('#include "app.h"', '#include "app.h"\n/* note */')
+        with self.assertRaises(ServiceError) as ctx:
+            project.write_file(path, "src/logic.c", outside, current["revision"])
+        self.assertEqual(ctx.exception.code, "TEMPLATE")
+        with self.assertRaises(ServiceError) as ctx:
+            project.write_file(path, "src/logic.c", current["content"].replace("/* EFW USER END count_fault */", ""), current["revision"])
+        self.assertEqual(ctx.exception.code, "TEMPLATE")
+        with self.assertRaises(ServiceError) as ctx:
+            project.create_file(path, "src/bad.c", "/* EFW USER BEGIN x */\n")
+        self.assertEqual(ctx.exception.code, "TEMPLATE")
+
+    def test_missing_function_is_added_with_protected_template(self):
+        path = make_project(self.dir, "thermostat")
+        model = project.open_project(path)["model"]
+        (Path(path) / "src/logic.c").write_text('#include "app.h"\n')
+        first = project.read_file(path, "src/logic.c")
+        content = first["content"] + "\n" + project.stubs(model, ["count_fault"])[0]["text"] + "\n"
+        saved = project.write_file(path, "src/logic.c", content, first["revision"], add_functions=["count_fault"])
+        self.assertIn("/* EFW USER BEGIN count_fault */", saved["content"])
+        with self.assertRaises(ServiceError) as ctx:
+            project.write_file(path, "src/logic.c", saved["content"] + "// tail\n", saved["revision"])
+        self.assertEqual(ctx.exception.code, "TEMPLATE")
+
+    def test_create_requires_empty_directory(self):
+        (self.dir / "full").mkdir(); (self.dir / "full/a").write_text("x")
+        with self.assertRaises(ServiceError):
+            project.create_project(str(self.dir / "full"), "n", "blank")
+
+
+class FakeTransport:
+    def __init__(self):
+        self.q, self.sent, self.closed = [], [], False
+
+    def feed(self, obj):
+        self.q.append(json.dumps(obj) if isinstance(obj, dict) else obj)
+
+    def lines(self):
+        while not self.closed:
+            if self.q:
+                yield self.q.pop(0) + "\n"
+            else:
+                time.sleep(0.01)
+
+    def write(self, line): self.sent.append(line)
+    def close(self): self.closed = True
+
+
+class SessionTests(Base):
+    def wait(self, cond, timeout=15):
+        end = time.time() + timeout
+        while time.time() < end:
+            if cond():
+                return True
+            time.sleep(0.02)
+        return False
+
+    @unittest.skipUnless(shutil.which("cc") or shutil.which("gcc"), "需要 C 编译器")
+    def test_virtual_session_record_and_replay(self):
+        path = make_project(self.dir, "thermostat")
+        events: list[dict] = []
+        svc = Service(events.append)
+        started = svc.dispatch("debug.start", {"path": path, "target": {"kind": "virtual"}})
+        sid = started["session"]
+        self.assertEqual(started["state"], "paused")
+        self.assertIn("params", started["manifest"])
+        svc.dispatch("debug.control", {"session": sid, "action": "speed", "value": 0})
+        svc.dispatch("debug.control", {"session": sid, "action": "play"})
+        frames = lambda: [f for e in events if e.get("event") == "debug.frames" for f in e["frames"]]
+        self.assertTrue(self.wait(lambda: any(f.get("e") == "snap" and f["t"] >= 5000 for f in frames())))
+        svc.dispatch("debug.send", {"session": sid, "line": "fire overheat"})
+        self.assertTrue(self.wait(lambda: any(f.get("e") == "trans" for f in frames())))
+        svc.dispatch("debug.control", {"session": sid, "action": "pause"})
+        with self.assertRaises(ServiceError):
+            svc.dispatch("debug.send", {"session": sid, "line": "rm -rf /"})
+        with self.assertRaises(ServiceError):
+            svc.dispatch("debug.send", {"session": sid, "line": "set a 1\nquit"})
+        svc.dispatch("debug.stop", {"session": sid})
+        runs = svc.dispatch("debug.runs", {"path": path})
+        self.assertEqual(len(runs), 1)
+        self.assertEqual(runs[0]["kind"], "virtual")
+
+        events.clear()
+        rep = svc.dispatch("debug.start", {"path": path, "target": {"kind": "replay", "run": runs[0]["name"]}})
+        svc.dispatch("debug.control", {"session": rep["session"], "action": "speed", "value": 0})
+        svc.dispatch("debug.control", {"session": rep["session"], "action": "play"})
+        self.assertTrue(self.wait(lambda: any(e.get("event") == "debug.status" and e["state"] == "ended" for e in events)))
+        self.assertTrue(any(f.get("e") == "trans" for f in frames()))
+        with self.assertRaises(ServiceError):
+            svc.dispatch("debug.send", {"session": rep["session"], "line": "hello"})
+        svc.stop_all()
+
+    @unittest.skipUnless(shutil.which("cc") or shutil.which("gcc"), "需要 C 编译器")
+    def test_virtual_build_errors_are_reported_readably(self):
+        path = make_project(self.dir, "thermostat")
+        (Path(path) / "src/logic.c").write_text('#include "app.h"\nefw_status_t count_fault(void) { return oops; }\n')
+        with self.assertRaises(ServiceError) as ctx:
+            Service().dispatch("debug.start", {"path": path, "target": {"kind": "virtual"}})
+        self.assertEqual(ctx.exception.code, "BUILD")
+        self.assertIn("oops", str(ctx.exception))
+
+    @unittest.skipUnless(shutil.which("cc") or shutil.which("gcc"), "需要 C 编译器")
+    def test_tcp_target_talks_to_a_real_socket(self):
+        """真机链路之一：TCP。回环监听器应答，主机侧要能收帧、发命令、认出 hash 不一致。"""
+        path = make_project(self.dir, "thermostat")
+        # 故意给一个错的哈希，验证真机固件与项目不一致时界面会提醒
+        board = TcpBoard("deadbeef0000")
+        events: list[dict] = []
+        svc = Service(events.append)
+        try:
+            started = svc.dispatch("debug.start", {"path": path, "target": {"kind": "tcp", "host": "127.0.0.1", "port": board.port}})
+            sid = started["session"]
+            self.assertEqual(started["kind"], "tcp")
+            frames = lambda: [f for e in events if e.get("event") == "debug.frames" for f in e["frames"]]
+            self.assertTrue(self.wait(lambda: "dump" in board.received), board.received)
+            self.assertTrue(self.wait(lambda: any(f.get("e") == "snap" for f in frames())))
+            warned = self.wait(lambda: any(e.get("warning") for e in events))
+            self.assertTrue(warned, "模型哈希不一致应给出提醒")
+            self.assertTrue(any("deadbeef0000" in e.get("message", "") for e in events))
+            svc.dispatch("debug.send", {"session": sid, "line": "set target 42"})
+            self.assertTrue(self.wait(lambda: "set target 42" in board.received), board.received)
+            # 真机目标不接受播放/暂停这类主机侧节拍控制
+            with self.assertRaises(ServiceError):
+                svc.dispatch("debug.control", {"session": sid, "action": "pause"})
+            # 记录照样录到磁盘，回放可用
+            svc.dispatch("debug.stop", {"session": sid})
+            runs = svc.dispatch("debug.runs", {"path": path})
+            self.assertEqual([r["kind"] for r in runs], ["tcp"])
+        finally:
+            svc.stop_all()
+            board.close()
+
+    @unittest.skipUnless(shutil.which("cc") or shutil.which("gcc"), "需要 C 编译器")
+    def test_serial_target_talks_over_a_pseudo_terminal(self):
+        """真机链路之二：串口。用 PTY 代替开发板，不依赖硬件。"""
+        path = make_project(self.dir, "thermostat")
+        model = project.open_project(path)["model"]
+        board = PtyBoard(model_hash(model))
+        events: list[dict] = []
+        svc = Service(events.append)
+        try:
+            started = svc.dispatch("debug.start", {"path": path, "target": {"kind": "serial", "port": board.port, "baud": 115200}})
+            sid = started["session"]
+            self.assertEqual(started["kind"], "serial")
+            frames = lambda: [f for e in events if e.get("event") == "debug.frames" for f in e["frames"]]
+            self.assertTrue(self.wait(lambda: "dump" in board.received), board.received)
+            self.assertTrue(self.wait(lambda: any(f.get("e") == "snap" for f in frames())))
+            svc.dispatch("debug.send", {"session": sid, "line": "fire overheat"})
+            self.assertTrue(self.wait(lambda: "fire overheat" in board.received), board.received)
+            svc.dispatch("debug.stop", {"session": sid})
+        finally:
+            svc.stop_all()
+            board.close()
+
+    def test_serial_and_tcp_report_unreachable_endpoints(self):
+        path = make_project(self.dir, "thermostat")
+        svc = Service()
+        try:
+            with self.assertRaises(ServiceError) as ctx:
+                svc.dispatch("debug.start", {"path": path, "target": {"kind": "tcp", "host": "127.0.0.1", "port": 1}})
+            self.assertEqual(ctx.exception.code, "CONNECT")
+            self.assertIn("127.0.0.1:1", str(ctx.exception))
+            with self.assertRaises(ServiceError) as ctx:
+                svc.dispatch("debug.start", {"path": path, "target": {"kind": "serial", "port": "/dev/efw-no-such-tty", "baud": 115200}})
+            self.assertEqual(ctx.exception.code, "CONNECT")
+            self.assertIn("/dev/efw-no-such-tty", str(ctx.exception))
+        finally:
+            svc.stop_all()
+
+    def test_live_transport_path_and_hash_mismatch(self):
+        model, _, _ = templates.build("traffic", "x")
+        events: list[dict] = []
+        t = FakeTransport()
+        s = Session("s1", "serial", t, events.append, None, model_hash(model), 1, False)
+        s.start()
+        t.feed("boot noise, not json")
+        t.feed({"e": "hello", "hash": "deadbeef0000", "tick": 1})
+        t.feed({"e": "snap", "t": 250, "s": {"red": 1}})
+        self.assertTrue(self.wait(lambda: any(e.get("warning") for e in events)))
+        self.assertTrue(self.wait(lambda: any(e.get("event") == "debug.frames" and any(f["e"] == "snap" for f in e["frames"]) for e in events)))
+        self.assertEqual(t.sent[0], "dump")
+        s.send("set target 3.5")
+        self.assertEqual(t.sent[-1], "set target 3.5")
+        with self.assertRaises(ServiceError):
+            s.control("pause")
+        s.stop()
+        self.assertTrue(t.closed)
+
+
+class ServiceTests(Base):
+    def test_unknown_method_and_bad_params(self):
+        svc = Service()
+        with self.assertRaises(ServiceError):
+            svc.dispatch("shell.exec", {})
+        with self.assertRaises(ServiceError):
+            svc.dispatch("project.open", {"nope": 1})
+
+    def test_stdio_server_round_trip(self):
+        proc = subprocess.Popen(["python3", "-m", "studio_core.server"], stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                text=True, cwd=Path(__file__).resolve().parents[1])
+        out, _ = proc.communicate('{"id":1,"method":"system.info","params":{}}\nnot json\n{"id":3,"method":"templates.list"}\n', timeout=30)
+        rows = [json.loads(x) for x in out.splitlines()]
+        self.assertEqual(rows[0]["result"]["protocol"], 2)
+        self.assertEqual(rows[1]["error"]["code"], "INVALID")
+        self.assertEqual(len(rows[2]["result"]), 4)
+
+
+if __name__ == "__main__":
+    unittest.main()

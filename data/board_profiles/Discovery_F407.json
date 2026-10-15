@@ -1,0 +1,28 @@
+{
+  "name": "Discovery F407",
+  "mcu": "STM32F407V(E-G)Tx",
+  "board_type": "official",
+  "description": "Discovery F407 (STM32F407VGT6)",
+  "clock": {
+    "source": "HSE",
+    "source_hz": 8000000,
+    "bypass": false,
+    "pll": {"m": 8, "n": 336, "p": 2, "q": 7, "r": 2},
+    "flash_latency": 5,
+    "sysclk_mhz": 168,
+    "hclk_mhz": 168,
+    "pclk1_mhz": 42,
+    "pclk2_mhz": 84
+  },
+  "pins": {
+    "led": {"pin": "PD12", "active": "high", "label": "LD4 GREEN", "alternates": ["PD13", "PD14", "PD15"]},
+    "button": {"pin": "PA0", "active": "high", "label": "B1 USER"},
+    "uart_debug": {"instance": "USART2", "tx": "PA2", "rx": "PA3", "baud": 115200, "connection": "header"},
+    "i2c_sensor": {"instance": "I2C1", "scl": "PB6", "sda": "PB9", "connection": "on-board audio control bus"},
+    "spi_display": {"instance": "SPI1", "sck": "PA5", "miso": "PA6", "mosi": "PA7"}
+  },
+  "sources": [
+    "https://github.com/STMicroelectronics/STM32CubeF4/blob/master/Drivers/BSP/STM32F4-Discovery/stm32f4_discovery.h",
+    "https://github.com/zephyrproject-rtos/zephyr/blob/main/boards/st/stm32f4_disco/stm32f4_disco.dts"
+  ]
+}

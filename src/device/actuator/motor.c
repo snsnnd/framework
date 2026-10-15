@@ -60,7 +60,7 @@ efw_status_t efw_motor_write(const char *name, float speed, float direction) {
     efw_motor_cmd_t cmd;
     cmd.speed = speed;
     cmd.direction = direction;
-    return efw_actuator_write(name, &cmd);
+    return efw_actuator_write(name, &cmd, (uint16_t)sizeof(cmd));
 }
 
 efw_status_t efw_motor_set_speed(const char *name, float speed) {

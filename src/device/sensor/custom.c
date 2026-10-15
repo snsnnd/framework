@@ -25,9 +25,9 @@
  * @param out  输出缓冲区 (任意指针，不能为空)
  * @return EFW_OK 成功, EFW_ERR_INVALID out 为空
  */
-efw_status_t efw_custom_sensor_read(const char *name, void *out) {
-    if (!out) return EFW_ERR_INVALID;           /* out 为空 → 无法写入 */
-    return efw_sensor_read(name, out);          /* 委托给通用传感器读取 */
+efw_status_t efw_custom_sensor_read(const char *name, void *out, uint16_t out_size) {
+    if (!out) return EFW_ERR_INVALID;
+    return efw_sensor_read(name, out, out_size);
 }
 
 /**
@@ -43,8 +43,8 @@ efw_status_t efw_custom_sensor_read(const char *name, void *out) {
  * @return EFW_OK 成功, EFW_ERR_INVALID 参数非法
  */
 efw_status_t efw_custom_sensor_read_data(const char *name, efw_custom_sensor_data_t *out) {
-    if (!out || !out->data || out->size == 0) return EFW_ERR_INVALID;  /* 三重校验 */
-    return efw_sensor_read(name, out);           /* 委托给通用传感器读取 */
+    if (!out || !out->data || out->size == 0) return EFW_ERR_INVALID;
+    return efw_sensor_read(name, out, (uint16_t)sizeof(*out));
 }
 
 #endif /* EFW_ENABLE_SENSOR && EFW_ENABLE_SENSOR_CUSTOM */

@@ -49,34 +49,35 @@ static efw_status_t relay_gpio_write(void *ctx, const void *buf, uint16_t len, u
     return EFW_OK;
 }
 
-static efw_status_t temperature_read(void *ctx, void *out) {
+static efw_status_t temperature_read(void *ctx, void *out, uint16_t out_size) {
     float raw[2];
     EFW_UNUSED(ctx);
-    if (!out) return EFW_ERR_INVALID;
+    if (!out || out_size < sizeof(float)) return EFW_ERR_INVALID;
     if (efw_hal_read(APP_ENV_ADC_HAL_NAME, raw, (uint16_t)sizeof(raw), 0) != EFW_OK) return EFW_ERR_IO;
     *(float *)out = raw[0];
     return EFW_OK;
 }
 
-static efw_status_t humidity_read(void *ctx, void *out) {
+static efw_status_t humidity_read(void *ctx, void *out, uint16_t out_size) {
     float raw[2];
     EFW_UNUSED(ctx);
-    if (!out) return EFW_ERR_INVALID;
+    if (!out || out_size < sizeof(float)) return EFW_ERR_INVALID;
     if (efw_hal_read(APP_ENV_ADC_HAL_NAME, raw, (uint16_t)sizeof(raw), 0) != EFW_OK) return EFW_ERR_IO;
     *(float *)out = raw[1];
     return EFW_OK;
 }
 
-static efw_status_t imu_read(void *ctx, void *out) {
+static efw_status_t imu_read(void *ctx, void *out, uint16_t out_size) {
     EFW_UNUSED(ctx);
-    if (!out) return EFW_ERR_INVALID;
+    if (!out || out_size < sizeof(efw_imu_data_t)) return EFW_ERR_INVALID;
     return efw_hal_read(APP_IMU_I2C_HAL_NAME, out, (uint16_t)sizeof(efw_imu_data_t), 0);
 }
 
-static efw_status_t fan_write(void *ctx, const void *cmd) {
+static efw_status_t fan_write(void *ctx, const void *cmd, uint16_t cmd_size) {
     app_platform_ctx_t *platform = (app_platform_ctx_t *)ctx;
     const efw_actuator_cmd_t *fan_cmd = (const efw_actuator_cmd_t *)cmd;
     uint8_t pin_value;
+    (void)cmd_size;
 
     if (!platform || !fan_cmd) return EFW_ERR_INVALID;
     platform->fan_on = fan_cmd->value > 0.5f ? 1u : 0u;
@@ -84,10 +85,11 @@ static efw_status_t fan_write(void *ctx, const void *cmd) {
     return efw_hal_write(APP_RELAY_GPIO_HAL_NAME, &pin_value, (uint16_t)sizeof(pin_value), 0);
 }
 
-static efw_status_t alarm_write(void *ctx, const void *cmd) {
+static efw_status_t alarm_write(void *ctx, const void *cmd, uint16_t cmd_size) {
     app_platform_ctx_t *platform = (app_platform_ctx_t *)ctx;
     const efw_actuator_cmd_t *alarm_cmd = (const efw_actuator_cmd_t *)cmd;
     uint8_t pin_value;
+    (void)cmd_size;
 
     if (!platform || !alarm_cmd) return EFW_ERR_INVALID;
     platform->alarm_on = alarm_cmd->value > 0.5f ? 1u : 0u;

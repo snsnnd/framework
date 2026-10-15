@@ -138,21 +138,39 @@ typedef struct {
     efw_status_t (*init)(void *ctx);            /**< 初始化回调 (可空) */
     efw_status_t (*enable)(void *ctx);          /**< 使能回调 (可空) */
     efw_status_t (*disable)(void *ctx);         /**< 禁用回调 (可空) */
-    efw_status_t (*write)(void *ctx, const void *cmd); /**< 写入指令回调 (必填) */
+    efw_status_t (*write)(void *ctx, const void *cmd, uint16_t cmd_size); /**< 写入指令回调 (必填, cmd_size=命令数据字节数) */
 } efw_actuator_ops_t;
 
 /* ====== 执行器注册表 API ====== */
 
+/** @brief 使用默认静态池清空执行器注册表。 */
 efw_status_t efw_actuator_registry_init(void);
+/** @brief 使用调用方提供的指针池清空执行器注册表。 */
 efw_status_t efw_actuator_registry_init_pool(const efw_actuator_ops_t **pool, size_t capacity);
+/** @brief 注册执行器并校验其 HAL/COMM 名称引用。 */
 efw_status_t efw_actuator_register(const efw_actuator_ops_t *ops);
+/** @brief 按名称获取执行器描述。 */
 efw_status_t efw_actuator_get(const char *name, const efw_actuator_ops_t **out_ops);
+/** @brief 移除执行器指针，不调用 disable 或释放资源。 */
+efw_status_t efw_actuator_unregister(const char *name);
+/** @brief 返回已注册执行器数量。 */
+size_t efw_actuator_count(void);
+/** @brief 遍历执行器注册表。 */
+typedef void (*efw_actuator_enumerate_fn)(const efw_actuator_ops_t *ops, void *user);
+void efw_actuator_enumerate(efw_actuator_enumerate_fn fn, void *user);
+/** @brief 统计指定执行器类型的数量。 */
 size_t efw_actuator_count_by_type(efw_actuator_type_t type);
+/** @brief 解析执行器的 hal_name 并返回对应 HAL。 */
 efw_status_t efw_actuator_bind_hal(const char *actuator_name, const efw_hal_ops_t **out_hal);
+/** @brief 解析执行器的 comm_name 并返回对应 COMM。 */
 efw_status_t efw_actuator_bind_comm(const char *actuator_name, const efw_comm_ops_t **out_comm);
+/** @brief 调用执行器的可选 init 回调。 */
 efw_status_t efw_actuator_init_device(const char *name);
+/** @brief 调用执行器的可选 enable 回调。 */
 efw_status_t efw_actuator_enable(const char *name);
+/** @brief 调用执行器的可选 disable 回调。 */
 efw_status_t efw_actuator_disable(const char *name);
-efw_status_t efw_actuator_write(const char *name, const void *cmd);
+/** @brief 调用执行器 write 回调发送控制命令。 */
+efw_status_t efw_actuator_write(const char *name, const void *cmd, uint16_t cmd_size);
 
 #endif

@@ -106,6 +106,6 @@ typedef struct {
  * @param out 指向 efw_attitude_output_t
  * @return EFW_OK / EFW_ERR_INVALID (参数非法, dt≤0, alpha 超出 [0,1])
  */
-efw_status_t efw_attitude_complementary_run(void *ctx, const void *in, void *out);
+efw_status_t efw_attitude_complementary_run(void *ctx, const void *in, uint16_t in_size, void *out, uint16_t out_size);
 
 #endif

@@ -1,0 +1,28 @@
+{
+  "name": "Nucleo F411RE",
+  "mcu": "STM32F411R(C-E)Tx",
+  "board_type": "official",
+  "description": "Nucleo F411RE (STM32F411RET6)",
+  "clock": {
+    "source": "HSE",
+    "source_hz": 8000000,
+    "bypass": true,
+    "pll": {"m": 8, "n": 200, "p": 2, "q": 4, "r": 2},
+    "flash_latency": 3,
+    "sysclk_mhz": 100,
+    "hclk_mhz": 100,
+    "pclk1_mhz": 50,
+    "pclk2_mhz": 100
+  },
+  "pins": {
+    "led": {"pin": "PA5", "active": "high", "label": "LD2"},
+    "button": {"pin": "PC13", "active": "low", "label": "B1 USER"},
+    "uart_debug": {"instance": "USART2", "tx": "PA2", "rx": "PA3", "baud": 115200, "connection": "ST-LINK VCP"},
+    "i2c_sensor": {"instance": "I2C1", "scl": "PB8", "sda": "PB9"},
+    "spi_display": {"instance": "SPI1", "sck": "PA5", "miso": "PA6", "mosi": "PA7", "cs": "PB6", "connector": "Arduino D10"}
+  },
+  "sources": [
+    "https://github.com/zephyrproject-rtos/zephyr/blob/main/boards/st/nucleo_f411re/nucleo_f411re.dts",
+    "https://github.com/zephyrproject-rtos/zephyr/blob/main/boards/st/nucleo_f411re/arduino_r3_connector.dtsi"
+  ]
+}

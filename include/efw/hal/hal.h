@@ -83,14 +83,28 @@ typedef struct {
 
 /* ====== HAL 注册表 API ====== */
 
+/** @brief 使用框架默认静态池初始化 HAL 注册表。 */
 efw_status_t efw_hal_registry_init(void);
+/** @brief 使用调用方提供的指针池初始化 HAL 注册表。 */
 efw_status_t efw_hal_registry_init_pool(const efw_hal_ops_t **pool, size_t capacity);
+/** @brief 注册 HAL；ops、name 和上下文由调用方保持有效。 */
 efw_status_t efw_hal_register(const efw_hal_ops_t *ops);
+/** @brief 按唯一名称获取 HAL 描述。 */
 efw_status_t efw_hal_get(const char *name, const efw_hal_ops_t **out_ops);
-size_t efw_hal_count_by_type(efw_hal_type_t type);
+/** @brief 从注册表移除 HAL，不调用释放回调。 */
+efw_status_t efw_hal_unregister(const char *name);
+/** @brief 返回当前 HAL 数量。 */
+size_t efw_hal_count(void);
+/** @brief 遍历当前 HAL；回调不应修改注册表。 */
+typedef void (*efw_hal_enumerate_fn)(const efw_hal_ops_t *ops, void *user);
+void efw_hal_enumerate(efw_hal_enumerate_fn fn, void *user);
+/** @brief 按名称调用 HAL 的可选 init 回调。 */
 efw_status_t efw_hal_init_device(const char *name);
+/** @brief 按名称调用 HAL 的 read 回调。 */
 efw_status_t efw_hal_read(const char *name, void *buf, uint16_t len, uint16_t *actual);
+/** @brief 按名称调用 HAL 的 write 回调。 */
 efw_status_t efw_hal_write(const char *name, const void *buf, uint16_t len, uint16_t *actual);
+/** @brief 按名称调用 HAL 的 ioctl 回调。 */
 efw_status_t efw_hal_ioctl(const char *name, uint32_t cmd, void *arg);
 
 #endif

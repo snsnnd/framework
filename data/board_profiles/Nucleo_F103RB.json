@@ -1,0 +1,28 @@
+{
+  "name": "Nucleo F103RB",
+  "mcu": "STM32F103R(8-B)Tx",
+  "board_type": "official",
+  "description": "Nucleo F103RB (STM32F103RBT6)",
+  "clock": {
+    "source": "HSE",
+    "source_hz": 8000000,
+    "bypass": true,
+    "pll": {"m": 1, "n": 9, "p": 1, "q": 1, "r": 1},
+    "flash_latency": 2,
+    "sysclk_mhz": 72,
+    "hclk_mhz": 72,
+    "pclk1_mhz": 36,
+    "pclk2_mhz": 72
+  },
+  "pins": {
+    "led": {"pin": "PA5", "active": "high", "label": "LD2"},
+    "button": {"pin": "PC13", "active": "low", "label": "B1 USER"},
+    "uart_debug": {"instance": "USART2", "tx": "PA2", "rx": "PA3", "baud": 115200, "connection": "ST-LINK VCP"},
+    "i2c_sensor": {"instance": "I2C1", "scl": "PB8", "sda": "PB9", "remap": true},
+    "spi_display": {"instance": "SPI1", "sck": "PA5", "miso": "PA6", "mosi": "PA7", "cs": "PB6", "connector": "Arduino D10"}
+  },
+  "sources": [
+    "https://github.com/zephyrproject-rtos/zephyr/blob/main/boards/st/nucleo_f103rb/nucleo_f103rb.dts",
+    "https://github.com/zephyrproject-rtos/zephyr/blob/main/boards/st/nucleo_f103rb/arduino_r3_connector.dtsi"
+  ]
+}

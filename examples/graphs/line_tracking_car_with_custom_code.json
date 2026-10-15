@@ -135,11 +135,17 @@
   "custom_files": [
     {
       "path": "app_custom.c",
-      "content": "/**\n * @file    app_custom.c\n * @brief   Example custom code generated beside visual cards.\n */\n\n#include \"efw/efw.h\"\n\nefw_status_t app_custom_algo_run(void *ctx, const void *in, void *out) {\n    EFW_UNUSED(ctx);\n    EFW_UNUSED(in);\n    EFW_UNUSED(out);\n    return EFW_OK;\n}\n\nefw_status_t app_custom_module_init(void *ctx) {\n    EFW_UNUSED(ctx);\n    return EFW_OK;\n}\n\nefw_status_t app_custom_module_poll(void *ctx) {\n    EFW_UNUSED(ctx);\n    return EFW_OK;\n}\n\nefw_status_t app_custom_task_10ms(void) {\n    return EFW_OK;\n}\n\nefw_status_t app_custom_task_20ms(void) {\n    return EFW_OK;\n}\n"
+      "content": "/**\n * @file    app_custom.c\n * @brief   Example custom code generated beside visual cards.\n */\n\n#include \"efw/efw.h\"\n\nefw_status_t app_custom_algo_run(void *ctx, const efw_app_multi_input_t *in, void *out) {\n    EFW_UNUSED(ctx);\n    EFW_UNUSED(in);\n    EFW_UNUSED(out);\n    return EFW_OK;\n}\n\nefw_status_t app_custom_module_init(void *ctx) {\n    EFW_UNUSED(ctx);\n    return EFW_OK;\n}\n\nefw_status_t app_custom_module_poll(void *ctx) {\n    EFW_UNUSED(ctx);\n    return EFW_OK;\n}\n\nefw_status_t app_custom_task_10ms(void) {\n    return EFW_OK;\n}\n\nefw_status_t app_custom_task_20ms(void) {\n    return EFW_OK;\n}\n"
     }
   ],
   "board": {
     "profile": "robot-line-tracking",
     "pin_plan": []
-  }
+  },
+  "board_adapters": [
+    {
+      "path": "app_board_adapter.c",
+      "content": "#include \"efw/efw.h\"\n#include \"app_board_config.h\"\n\nefw_status_t app_board_read_line_input(const app_gpio_pin_t *pins, uint8_t count, efw_line_tracking_data_t *out) { EFW_UNUSED(pins); if (!out || count > EFW_LINE_TRACKING_MAX_CHANNELS) return EFW_ERR_INVALID; out->count = count; for (uint8_t i = 0; i < count; ++i) out->value[i] = 0u; return EFW_OK; }\nefw_status_t app_board_write_motor(app_pwm_channel_t pwm, app_gpio_pin_t dir_pin, const efw_motor_cmd_t *cmd) { EFW_UNUSED(pwm); EFW_UNUSED(dir_pin); return cmd ? EFW_OK : EFW_ERR_INVALID; }\n"
+    }
+  ]
 }

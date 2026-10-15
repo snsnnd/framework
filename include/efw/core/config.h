@@ -39,6 +39,8 @@
 #ifndef EFW_CONFIG_H
 #define EFW_CONFIG_H
 
+#include <stdint.h>
+
 /* ==================================================================
  *  第1级：模块编译开关 (1=启用, 0=禁用)
  *  通过编译器 -D 覆写，例如 -DEFW_ENABLE_COMM=0 禁用通信层
@@ -122,6 +124,30 @@
 
 #ifndef EFW_ENABLE_EVENT
 #define EFW_ENABLE_EVENT 1
+#endif
+
+#ifndef EFW_ENABLE_SCHEDULER
+#define EFW_ENABLE_SCHEDULER 1
+#endif
+
+#ifndef EFW_ENABLE_DEBUG
+#define EFW_ENABLE_DEBUG 0
+#endif
+
+#ifndef EFW_ENABLE_DEBUG_FAST
+#define EFW_ENABLE_DEBUG_FAST 0
+#endif
+
+#ifndef EFW_ENABLE_DEBUG_ASYNC
+#define EFW_ENABLE_DEBUG_ASYNC 0
+#endif
+
+#ifndef EFW_ENABLE_DEBUG_RUNTIME
+#define EFW_ENABLE_DEBUG_RUNTIME 0
+#endif
+
+#ifndef EFW_ENABLE_LITETUNE
+#define EFW_ENABLE_LITETUNE 0
 #endif
 
 
@@ -209,6 +235,53 @@
  */
 #ifndef EFW_MAX_STATE_MACHINES
 #define EFW_MAX_STATE_MACHINES 8
+#endif
+
+#ifndef EFW_MAX_SCHEDULER_TASKS
+/** 调度器静态任务槽位数量。 */
+#define EFW_MAX_SCHEDULER_TASKS 16
+#endif
+
+#ifndef EFW_ERROR_HISTORY_SIZE
+/** 诊断环形错误历史容量。 */
+#define EFW_ERROR_HISTORY_SIZE 4
+#endif
+
+#ifndef EFW_EVENT_QUEUE_CAPACITY
+/** 事件队列可同时保存的消息数量；必须适配 uint8_t 游标。 */
+#define EFW_EVENT_QUEUE_CAPACITY 8
+#endif
+
+#ifndef EFW_EVENT_ITEM_MAX_SIZE
+/** 单条事件复制到队列中的最大数据字节数。 */
+#define EFW_EVENT_ITEM_MAX_SIZE 32
+#endif
+
+#ifndef EFW_EVENT_NAME_MAX_LEN
+/** 队列事件名称数组大小，包含末尾的 '\0'。 */
+#define EFW_EVENT_NAME_MAX_LEN 32
+#endif
+
+#if EFW_EVENT_QUEUE_CAPACITY > 255
+#error "EFW_EVENT_QUEUE_CAPACITY must fit uint8_t indices"
+#endif
+
+#if EFW_ENABLE_COMM && !EFW_ENABLE_HAL
+#error "EFW_ENABLE_COMM requires EFW_ENABLE_HAL"
+#endif
+#if EFW_ENABLE_SENSOR && !EFW_ENABLE_HAL
+#error "EFW_ENABLE_SENSOR requires EFW_ENABLE_HAL"
+#endif
+#if EFW_ENABLE_ACTUATOR && !EFW_ENABLE_HAL
+#error "EFW_ENABLE_ACTUATOR requires EFW_ENABLE_HAL"
+#endif
+
+#if defined(__STDC_VERSION__) && (__STDC_VERSION__ >= 201112L)
+_Static_assert(EFW_EVENT_ITEM_MAX_SIZE >= 4, "EFW_EVENT_ITEM_MAX_SIZE must be >= 4");
+_Static_assert(EFW_EVENT_NAME_MAX_LEN >= 2, "EFW_EVENT_NAME_MAX_LEN must be >= 2");
+_Static_assert(EFW_EVENT_QUEUE_CAPACITY >= 1, "EFW_EVENT_QUEUE_CAPACITY must be >= 1");
+_Static_assert(EFW_EVENT_QUEUE_CAPACITY <= UINT8_MAX, "EFW_EVENT_QUEUE_CAPACITY must fit uint8_t indices");
+_Static_assert(EFW_MAX_SCHEDULER_TASKS >= 1, "EFW_MAX_SCHEDULER_TASKS must be >= 1");
 #endif
 
 #endif

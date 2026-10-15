@@ -64,12 +64,14 @@ void efw_ramp_reset(efw_ramp_t *ramp, float value) {
  * @param out 指向 float (斜坡后输出)
  * @return EFW_OK / EFW_ERR_INVALID
  */
-efw_status_t efw_ramp_run(void *ctx, const void *in, void *out) {
-    efw_ramp_t *ramp = (efw_ramp_t *)ctx;               /* ctx → 斜坡状态 */
-    const efw_ramp_input_t *input = (const efw_ramp_input_t *)in;  /* 输入 */
-    float *result = (float *)out;                        /* 输出 */
-    float delta;            /* 目标与当前值的差距 */
-    float limit;            /* 本周期允许的最大变化量 */
+efw_status_t efw_ramp_run(void *ctx, const void *in, uint16_t in_size, void *out, uint16_t out_size) {
+    efw_ramp_t *ramp = (efw_ramp_t *)ctx;
+    const efw_ramp_input_t *input = (const efw_ramp_input_t *)in;
+    float *result = (float *)out;
+    float delta;
+    float limit;
+    if (!ramp || !input || !result) return EFW_ERR_INVALID;
+    if (in_size < sizeof(efw_ramp_input_t) || out_size < sizeof(float)) return EFW_ERR_RANGE;
 
     /* 参数校验 */
     if (!ramp || !input || !result || input->dt <= 0.0f) return EFW_ERR_INVALID;

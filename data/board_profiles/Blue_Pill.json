@@ -1,0 +1,28 @@
+{
+  "name": "Blue Pill",
+  "mcu": "STM32F103C(8-B)Tx",
+  "board_type": "community",
+  "description": "Blue Pill (STM32F103C8T6)",
+  "clock": {
+    "source": "HSE",
+    "source_hz": 8000000,
+    "bypass": false,
+    "pll": {"m": 1, "n": 9, "p": 1, "q": 1, "r": 1},
+    "flash_latency": 2,
+    "sysclk_mhz": 72,
+    "hclk_mhz": 72,
+    "pclk1_mhz": 36,
+    "pclk2_mhz": 72
+  },
+  "pins": {
+    "led": {"pin": "PC13", "active": "low", "label": "LED_BUILTIN"},
+    "button": {},
+    "uart_debug": {"instance": "USART1", "tx": "PA9", "rx": "PA10", "baud": 115200, "connection": "header"},
+    "i2c_sensor": {"instance": "I2C1", "scl": "PB6", "sda": "PB7"},
+    "spi_display": {"instance": "SPI1", "sck": "PA5", "miso": "PA6", "mosi": "PA7", "cs": "PA4"}
+  },
+  "sources": [
+    "https://github.com/stm32duino/Arduino_Core_STM32/blob/main/variants/STM32F1xx/F103C8T_F103CB(T-U)/variant_PILL_F103Cx.h",
+    "https://github.com/stm32duino/Arduino_Core_STM32/blob/main/variants/STM32F1xx/F103C8T_F103CB(T-U)/PeripheralPins.c"
+  ]
+}

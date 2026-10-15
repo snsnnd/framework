@@ -23,9 +23,10 @@ static efw_status_t led_gpio_write(void *ctx, const void *buf, uint16_t len, uin
     return EFW_OK;
 }
 
-static efw_status_t status_led_write(void *ctx, const void *cmd) {
+static efw_status_t status_led_write(void *ctx, const void *cmd, uint16_t cmd_size) {
     app_led_ctx_t *led = (app_led_ctx_t *)ctx;
     const efw_actuator_cmd_t *led_cmd = (const efw_actuator_cmd_t *)cmd;
+    (void)cmd_size;
 
     if (!led || !led_cmd) return EFW_ERR_INVALID;
     return efw_hal_write(APP_LED_GPIO_HAL_NAME, &led_cmd->value, (uint16_t)sizeof(led_cmd->value), 0);

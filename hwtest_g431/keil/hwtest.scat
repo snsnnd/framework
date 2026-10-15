@@ -1,0 +1,14 @@
+; EFW hwtest scatter file for Arm Compiler 6 (Keil)
+; STM32G431RBT6: 128K flash @0x08000000, 32K SRAM @0x20000000
+
+LR_IROM1 0x08000000 0x00020000  {
+  ER_IROM1 0x08000000 0x00020000  {
+   *.o (.isr_vector, +First)
+   *(InRoot$$Sections)
+   .ANY (+RO)
+  }
+  RW_IRAM1 0x20000000 0x00007800  {
+   .ANY (+RW +ZI)
+  }
+  ARM_LIB_STACK 0x20007800 EMPTY -0x800  { }
+}

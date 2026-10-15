@@ -1,0 +1,1889 @@
+{
+  "id": "STM32F446R(C-E)Tx",
+  "name": "STM32F446RET6",
+  "family": "STM32F4",
+  "core": "Arm Cortex-M4",
+  "frequency_mhz": 180,
+  "flash_kb": 512,
+  "ram_kb": 256,
+  "package": "LQFP64",
+  "board": "Nucleo F446RE",
+  "gpio_count": 50,
+  "gpio_pins": [
+    "PC13",
+    "PC14-OSC32_IN",
+    "PC15-OSC32_OUT",
+    "PH0-OSC_IN",
+    "PH1-OSC_OUT",
+    "PC0",
+    "PC1",
+    "PC2",
+    "PC3",
+    "PA0-WKUP",
+    "PA1",
+    "PA2",
+    "PA3",
+    "PA4",
+    "PA5",
+    "PA6",
+    "PA7",
+    "PC4",
+    "PC5",
+    "PB0",
+    "PB1",
+    "PB2",
+    "PB10",
+    "PB12",
+    "PB13",
+    "PB14",
+    "PB15",
+    "PC6",
+    "PC7",
+    "PC8",
+    "PC9",
+    "PA8",
+    "PA9",
+    "PA10",
+    "PA11",
+    "PA12",
+    "PA13",
+    "PA14",
+    "PA15",
+    "PC10",
+    "PC11",
+    "PC12",
+    "PD2",
+    "PB3",
+    "PB4",
+    "PB5",
+    "PB6",
+    "PB7",
+    "PB8",
+    "PB9"
+  ],
+  "peripherals": {
+    "adc": {
+      "channels": {
+        "IN10": "PC0",
+        "IN11": "PC1",
+        "IN12": "PC2",
+        "IN13": "PC3",
+        "IN0": "PA0-WKUP",
+        "IN1": "PA1",
+        "IN2": "PA2",
+        "IN3": "PA3",
+        "IN4": "PA4",
+        "IN5": "PA5",
+        "IN6": "PA6",
+        "IN7": "PA7",
+        "IN14": "PC4",
+        "IN15": "PC5",
+        "IN8": "PB0",
+        "IN9": "PB1"
+      },
+      "count": 16
+    },
+    "pwm": {
+      "outputs": {
+        "TIM2_CH1": "PB8",
+        "TIM5_CH1": "PA0-WKUP",
+        "TIM2_CH2": "PB9",
+        "TIM5_CH2": "PA1",
+        "TIM2_CH3": "PB10",
+        "TIM5_CH3": "PA2",
+        "TIM9_CH1": "PA2",
+        "TIM2_CH4": "PB2",
+        "TIM5_CH4": "PA3",
+        "TIM9_CH2": "PA3",
+        "TIM8_CH1N": "PA7",
+        "TIM13_CH1": "PA6",
+        "TIM3_CH1": "PB4",
+        "TIM14_CH1": "PA7",
+        "TIM1_CH1N": "PB13",
+        "TIM3_CH2": "PB5",
+        "TIM1_CH2N": "PB14",
+        "TIM3_CH3": "PC8",
+        "TIM8_CH2N": "PB14",
+        "TIM1_CH3N": "PB15",
+        "TIM3_CH4": "PC9",
+        "TIM8_CH3N": "PB15",
+        "TIM12_CH1": "PB14",
+        "TIM12_CH2": "PB15",
+        "TIM8_CH1": "PC6",
+        "TIM8_CH2": "PC7",
+        "TIM8_CH3": "PC8",
+        "TIM8_CH4": "PC9",
+        "TIM1_CH1": "PA8",
+        "TIM1_CH2": "PA9",
+        "TIM1_CH3": "PA10",
+        "TIM1_CH4": "PA11",
+        "TIM4_CH1": "PB6",
+        "TIM4_CH2": "PB7",
+        "TIM10_CH1": "PB8",
+        "TIM4_CH3": "PB8",
+        "TIM11_CH1": "PB9",
+        "TIM4_CH4": "PB9"
+      },
+      "count": 38
+    },
+    "uart": {
+      "ports": {
+        "UART4": {
+          "tx": [
+            "PA0-WKUP",
+            "PC10"
+          ],
+          "rx": [
+            "PA1",
+            "PC11"
+          ]
+        },
+        "UART2": {
+          "tx": [
+            "PA0-WKUP",
+            "PA2"
+          ],
+          "rx": [
+            "PA1",
+            "PA3"
+          ]
+        },
+        "UART3": {
+          "tx": [
+            "PB10",
+            "PC10",
+            "PC12"
+          ],
+          "rx": [
+            "PC5",
+            "PC11"
+          ]
+        },
+        "UART6": {
+          "tx": [
+            "PC6"
+          ],
+          "rx": [
+            "PC7"
+          ]
+        },
+        "UART1": {
+          "tx": [
+            "PA9",
+            "PB6"
+          ],
+          "rx": [
+            "PA10",
+            "PB7"
+          ]
+        },
+        "UART5": {
+          "tx": [
+            "PC12"
+          ],
+          "rx": [
+            "PD2"
+          ]
+        }
+      },
+      "count": 6
+    },
+    "i2c": {
+      "ports": {
+        "I2C2": {
+          "sda": [
+            "PC12",
+            "PB3"
+          ],
+          "scl": [
+            "PB10"
+          ]
+        },
+        "I2C3": {
+          "sda": [
+            "PC9",
+            "PB4"
+          ],
+          "scl": [
+            "PA8"
+          ]
+        },
+        "I2C1": {
+          "sda": [
+            "PB7",
+            "PB9"
+          ],
+          "scl": [
+            "PB6",
+            "PB8"
+          ]
+        }
+      },
+      "count": 3
+    },
+    "spi": {
+      "ports": {
+        "SPI2": {
+          "mosi": [
+            "PC1",
+            "PC3",
+            "PB15"
+          ],
+          "miso": [
+            "PC2",
+            "PB14",
+            "PB4"
+          ],
+          "sck": [
+            "PB10",
+            "PB13",
+            "PC7",
+            "PA9"
+          ],
+          "nss": [
+            "PB12",
+            "PB4",
+            "PB9"
+          ]
+        },
+        "SPI3": {
+          "mosi": [
+            "PC1",
+            "PB0",
+            "PB2",
+            "PC12",
+            "PB5"
+          ],
+          "miso": [
+            "PC11",
+            "PB4"
+          ],
+          "sck": [
+            "PC10",
+            "PB3"
+          ],
+          "nss": [
+            "PA4",
+            "PA15",
+            "PB4"
+          ]
+        },
+        "SPI1": {
+          "mosi": [
+            "PA7",
+            "PB5"
+          ],
+          "miso": [
+            "PA6",
+            "PB4"
+          ],
+          "sck": [
+            "PA5",
+            "PB3"
+          ],
+          "nss": [
+            "PA4",
+            "PA15",
+            "PB4"
+          ]
+        }
+      },
+      "count": 3
+    }
+  },
+  "pins": {
+    "VBAT": {
+      "pos": 1,
+      "type": "Power",
+      "functions": {
+        "gpio": false,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PC13": {
+      "pos": 2,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PC14-OSC32_IN": {
+      "pos": 3,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PC15-OSC32_OUT": {
+      "pos": 4,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PH0-OSC_IN": {
+      "pos": 5,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PH1-OSC_OUT": {
+      "pos": 6,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "NRST": {
+      "pos": 7,
+      "type": "Reset",
+      "functions": {
+        "gpio": false,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PC0": {
+      "pos": 8,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [
+          10,
+          10,
+          10
+        ],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PC1": {
+      "pos": 9,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [
+          11,
+          11,
+          11
+        ],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": true,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PC2": {
+      "pos": 10,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [
+          12,
+          12,
+          12
+        ],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": true,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PC3": {
+      "pos": 11,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [
+          13,
+          13,
+          13
+        ],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": true,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "VSSA": {
+      "pos": 12,
+      "type": "Power",
+      "functions": {
+        "gpio": false,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "VDDA": {
+      "pos": 13,
+      "type": "Power",
+      "functions": {
+        "gpio": false,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PA0-WKUP": {
+      "pos": 14,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [
+          0,
+          0,
+          0
+        ],
+        "pwm": [
+          "TIM2_CH1",
+          "TIM5_CH1"
+        ],
+        "uart": {
+          "tx": true,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PA1": {
+      "pos": 15,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [
+          1,
+          1,
+          1
+        ],
+        "pwm": [
+          "TIM2_CH2",
+          "TIM5_CH2"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": true
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PA2": {
+      "pos": 16,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [
+          2,
+          2,
+          2
+        ],
+        "pwm": [
+          "TIM2_CH3",
+          "TIM5_CH3",
+          "TIM9_CH1"
+        ],
+        "uart": {
+          "tx": true,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PA3": {
+      "pos": 17,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [
+          3,
+          3,
+          3
+        ],
+        "pwm": [
+          "TIM2_CH4",
+          "TIM5_CH4",
+          "TIM9_CH2"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": true
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "VSS": {
+      "pos": 63,
+      "type": "Power",
+      "functions": {
+        "gpio": false,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "VDD": {
+      "pos": 64,
+      "type": "Power",
+      "functions": {
+        "gpio": false,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PA4": {
+      "pos": 20,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [
+          4,
+          4
+        ],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": true
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PA5": {
+      "pos": 21,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [
+          5,
+          5
+        ],
+        "pwm": [
+          "TIM2_CH1",
+          "TIM8_CH1N"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": true,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PA6": {
+      "pos": 22,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [
+          6,
+          6
+        ],
+        "pwm": [
+          "TIM13_CH1",
+          "TIM3_CH1"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": true,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PA7": {
+      "pos": 23,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [
+          7,
+          7
+        ],
+        "pwm": [
+          "TIM14_CH1",
+          "TIM1_CH1N",
+          "TIM3_CH2",
+          "TIM8_CH1N"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": true,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PC4": {
+      "pos": 24,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [
+          14,
+          14
+        ],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PC5": {
+      "pos": 25,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [
+          15,
+          15
+        ],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": true
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PB0": {
+      "pos": 26,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [
+          8,
+          8
+        ],
+        "pwm": [
+          "TIM1_CH2N",
+          "TIM3_CH3",
+          "TIM8_CH2N"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": true,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PB1": {
+      "pos": 27,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [
+          9,
+          9
+        ],
+        "pwm": [
+          "TIM1_CH3N",
+          "TIM3_CH4",
+          "TIM8_CH3N"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PB2": {
+      "pos": 28,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM2_CH4"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": true,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PB10": {
+      "pos": 29,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM2_CH3"
+        ],
+        "uart": {
+          "tx": true,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": true
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": true,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "VCAP_1": {
+      "pos": 30,
+      "type": "Power",
+      "functions": {
+        "gpio": false,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PB12": {
+      "pos": 33,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": true
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PB13": {
+      "pos": 34,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM1_CH1N"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": true,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PB14": {
+      "pos": 35,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM12_CH1",
+          "TIM1_CH2N",
+          "TIM8_CH2N"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": true,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PB15": {
+      "pos": 36,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM12_CH2",
+          "TIM1_CH3N",
+          "TIM8_CH3N"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": true,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PC6": {
+      "pos": 37,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM3_CH1",
+          "TIM8_CH1"
+        ],
+        "uart": {
+          "tx": true,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PC7": {
+      "pos": 38,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM3_CH2",
+          "TIM8_CH2"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": true
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": true,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PC8": {
+      "pos": 39,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM3_CH3",
+          "TIM8_CH3"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PC9": {
+      "pos": 40,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM3_CH4",
+          "TIM8_CH4"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": true,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PA8": {
+      "pos": 41,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM1_CH1"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": true
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PA9": {
+      "pos": 42,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM1_CH2"
+        ],
+        "uart": {
+          "tx": true,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": true,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PA10": {
+      "pos": 43,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM1_CH3"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": true
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PA11": {
+      "pos": 44,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM1_CH4"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PA12": {
+      "pos": 45,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PA13": {
+      "pos": 46,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PA14": {
+      "pos": 49,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PA15": {
+      "pos": 50,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM2_CH1"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": true
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PC10": {
+      "pos": 51,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": true,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": true,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PC11": {
+      "pos": 52,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": true
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": true,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PC12": {
+      "pos": 53,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": true,
+          "rx": false
+        },
+        "i2c": {
+          "sda": true,
+          "scl": false
+        },
+        "spi": {
+          "mosi": true,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PD2": {
+      "pos": 54,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": true
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PB3": {
+      "pos": 55,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM2_CH2"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": true,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": true,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PB4": {
+      "pos": 56,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM3_CH1"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": true,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": true,
+          "sck": false,
+          "nss": true
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PB5": {
+      "pos": 57,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM3_CH2"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": true,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PB6": {
+      "pos": 58,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM4_CH1"
+        ],
+        "uart": {
+          "tx": true,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": true
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PB7": {
+      "pos": 59,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM4_CH2"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": true
+        },
+        "i2c": {
+          "sda": true,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "BOOT0": {
+      "pos": 60,
+      "type": "Boot",
+      "functions": {
+        "gpio": false,
+        "adc": [],
+        "pwm": [],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PB8": {
+      "pos": 61,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM10_CH1",
+          "TIM2_CH1",
+          "TIM4_CH3"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": false,
+          "scl": true
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": false
+        },
+        "timer": [],
+        "other": []
+      }
+    },
+    "PB9": {
+      "pos": 62,
+      "type": "I/O",
+      "functions": {
+        "gpio": true,
+        "adc": [],
+        "pwm": [
+          "TIM11_CH1",
+          "TIM2_CH2",
+          "TIM4_CH4"
+        ],
+        "uart": {
+          "tx": false,
+          "rx": false
+        },
+        "i2c": {
+          "sda": true,
+          "scl": false
+        },
+        "spi": {
+          "mosi": false,
+          "miso": false,
+          "sck": false,
+          "nss": true
+        },
+        "timer": [],
+        "other": []
+      }
+    }
+  }
+}

@@ -31,13 +31,13 @@ static app_control_ctx_t g_control_ctx;
 static efw_status_t set_fan(uint8_t on) {
     efw_actuator_cmd_t cmd = { .value = on ? 1.0f : 0.0f };
     g_sample.fan_on = on ? 1u : 0u;
-    return efw_actuator_write(APP_FAN_RELAY_NAME, &cmd);
+    return efw_actuator_write(APP_FAN_RELAY_NAME, &cmd, (uint16_t)sizeof(cmd));
 }
 
 static efw_status_t set_alarm(uint8_t on) {
     efw_actuator_cmd_t cmd = { .value = on ? 1.0f : 0.0f };
     g_sample.alarm_on = on ? 1u : 0u;
-    return efw_actuator_write(APP_ALARM_LED_NAME, &cmd);
+    return efw_actuator_write(APP_ALARM_LED_NAME, &cmd, (uint16_t)sizeof(cmd));
 }
 
 static void on_env_sample(uint16_t topic_id, const void *data, uint16_t size, void *user) {
@@ -71,11 +71,11 @@ static efw_status_t sampler_poll(void *ctx) {
     sampler->tick++;
     if ((sampler->tick % 10u) != 0u) return EFW_OK;
 
-    s = efw_sensor_read(APP_TEMP_SENSOR_NAME, &raw_temperature);
+    s = efw_sensor_read(APP_TEMP_SENSOR_NAME, &raw_temperature, (uint16_t)sizeof(raw_temperature));
     if (s != EFW_OK) return s;
-    s = efw_algo_run(APP_TEMP_FILTER_NAME, &raw_temperature, &g_sample.temperature_c);
+    s = efw_algo_run(APP_TEMP_FILTER_NAME, &raw_temperature, sizeof(raw_temperature), &g_sample.temperature_c, sizeof(g_sample.temperature_c));
     if (s != EFW_OK) return s;
-    s = efw_sensor_read(APP_HUMIDITY_SENSOR_NAME, &g_sample.humidity_pct);
+    s = efw_sensor_read(APP_HUMIDITY_SENSOR_NAME, &g_sample.humidity_pct, (uint16_t)sizeof(g_sample.humidity_pct));
     if (s != EFW_OK) return s;
     s = efw_imu_read(APP_IMU_SENSOR_NAME, &g_sample.imu);
     if (s != EFW_OK) return s;
@@ -86,7 +86,7 @@ static efw_status_t sampler_poll(void *ctx) {
     attitude_in.gx = g_sample.imu.gx;
     attitude_in.gy = g_sample.imu.gy;
     attitude_in.dt = 0.01f;
-    s = efw_algo_run(APP_ATTITUDE_FILTER_NAME, &attitude_in, &g_sample.attitude);
+    s = efw_algo_run(APP_ATTITUDE_FILTER_NAME, &attitude_in, sizeof(attitude_in), &g_sample.attitude, sizeof(g_sample.attitude));
     if (s != EFW_OK) return s;
 
     return efw_topic_publish(APP_TOPIC_ENV_SAMPLE, &g_sample, (uint16_t)sizeof(g_sample));
@@ -191,34 +191,10 @@ static efw_module_ops_t g_control_module = {
     .poll = control_poll,
 };
 
-static efw_state_machine_ops_t g_state_idle = {
-    .name = APP_STATE_IDLE_NAME,
-    .ctx = &g_control_ctx,
-    .on_tick = state_idle_tick,
-};
-
-static efw_state_machine_ops_t g_state_cooling = {
-    .name = APP_STATE_COOLING_NAME,
-    .ctx = &g_control_ctx,
-    .on_tick = state_cooling_tick,
-};
-
-static efw_state_machine_ops_t g_state_fault = {
-    .name = APP_STATE_FAULT_NAME,
-    .ctx = &g_control_ctx,
-    .on_tick = state_fault_tick,
-};
-
 efw_status_t app_components_register(void) {
     efw_status_t s = efw_algo_register(&g_temperature_filter_ops);
     if (s != EFW_OK) return s;
     s = efw_algo_register(&g_attitude_filter_ops);
-    if (s != EFW_OK) return s;
-    s = efw_sm_register(&g_state_idle);
-    if (s != EFW_OK) return s;
-    s = efw_sm_register(&g_state_cooling);
-    if (s != EFW_OK) return s;
-    s = efw_sm_register(&g_state_fault);
     if (s != EFW_OK) return s;
     s = efw_module_register(&g_sampler_module);
     if (s != EFW_OK) return s;

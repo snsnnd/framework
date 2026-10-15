@@ -1,0 +1,47 @@
+
+==================================================
+  EFW framework on-hardware test
+  board=CT117E-M4  mcu=STM32G431RBT6  sysclk=16MHz
+  IDCODE=0x20026468  build=Sep 12 2026 16:03:19
+==================================================
+[TEST] core_init ......... PASS
+[PERF] efw_init = 8 us
+[TEST] ds_ringbuf ......... PASS
+[TEST] ds_queue ......... PASS
+[TEST] ds_stack ......... PASS
+[TEST] hal_registry ......... PASS
+[TEST] hal_io_route ......... PASS
+[TEST] comm_registry ......... PASS
+[TEST] sensor_registry ......... PASS
+[TEST] actuator_led ......... PASS
+[TEST] motor_layer ......... PASS
+[TEST] algo_pid ......... PASS
+[TEST] algo_pid_antiwindup ......... PASS
+[TEST] algo_filters ......... PASS
+[TEST] line_tracking ......... PASS
+[TEST] module_lifecycle ......... PASS
+[TEST] state_machine ......... PASS
+    sm transitions: IDLE->RUN RUN->STOP 
+[TEST] event_topic ......... PASS
+[TEST] event_queue ......... PASS
+    !! check failed: g_cnt1 >= 100 && g_cnt1 <= 115 @line 687
+[TEST] scheduler_basic ......... FAIL
+    counts after spin: t1ms=22 t5ms=5 t10ms=3
+[TEST] scheduler_overrun ......... PASS
+    slow task: run_count=8 missed=14 overrun=8
+    !! check failed: (g_jit_max - g_jit_min) < 200 @line 741
+[TEST] scheduler_jitter ......... FAIL
+[PERF] scheduler 1ms release period: avg=999us min=543us max=1013us span=470us n=1085
+[PERF] sensor_read lookup = 10 ns/op (10000 iters)
+[PERF] algo_run pid = 18 ns/op (10000 iters)
+[TEST] perf ......... PASS
+    LCD controller ID=0x00009325
+[PERF] LCD_Clear = 0 ms (76800 px)
+[PERF] LCD_FillArea 100x200 = 0 us
+[PERF] LCD text line = 0 us
+[TEST] lcd_panel ......... PASS
+==================================================
+==== STRESS PHASE ====
+[STRESS] registry saturation:
+    caps: sen=29 hal=12 act=11 alg=8 mod=30 sm=7
+[STRESS] lookup@32 = 81 ns/op (was 15654 @3)

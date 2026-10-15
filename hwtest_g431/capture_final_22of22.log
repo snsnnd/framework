@@ -1,0 +1,111 @@
+﻿HB t=33974ms btn=0b0 led=0x00000HB t=105975ms btn=0b0 led=0x00000001
+HB t=106474ms btn=0b0 led=0x00000020
+HB t=106974ms btn=0b0 led=0x00000004
+HB t=107473ms btn=0b0 led=0x00000080
+HB t=107973ms btn=0b0 led=0x00000010
+HB t=108472ms btn=0b0 led=0x00000002
+HB t=108975ms btn=0b0 led=0x00000040
+HB t=109474ms btn=0b0 led=0x00000008
+HB t=109973ms btn=0b0 led=0x00000001
+HB t=110473ms btn=0b0 led=0x00000020
+HB t=110972ms btn=0b0 led=0x00000004
+HB t=111475ms btn=0b0 led=0x00000080
+HB t=111974ms btn=0b0 led=0x00000010
+HB t=112474ms btn=0b0 led=0x00000002
+HB t=112973ms btn=0b0 led=0x00000040
+HB t=113473ms btn=0b0 led=0x00000008
+?
+==================================================
+  EFW framework on-hardware test
+  board=sclk=16MHz
+  IDCODE=0x20026468  build=Sep 12 2026 15:20:40
+==================================================
+[TEST] core_init ......... PASS
+[PERF] efw_init = 42 us
+[TEST] ds_ringbuf ......... PASS
+[TEST] ds_queue ......... PASS
+[TEST] ds_stack ......... PASS
+[TEST] hal_registry ......... PASS
+[TEST] hal_io_route ......... PASS
+[TEST] comm_registry ......... PASS
+[TEST] sensor_registry ......... PASS
+[TEST] actuator_led ......... PASS
+[TEST] motor_layer ......... PASS
+[TEST] algo_pid ......... PASS
+[TEST] algo_pid_antiwindup ......... PASS
+[TEST] algo_filters ......... PASS
+[TEST] line_tracking ......... PASS
+[TEST] module_lifecycle ......... PASS
+[TEST] state_machine ......... PASS
+    sm transitions: IDLE->RUN RUN->STOP 
+[TEST] event_topic ......... PASS
+[TEST] event_queue ......... PASS
+[TEST] scheduler_basic ......... PASS
+    counts after spin: t1ms=137 t5ms=25 t10ms=12
+[TEST] scheduler_overrun ......... PASS
+    slow task: run_count=15 missed=7 overrun=15
+[TEST] scheduler_jitter ......... PASS
+[PERF] scheduler 1ms release period: avg=999us min=989us max=1008us span=19us n=1099
+[PERF] sensor_read lookup = 15654 ns/op (10000 iters)
+[PERF] algo_run pid = 29930 ns/op (10000 iters)
+[TEST] perf ......... PASS
+==================================================
+==== SUMMARY: total=22 pass=22 fail=0 ====
+==== RESULT: ALL PASS ====
+[REG] hal=4 comm=1 sensor=3 actuator=5 algo=8 module=2 sm=1
+==== DEMO: LED chase on PC8-15 (watch the board), heartbeat below ====
+HB t=2465ms btn=0b0 led=0x00000020
+HB t=2965ms btn=0b0 led=0x00000004
+HB t=3465ms btn=0b0 led=0x00000080
+HB t=3965ms btn=0b0 led=0x00000010
+HB t=4465ms btn=0b0 led=0x00000002
+HB t=4965ms btn=0b0 led=0x00000040
+HB t=5465ms btn=0b0 led=0x00000008
+HB t=5965ms btn=0b0 led=0x00000001
+HB t=6465ms btn=0b0 led=0x00000020
+HB t=6965ms btn=0b0 led=0x00000004
+HB t=7465ms btn=0b0 led=0x00000080
+HB t=7965ms btn=0b0 led=0x00000010
+HB t=8465ms btn=0b0 led=0x00000002
+HB t=8965ms btn=0b0 led=0x00000040
+HB t=9465ms btn=0b0 led=0x00000008
+HB t=9965ms btn=0b0 led=0x00000001
+HB t=10465ms btn=0b0 led=0x00000020
+HB t=10965ms btn=0b0 led=0x00000004
+HB t=11465ms btn=0b0 led=0x00000080
+HB t=11965ms btn=0b0 led=0x00000010
+HB t=12465ms btn=0b0 led=0x00000002
+HB t=12965ms btn=0b0 led=0x00000040
+HB t=13465ms btn=0b0 led=0x00000008
+HB t=13965ms btn=0b0 led=0x00000001
+HB t=14465ms btn=0b0 led=0x00000020
+HB t=14965ms btn=0b0 led=0x00000004
+HB t=15465ms btn=0b0 led=0x00000080
+HB t=15965ms btn=0b0 led=0x00000010
+HB t=16465ms btn=0b0 led=0x00000002
+HB t=16965ms btn=0b0 led=0x00000040
+HB t=17465ms btn=0b0 led=0x00000008
+HB t=17965ms btn=0b0 led=0x00000001
+HB t=18465ms btn=0b0 led=0x00000020
+HB t=18965ms btn=0b0 led=0x00000004
+HB t=19465ms btn=0b0 led=0x00000080
+HB t=19965ms btn=0b0 led=0x00000010
+HB t=20465ms btn=0b0 led=0x00000002
+HB t=20965ms btn=0b0 led=0x00000040
+HB t=21465ms btn=0b0 led=0x00000008
+HB t=21965ms btn=0b0 led=0x00000001
+HB t=22465ms btn=0b0 led=0x00000020
+HB t=22965ms btn=0b0 led=0x00000004
+HB t=23465ms btn=0b0 led=0x00000080
+HB t=23965ms btn=0b0 led=0x00000010
+HB t=24465ms btn=0b0 led=0x00000002
+HB t=24965ms btn=0b0 led=0x00000040
+HB t=25465ms btn=0b0 led=0x00000008
+HB t=25965ms btn=0b0 led=0x00000001
+HB t=26465ms btn=0b0 led=0x00000020
+HB t=26965ms btn=0b0 led=0x00000004
+HB t=27465ms btn=0b0 led=0x00000080
+HB t=27965ms btn=0b0 led=0x00000010
+HB t=28465ms btn=0b0 led=0x00000002
+HB t=28965ms btn=0b0 led=0x00000040
+HB t=29465ms btn=0b0 led=0x00000008

@@ -1,0 +1,22 @@
+node_modules/
+dist/
+release/
+build/
+backend-bin/
+__pycache__/
+*.pyc
+.venv/
+test-results/
+playwright-report/
+*.tsbuildinfo
+examples/*/generated/
+examples/*/.efw/generated.json
+examples/*/.efw/backups/
+
+# Project Tool local state
+.pjt/local/
+.pjt/transactions/
+
+# Project Tool derived caches (rebuilt on demand; never commit these)
+.pjt/state/
+.pjt/refs/labels.json

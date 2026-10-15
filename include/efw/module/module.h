@@ -63,6 +63,7 @@ typedef enum {
 typedef struct {
     const char *name;       /**< 全局唯一名称 */
     efw_module_type_t type; /**< 模块类型 */
+    uint8_t priority;       /**< 轮询优先级 (0=最高, 255=最低, 默认0) */
     void *ctx;              /**< 用户私有上下文 */
     efw_status_t (*init)(void *ctx);   /**< 初始化回调 (可空) */
     efw_status_t (*start)(void *ctx);  /**< 启动回调 (可空) */
@@ -72,22 +73,41 @@ typedef struct {
 
 /* ====== 模块生命周期 API ====== */
 
+/** @brief 使用默认静态池清空模块注册表。 */
 efw_status_t efw_module_registry_init(void);
+/** @brief 使用调用方提供的指针池清空模块注册表。 */
 efw_status_t efw_module_registry_init_pool(const efw_module_ops_t **pool, size_t capacity);
+/** @brief 注册模块，并按 priority 插入排序表。 */
 efw_status_t efw_module_register(const efw_module_ops_t *ops);
+/** @brief 按名称查找模块。 */
 efw_status_t efw_module_get(const char *name, const efw_module_ops_t **out_ops);
+/** @brief 移除模块指针，不调用 stop 或释放资源。 */
+efw_status_t efw_module_unregister(const char *name);
+/** @brief 返回已注册模块数量。 */
+size_t efw_module_count(void);
+/** @brief 遍历已按优先级排序的模块。 */
+typedef void (*efw_module_enumerate_fn)(const efw_module_ops_t *ops, void *user);
+void efw_module_enumerate(efw_module_enumerate_fn fn, void *user);
 
 /* 单模块操作：按名称操作指定模块 */
+/** @brief 调用指定模块的 init；空回调视为成功。 */
 efw_status_t efw_module_init(const char *name);
+/** @brief 调用指定模块的 start；空回调视为成功。 */
 efw_status_t efw_module_start(const char *name);
+/** @brief 调用指定模块的 stop；空回调视为成功。 */
 efw_status_t efw_module_stop(const char *name);
+/** @brief 调用指定模块的 poll；空回调视为成功。 */
 efw_status_t efw_module_poll(const char *name);
 
 /* 批量操作：遍历所有已注册模块，按注册顺序依次执行 */
+/** @brief 按 priority 调用全部 init，返回第一个错误但继续遍历。 */
 efw_status_t efw_module_init_all(void);
+/** @brief 按 priority 调用全部 start，返回第一个错误但继续遍历。 */
 efw_status_t efw_module_start_all(void);
+/** @brief 按 priority 调用全部 poll，返回第一个错误但继续遍历。 */
 efw_status_t efw_module_poll_all(void);
 
+/** @brief 统计指定模块类型的数量。 */
 size_t efw_module_count_by_type(efw_module_type_t type);
 
 #endif

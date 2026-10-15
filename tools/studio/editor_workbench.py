@@ -5,20 +5,16 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from typing import Any
 
 import importlib.util
 
-if importlib.util.find_spec("PyQt6") is not None:
-    from PyQt6.QtCore import QPointF, Qt
-    from PyQt6.QtGui import QColor, QPen
-    from PyQt6.QtWidgets import QGraphicsLineItem, QListWidgetItem, QMessageBox
-elif importlib.util.find_spec("PyQt5") is not None:
-    from PyQt5.QtCore import QPointF, Qt
-    from PyQt5.QtGui import QColor, QPen
-    from PyQt5.QtWidgets import QGraphicsLineItem, QListWidgetItem, QMessageBox
-else:
-    QPointF = Qt = QColor = QPen = QGraphicsLineItem = QListWidgetItem = QMessageBox = object
+from studio.qt_compat import (
+    QPointF, QRectF, Qt,
+    QColor, QPen,
+    QGraphicsLineItem, QListWidgetItem, QMessageBox, QInputDialog,
+)
 
 from codegen.graph import (
     EDGE_KIND_LABELS,
@@ -27,16 +23,273 @@ from codegen.graph import (
     PORT_LABELS,
     PORT_RULES,
     callback_signature,
+    can_connect_ports,
     edge_effect_description,
     node_generation_label,
 )
+from codegen import c_ident
+try:
+    from pypinyin import lazy_pinyin
+except ImportError:  # Studio can still run without pypinyin; IDs just won't be transliterated.
+    def lazy_pinyin(value):
+        return [str(value)]
 from studio.core import page_for_node, page_hint, page_key, page_title, root_page, visible_nodes_for_page
-from studio.editor_canvas import EdgeItem, GraphNodeItem
-from studio.editor_registry import NODE_TEMPLATES, TYPE_LABELS
+from studio.editor_canvas import BackdropItem, EdgeItem, GraphNodeItem
+from studio.editor_registry import NODE_TEMPLATES, TYPE_LABELS, display_label
+
+
+OUTPUT_PORT_DEPENDENCIES: dict[str, dict[str, dict[str, tuple[str, ...]]]] = {
+    "sensor.line_tracking": {
+        "out": {"sensor": ("hal",), "event_source": ("hal",)},
+    },
+    "sensor.custom": {
+        "out": {"sensor": ("hal",), "event_source": ("hal",)},
+    },
+    "event.publisher": {
+        "out": {"event": ("topic", "event_source")},
+    },
+    "event.subscriber": {
+        "out": {"event": ("topic",)},
+    },
+    "processor.custom": {
+        "out": {
+            "processor": ("sensor", "module_input"),
+            "algorithm": ("algorithm", "sensor"),
+            "control": ("algorithm",),
+            "module_output": ("module_input",),
+            "event_source": ("event",),
+        },
+    },
+    "algorithm.pid": {
+        "out": {"algorithm": ("sensor", "processor")},
+    },
+    "algorithm.custom": {
+        "out": {"algorithm": ("sensor", "processor")},
+    },
+    "module.custom": {
+        "out": {
+            "module": ("schedule",),
+            "module_output": ("module_input",),
+            "event_source": ("event",),
+        },
+    },
+}
+
+SINGLE_INPUT_PORT_RULES: dict[str, set[str]] = {
+    "event.publisher": {"topic", "event_source"},
+    "event.subscriber": {"topic", "event"},
+    "sensor.line_tracking": {"hal"},
+    "sensor.custom": {"hal"},
+    "actuator.custom": {"hal", "control"},
+    "algorithm.pid": {"sensor", "processor"},
+    "algorithm.custom": {"sensor", "processor"},
+    "processor.custom": {"sensor", "algorithm", "event", "module_input"},
+    "state.machine": {"state_machine"},
+    "state.transition": {"state_machine", "transition_from"},
+}
 
 
 class WorkbenchMixin:
+    def _uses_legacy_name_field(self, node_type: str | None) -> bool:
+        return str(node_type) in {"data.enum", "data.struct"}
+
+    def _default_display_name(self, template: dict[str, Any], node_type: str) -> str:
+        if str(template.get("display_name", "")).strip():
+            return str(template.get("display_name")).strip()
+        if self._uses_legacy_name_field(node_type) and str(template.get("name", "")).strip():
+            return str(template.get("name")).strip()
+        return str(template.get("id") or display_label(node_type) or node_type)
+
+    def _transliterate_name_token(self, text: str, fallback: str = "name") -> str:
+        raw = str(text or "").strip()
+        if not raw:
+            return fallback
+        ascii_text = re.sub(r"[^0-9A-Za-z_]+", "_", raw)
+        ascii_text = re.sub(r"_+", "_", ascii_text).strip("_")
+        if ascii_text:
+            return c_ident(ascii_text, fallback=fallback)
+        pinyin_text = "_".join(part for part in lazy_pinyin(raw) if part)
+        token = c_ident(pinyin_text, fallback="")
+        if token:
+            return token
+        encoded_parts: list[str] = []
+        for ch in raw:
+            if re.match(r"[0-9A-Za-z]", ch):
+                encoded_parts.append(ch.lower())
+            elif ch in {" ", "-", "/", "_"}:
+                encoded_parts.append("_")
+            else:
+                encoded_parts.append(f"u{ord(ch):x}")
+        return c_ident("_".join(encoded_parts), fallback=fallback)
+
+    def _node_type_token(self, node_type: str) -> str:
+        parts = [part for part in str(node_type).split(".") if part]
+        if len(parts) >= 2:
+            return c_ident(f"{parts[0]}_{parts[-1]}", fallback="node")
+        return c_ident(parts[-1] if parts else "node", fallback="node")
+
+    def _module_scope_token(self, template: dict[str, Any], node_type: str) -> str:
+        module_chain: list[str] = []
+        if node_type == "project.module":
+            current_id = str(template.get("id") or "").strip()
+            current_parent = str(template.get("parent") or "").strip()
+        else:
+            current_id = str(template.get("module") or "").strip()
+            current_parent = ""
+        while current_id:
+            module_chain.append(c_ident(current_id, fallback="module"))
+            module_node = self._find_node(current_id) if hasattr(self, "_find_node") else None
+            if module_node is None and node_type == "project.module" and current_id == str(template.get("id") or ""):
+                current_parent = str(template.get("parent") or "").strip()
+            else:
+                current_parent = str(module_node.get("parent") or "").strip() if isinstance(module_node, dict) else ""
+            current_id = current_parent
+        if module_chain:
+            return "__".join(reversed(module_chain))
+        page = self.active_page() if hasattr(self, "active_page") else {"kind": "root", "id": ""}
+        if page.get("kind") == "module" and page.get("id"):
+            return c_ident(str(page.get("id")), fallback="root")
+        return "root"
+
+    def _prompt_display_name(self, node_type: str, initial_text: str) -> str | None:
+        label = display_label(node_type)
+        text, ok = QInputDialog.getText(self, "添加卡片", f"请输入“{label}”的显示名称", text=initial_text)
+        if not ok:
+            return None
+        display_name = str(text).strip()
+        if not display_name:
+            QMessageBox.warning(self, "缺少显示名称", "display_name 不能为空；已取消添加卡片。")
+            return None
+        return display_name
+
+    def _derive_node_id(self, display_name: str, fallback_id: str, existing_ids: set[str], node_type: str, template: dict[str, Any]) -> str:
+        module_token = self._module_scope_token(template, node_type)
+        type_token = self._node_type_token(node_type)
+        name_token = self._transliterate_name_token(display_name, fallback="name")
+        base_id = c_ident(f"{module_token}__{type_token}__{name_token}", fallback=fallback_id)
+        new_id = base_id
+        suffix = 1
+        while new_id in existing_ids:
+            suffix += 1
+            new_id = f"{base_id}_{suffix}"
+        return new_id
+
+    def _normalize_display_fields(self, node: dict[str, Any]) -> None:
+        if not isinstance(node, dict):
+            return
+        node_type = str(node.get("type", ""))
+        if self._uses_legacy_name_field(node_type):
+            return
+        display_name = str(node.get("display_name", "")).strip()
+        legacy_name = str(node.get("name", "")).strip()
+        if not display_name and legacy_name:
+            node["display_name"] = legacy_name
+        node.pop("name", None)
+
+    def _scene_item_alive(self, item: Any) -> bool:
+        if item is None:
+            return False
+        try:
+            return item.scene() is not None
+        except RuntimeError:
+            return False
+
+    def _safe_scene_call(self, item: Any, method_name: str, *args: Any, **kwargs: Any) -> bool:
+        if not self._scene_item_alive(item):
+            return False
+        try:
+            getattr(item, method_name)(*args, **kwargs)
+            return True
+        except RuntimeError:
+            return False
+
+    def _iter_live_node_items(self) -> list[tuple[str, Any]]:
+        live_items: list[tuple[str, Any]] = []
+        stale_node_ids: list[str] = []
+        for node_id, item in list(self.node_items.items()):
+            if self._scene_item_alive(item):
+                live_items.append((node_id, item))
+            else:
+                stale_node_ids.append(node_id)
+        for node_id in stale_node_ids:
+            self.node_items.pop(node_id, None)
+        return live_items
+
+    def _iter_live_edge_items(self) -> list[Any]:
+        live_edges = [edge_item for edge_item in list(getattr(self, "edge_items", [])) if self._scene_item_alive(edge_item)]
+        self.edge_items = live_edges
+        return live_edges
+
+    def _iter_live_ports(self, item: Any) -> list[Any]:
+        ports = []
+        for port in getattr(item, "ports", []):
+            if self._scene_item_alive(port):
+                ports.append(port)
+        return ports
+
+    def _iter_live_backdrop_items(self) -> list[Any]:
+        backdrops = []
+        if not hasattr(self, "scene") or self.scene is None:
+            return backdrops
+        try:
+            for item in self.scene.items():
+                if isinstance(item, BackdropItem) and self._scene_item_alive(item):
+                    backdrops.append(item)
+        except RuntimeError:
+            # Scene has been deleted
+            pass
+        return backdrops
+
+    def _set_backdrop_opacity(self, selected_ids: set[str] | None = None, active_backdrop_ids: set[str] | None = None, default_opacity: float = 0.95, dim_opacity: float = 0.18) -> None:
+        if active_backdrop_ids is None:
+            active_backdrop_ids = set()
+        for item in self._iter_live_backdrop_items():
+            item_id = str(item.group.get("id", ""))
+            if selected_ids is None:
+                opacity = default_opacity
+            else:
+                opacity = default_opacity if item_id in active_backdrop_ids else dim_opacity
+            self._safe_scene_call(item, "setOpacity", opacity)
+
+    def _apply_visual_state(self, node_opacity_by_id: dict[str, float] | None = None, edge_opacity_by_key: dict[tuple[str, str], float] | None = None, active_backdrop_ids: set[str] | None = None, default_node_opacity: float = 1.0, default_edge_opacity: float = 1.0, default_backdrop_opacity: float = 0.95, dim_backdrop_opacity: float = 0.18) -> None:
+        if node_opacity_by_id is None:
+            node_opacity_by_id = {}
+        if edge_opacity_by_key is None:
+            edge_opacity_by_key = {}
+        if active_backdrop_ids is None:
+            active_backdrop_ids = set()
+
+        for item_id, item in self._iter_live_node_items():
+            self._safe_scene_call(item, "setOpacity", node_opacity_by_id.get(item_id, default_node_opacity))
+        for edge_item in self._iter_live_edge_items():
+            src = str(edge_item.edge.get("from", ""))
+            dst = str(edge_item.edge.get("to", ""))
+            self._safe_scene_call(edge_item, "setOpacity", edge_opacity_by_key.get((src, dst), default_edge_opacity))
+        if active_backdrop_ids:
+            self._set_backdrop_opacity(active_backdrop_ids=active_backdrop_ids, default_opacity=default_backdrop_opacity, dim_opacity=dim_backdrop_opacity)
+        else:
+            self._set_backdrop_opacity(default_opacity=default_backdrop_opacity, dim_opacity=dim_backdrop_opacity)
+
+    def _prune_stale_scene_items(self) -> None:
+        self._iter_live_node_items()
+        self._iter_live_edge_items()
+
+    def normalize_graph_runtime_state(self) -> None:
+        nodes = [node for node in self.graph.get("nodes", []) if isinstance(node, dict)]
+        for node in nodes:
+            self._normalize_display_fields(node)
+        node_ids = {str(node.get("id", "")) for node in nodes if node.get("id")}
+        self.graph["nodes"] = nodes
+        self.graph["edges"] = [
+            edge
+            for edge in self.graph.get("edges", [])
+            if isinstance(edge, dict)
+            and str(edge.get("from", "")) in node_ids
+            and str(edge.get("to", "")) in node_ids
+        ]
+
     def refresh_all(self) -> None:
+        self.normalize_graph_runtime_state()
         self.refresh_open_page_metadata()
         self.refresh_page_tabs()
         self.refresh_scene()
@@ -53,12 +306,21 @@ class WorkbenchMixin:
         self.refresh_module_assembly_view()
         self.refresh_release_view()
         self.refresh_workflow_panel()
+        self.refresh_debug_analysis()
         visible_ids = {node.get("id") for node in self.visible_nodes()}
         if self.current_node_id not in visible_ids:
             self.current_node_id = None
         self.select_node(self.current_node_id)
+        self.update_canvas_lod(getattr(self.view, "zoom_level", 1.0) if hasattr(self, "view") else 1.0)
 
     def set_right_tab(self, title: str) -> None:
+        if title in {"实时校验", "任务调度"} and hasattr(self, "bottom_tabs"):
+            for index in range(self.bottom_tabs.count()):
+                if self.bottom_tabs.tabText(index) == title:
+                    if hasattr(self, "bottom_dock"):
+                        self.bottom_dock.show()
+                    self.bottom_tabs.setCurrentIndex(index)
+                    return
         if not hasattr(self, "right_tabs"):
             return
         aliases = {
@@ -86,11 +348,20 @@ class WorkbenchMixin:
                 return
 
     def set_workspace(self, title: str) -> None:
-        if not hasattr(self, "workspace_tabs"):
+        tabs = getattr(self, "center_tabs", None) or getattr(self, "workspace_tabs", None)
+        if tabs is None:
             return
-        for index in range(self.workspace_tabs.count()):
-            if self.workspace_tabs.tabText(index) == title:
-                self.workspace_tabs.setCurrentIndex(index)
+        aliases = {
+            "项目总览": "🏠 项目总览",
+            "模块装配": "📦 模块装配",
+            "关系视图": "🔵 关系视图",
+            "生成发布": "🚀 生成发布",
+        }
+        expected = aliases.get(title, title)
+        for index in range(tabs.count()):
+            current_title = tabs.tabText(index)
+            if current_title == expected or current_title.replace("🏠 ", "").replace("📦 ", "").replace("🔵 ", "").replace("🚀 ", "") == title:
+                tabs.setCurrentIndex(index)
                 return
 
     def zoom_relation_view(self, factor: float) -> None:
@@ -137,6 +408,9 @@ class WorkbenchMixin:
         page = self.active_page()
         visible_count = len(self.visible_nodes())
         selected = self.current_node_id or "未选择"
+        runtime_summary = self.runtime_summary() if hasattr(self, "runtime_summary") else {}
+        publisher_count = len(runtime_summary.get("publishers", [])) if isinstance(runtime_summary, dict) else 0
+        state_machine_count = len(runtime_summary.get("state_machines", [])) if isinstance(runtime_summary, dict) else 0
         if page.get("kind") == "root":
             next_step = "先在“模块装配”里创建模块，再双击模块进入内部装配。"
         elif page.get("kind") == "module":
@@ -147,7 +421,7 @@ class WorkbenchMixin:
             next_step = "添加发布者和订阅者，再到代码补齐页实现回调或 publish 逻辑。"
         else:
             next_step = "选择一个节点后先改属性，再到代码补齐和生成发布完成收尾。"
-        self.workflow_hint.setText(f"当前页面：{page_title(page)}\n可见节点：{visible_count}\n当前选择：{selected}\n建议：{next_step}")
+        self.workflow_hint.setText(f"当前页面：{page_title(page)}\n可见节点：{visible_count}\n当前选择：{selected}\n运行时发布者：{publisher_count}\n运行时状态机：{state_machine_count}\n建议：{next_step}")
         if hasattr(self, "palette_label"):
             self.palette_label.setText(f"当前页面可添加：{page_title(page)}")
 
@@ -165,7 +439,9 @@ class WorkbenchMixin:
         nodes = self.graph.get("nodes", [])
         modules = [node for node in nodes if node.get("type") == "project.module"]
         topics = [node for node in nodes if node.get("type") == "event.topic"]
-        machines = [node for node in nodes if node.get("type") == "state.machine"]
+        runtime_summary = self.runtime_summary() if hasattr(self, "runtime_summary") else {}
+        publishers = runtime_summary.get("publishers", []) if isinstance(runtime_summary, dict) else []
+        machines = runtime_summary.get("state_machines", []) if isinstance(runtime_summary, dict) else []
         missing = self.missing_callback_requirements()
         conflicts = self.collect_pin_conflicts()
         errors = [msg for msg in self.validation_messages if msg.startswith("❌")]
@@ -195,6 +471,7 @@ class WorkbenchMixin:
             f"- 组件：{len([node for node in nodes if node.get('type') != 'project.module'])}",
             f"- Topic：{len(topics)}",
             f"- 状态机：{len(machines)}",
+            f"- 发布者：{len(publishers)}",
             f"- Flow：{len(self.graph.get('flows', []))}",
             f"- Task：{len(self.graph.get('tasks', [])) + len([node for node in nodes if node.get('type') == 'task.periodic'])}",
             "",
@@ -236,7 +513,29 @@ class WorkbenchMixin:
         conflicts = self.collect_pin_conflicts()
         errors = [msg for msg in self.validation_messages if msg.startswith("❌")]
         warnings = [msg for msg in self.validation_messages if msg.startswith("⚠️")]
-        lines = ["生成发布检查清单", "", "先让下面五项尽量都变成 [OK]，再点击生成 application。", ""]
+        runtime_summary = self.runtime_summary() if hasattr(self, "runtime_summary") else {}
+        publishers = runtime_summary.get("publishers", []) if isinstance(runtime_summary, dict) else []
+        state_machines = runtime_summary.get("state_machines", []) if isinstance(runtime_summary, dict) else []
+        
+        # Build HTML output
+        html = []
+        html.append('<div style="font-family: Consolas, monospace; font-size: 12px;">')
+        
+        # Status header
+        all_ok = not errors and not warnings and not missing and not conflicts and bool(self.graph.get("nodes"))
+        if all_ok:
+            html.append('<div style="background: #1a3a1a; border: 1px solid #2d5a2d; border-radius: 6px; padding: 10px; margin-bottom: 12px;">')
+            html.append('<span style="color: #4CAF50; font-weight: bold;">✅ 可以生成 Application</span>')
+            html.append('</div>')
+        else:
+            html.append('<div style="background: #3a1a1a; border: 1px solid #5a2d2d; border-radius: 6px; padding: 10px; margin-bottom: 12px;">')
+            html.append(f'<span style="color: #F44336; font-weight: bold;">❌ 需修正后再生成</span>')
+            html.append('</div>')
+        
+        # Checklist
+        html.append('<div style="margin-bottom: 12px;">')
+        html.append('<span style="color: #E0E0E0; font-weight: bold;">检查清单</span>')
+        html.append('<ul style="margin: 4px 0 0 20px; padding: 0;">')
         checks = [
             (not errors, f"Graph 校验错误：{len(errors)}"),
             (not warnings, f"警告：{len(warnings)}"),
@@ -245,18 +544,56 @@ class WorkbenchMixin:
             (bool(self.graph.get("nodes")), "Graph 至少包含一个节点"),
         ]
         for ok, text in checks:
-            lines.append(("[OK] " if ok else "[TODO] ") + text)
+            color = "#4CAF50" if ok else "#F44336"
+            icon = "✅" if ok else "❌"
+            html.append(f'<li style="color: {color}; margin: 2px 0;">{icon} {text}</li>')
+        html.append('</ul></div>')
+        
+        # Missing callbacks
         if missing:
-            lines.append("")
-            lines.append("缺失回调：")
+            html.append('<div style="margin-bottom: 12px;">')
+            html.append('<span style="color: #FFEB3B; font-weight: bold;">📝 缺失回调 (需要实现)</span>')
+            html.append('<ul style="margin: 4px 0 0 20px; padding: 0;">')
             for item in missing[:12]:
-                lines.append(f"- {item['owner']}.{item['field']} -> {item['name']}")
-        if errors or warnings:
-            lines.append("")
-            lines.append("校验消息：")
-            for message in (errors + warnings)[:12]:
-                lines.append(f"- {message}")
-        self.release_output.setPlainText("\n".join(lines))
+                owner = item.get('owner', '')
+                field = item.get('field', '')
+                name = item.get('name', '')
+                sig = item.get('signature', '')
+                html.append(f'<li style="color: #FFF9C4; margin: 2px 0;"><b>{name}</b> <span style="color: #B0BEC5;">({sig})</span></li>')
+            if len(missing) > 12:
+                html.append(f'<li style="color: #B0BEC5;">... 还有 {len(missing) - 12} 个</li>')
+            html.append('</ul></div>')
+        
+        # Errors
+        if errors:
+            html.append('<div style="margin-bottom: 12px;">')
+            html.append('<span style="color: #F44336; font-weight: bold;">❌ 错误</span>')
+            html.append('<ul style="margin: 4px 0 0 20px; padding: 0;">')
+            for msg in errors[:8]:
+                html.append(f'<li style="color: #FFB3B3; margin: 2px 0;">{msg[2:]}</li>')
+            html.append('</ul></div>')
+        
+        # Warnings
+        if warnings:
+            html.append('<div style="margin-bottom: 12px;">')
+            html.append('<span style="color: #FF9800; font-weight: bold;">⚠️ 警告</span>')
+            html.append('<ul style="margin: 4px 0 0 20px; padding: 0;">')
+            for msg in warnings[:8]:
+                html.append(f'<li style="color: #FFE0A3; margin: 2px 0;">{msg[2:]}</li>')
+            html.append('</ul></div>')
+        
+        # Runtime summary
+        if publishers or state_machines:
+            html.append('<div style="margin-bottom: 12px;">')
+            html.append('<span style="color: #2196F3; font-weight: bold;">ℹ️ 运行时摘要</span>')
+            html.append('<ul style="margin: 4px 0 0 20px; padding: 0;">')
+            html.append(f'<li style="color: #90CAF9; margin: 2px 0;">自动/手动发布者：{len(publishers)}</li>')
+            html.append(f'<li style="color: #90CAF9; margin: 2px 0;">状态机：{len(state_machines)}</li>')
+            html.append('</ul></div>')
+        
+        html.append('</div>')
+        
+        self.release_output.setHtml("\n".join(html))
 
     def open_module_item(self, item: QListWidgetItem) -> None:
         role = Qt.ItemDataRole.UserRole if hasattr(Qt, "ItemDataRole") else Qt.UserRole
@@ -272,21 +609,19 @@ class WorkbenchMixin:
             self.open_module_item(item)
 
     def add_project_module(self) -> None:
-        base_id = "module"
-        existing = {node.get("id") for node in self.graph.get("nodes", [])}
-        index = 1
-        new_id = f"{base_id}_{index}"
-        while new_id in existing:
-            index += 1
-            new_id = f"{base_id}_{index}"
         module = copy.deepcopy(NODE_TEMPLATES["project.module"])
-        module["id"] = new_id
-        module["display_name"] = f"模块 {index}"
+        self._normalize_display_fields(module)
+        display_name = self._prompt_display_name("project.module", self._default_display_name(module, "project.module"))
+        if display_name is None:
+            return
+        existing = {node.get("id") for node in self.graph.get("nodes", [])}
+        module["display_name"] = display_name
+        module["id"] = self._derive_node_id(display_name, str(module.get("id", "module")), existing, "project.module", module)
         self.push_undo()
         self.graph.setdefault("nodes", []).append(module)
-        self.current_node_id = new_id
+        self.current_node_id = str(module["id"])
         self.refresh_all()
-        self.open_node_location(new_id)
+        self.open_node_location(str(module["id"]))
 
     def active_page(self) -> dict[str, str]:
         return next((page for page in self.open_pages if page.get("key") == self.active_page_key), self.open_pages[0])
@@ -378,16 +713,26 @@ class WorkbenchMixin:
         if hasattr(self, "module_scope_label"):
             summary = self.cross_page_edge_summary(self.active_page())
             self.module_scope_label.setText(page_hint(self.active_page()) + ("\n" + summary if summary else ""))
-        if self.active_page().get("kind") == "comm":
-            topic = self.page_source_node()
-            if topic:
-                self.select_node(str(topic.get("id")))
         self.scene.clear()
         self.node_items.clear()
         self.edge_items.clear()
         positions = self.page_positions()
         visible_nodes = self.visible_nodes()
+        
+        # Create regular backdrops
+        for group in self.graph.get("ui", {}).get("backdrops", []):
+            if not isinstance(group, dict):
+                continue
+            backdrop = BackdropItem(group, self)
+            backdrop.update_geometry()
+            self.scene.addItem(backdrop)
+        
+        # Place regular nodes
         placed: list[tuple[float, float, float, float]] = []
+        
+        # Get saved flip states
+        flipped_ports = self.graph.get("ui", {}).get("flipped_ports", {})
+        
         for index, node in enumerate(visible_nodes):
             item = GraphNodeItem(node, self)
             pos = positions.get(node.get("id"), [40 + index * 40, 60 + index * 150])
@@ -399,7 +744,150 @@ class WorkbenchMixin:
             item.setPos(QPointF(x, y))
             self.scene.addItem(item)
             self.node_items[node.get("id")] = item
+            
+            # Restore flip state
+            node_id = node.get("id")
+            if node_id in flipped_ports and flipped_ports[node_id]:
+                item.flip_ports()
+        
         self.refresh_edges()
+        self.apply_focus_mode(self.focus_node_id)
+
+    def update_canvas_lod(self, zoom_level: float) -> None:
+        lod = max(0.2, min(2.0, zoom_level))
+        for item in self.node_items.values():
+            item.update_lod(lod)
+
+    def related_focus_ids(self, node_id: str) -> set[str]:
+        related = {node_id}
+        changed = True
+        while changed:
+            changed = False
+            for edge in self.graph.get("edges", []):
+                src = str(edge.get("from", ""))
+                dst = str(edge.get("to", ""))
+                if src in related and dst and dst not in related:
+                    related.add(dst)
+                    changed = True
+                if dst in related and src and src not in related:
+                    related.add(src)
+                    changed = True
+        return related
+
+    def apply_focus_mode(self, node_id: str | None) -> None:
+        self._prune_stale_scene_items()
+        if not node_id:
+            self._apply_visual_state()
+            return
+        focus_ids = self.related_focus_ids(node_id)
+        active_backdrops = {
+            str(group.get("id"))
+            for group in self.graph.get("ui", {}).get("backdrops", [])
+            if any(str(item_id) in focus_ids for item_id in group.get("node_ids", []))
+        }
+        self._apply_visual_state(
+            node_opacity_by_id={item_id: (1.0 if item_id in focus_ids else 0.22) for item_id, _ in self._iter_live_node_items()},
+            edge_opacity_by_key={
+                (str(edge_item.edge.get("from", "")), str(edge_item.edge.get("to", ""))): (
+                    1.0 if str(edge_item.edge.get("from", "")) in focus_ids and str(edge_item.edge.get("to", "")) in focus_ids else 0.18
+                )
+                for edge_item in self._iter_live_edge_items()
+            },
+            active_backdrop_ids=active_backdrops,
+            default_backdrop_opacity=0.96,
+        )
+
+    def apply_selected_nodes_focus(self, focus_ids: set[str]) -> None:
+        self._prune_stale_scene_items()
+        if not focus_ids:
+            self.apply_focus_mode(None)
+            return
+        active_backdrops = {
+            str(group.get("id"))
+            for group in self.graph.get("ui", {}).get("backdrops", [])
+            if any(str(item_id) in focus_ids for item_id in group.get("node_ids", []))
+        }
+        self._apply_visual_state(
+            node_opacity_by_id={item_id: (1.0 if item_id in focus_ids else 0.22) for item_id, _ in self._iter_live_node_items()},
+            edge_opacity_by_key={
+                (str(edge_item.edge.get("from", "")), str(edge_item.edge.get("to", ""))): (
+                    1.0 if str(edge_item.edge.get("from", "")) in focus_ids and str(edge_item.edge.get("to", "")) in focus_ids else 0.18
+                )
+                for edge_item in self._iter_live_edge_items()
+            },
+            active_backdrop_ids=active_backdrops,
+            default_backdrop_opacity=0.96,
+        )
+
+    def flip_selected_node_ports(self) -> None:
+        """Flip ports on selected nodes."""
+        node_id = self.current_node_id
+        if not node_id:
+            return
+        
+        node_item = self.node_items.get(node_id)
+        if node_item and hasattr(node_item, 'flip_ports'):
+            node_item.flip_ports()
+            
+            # Save flip state to graph
+            ui = self.graph.setdefault("ui", {})
+            flipped = ui.setdefault("flipped_ports", {})
+            flipped[node_id] = node_item._ports_flipped
+            
+            # Refresh edges to update connection paths
+            self.refresh_edges()
+            self._mark_dirty()
+
+    def handle_scene_selection_changed(self) -> None:
+        self._prune_stale_scene_items()
+        selected_ids: list[str] = []
+        for node_id, item in self._iter_live_node_items():
+            try:
+                if item.isSelected():
+                    selected_ids.append(node_id)
+            except RuntimeError:
+                continue
+        if len(selected_ids) > 1:
+            self.selected_edge_id = None
+            self.current_node_id = selected_ids[0]
+            self.focus_node_id = selected_ids[0]
+            self.apply_selected_nodes_focus(set(selected_ids))
+            if hasattr(self, "selected_label"):
+                self.selected_label.setText(f"已选择 {len(selected_ids)} 个卡片")
+            if hasattr(self, "ports_label"):
+                self.ports_label.setText("端口：多选模式")
+            return
+        if len(selected_ids) == 1:
+            self.select_node(selected_ids[0])
+            return
+        if not self.selected_edge_id:
+            self.current_node_id = None
+            self.focus_node_id = None
+            self.apply_focus_mode(None)
+
+    def select_backdrop(self, group: dict[str, Any] | None) -> None:
+        self._prune_stale_scene_items()
+        if not group:
+            self.focus_node_id = None
+            self.apply_focus_mode(None)
+            return
+        node_ids = [str(node_id) for node_id in group.get("node_ids", [])]
+        self.focus_node_id = node_ids[0] if node_ids else None
+        if not node_ids:
+            self.apply_focus_mode(None)
+            return
+        focus_ids = set(node_ids)
+        self._apply_visual_state(
+            node_opacity_by_id={item_id: (1.0 if item_id in focus_ids else 0.22) for item_id, _ in self._iter_live_node_items()},
+            edge_opacity_by_key={
+                (str(edge_item.edge.get("from", "")), str(edge_item.edge.get("to", ""))): (
+                    1.0 if str(edge_item.edge.get("from", "")) in focus_ids and str(edge_item.edge.get("to", "")) in focus_ids else 0.18
+                )
+                for edge_item in self._iter_live_edge_items()
+            },
+            active_backdrop_ids={str(group.get("id", ""))},
+            default_backdrop_opacity=0.96,
+        )
 
     def cross_page_edge_summary(self, page: dict[str, str]) -> str:
         if page.get("kind") == "root":
@@ -442,6 +930,108 @@ class WorkbenchMixin:
         else:
             lines.append("当前未连接。拖到兼容端口即可建立关系。")
         return "\n".join(lines)
+
+    def compatible_target_ids(self, start_port) -> set[str]:
+        if not self._scene_item_alive(start_port):
+            return set()
+        compatible: set[str] = set()
+        for node_id, item in self._iter_live_node_items():
+            for port in self._iter_live_ports(item):
+                if start_port.direction == port.direction:
+                    continue
+                out_port = start_port if start_port.direction == "out" else port
+                in_port = port if port.direction == "in" else start_port
+                if can_connect_ports(out_port.node_item.node, in_port.node_item.node, out_port.port_type, in_port.port_type):
+                    compatible.add(node_id)
+                    break
+        return compatible
+
+    def show_compatible_target_preview(self, start_port) -> None:
+        self._prune_stale_scene_items()
+        if not self._scene_item_alive(start_port):
+            return
+        source_id = str(start_port.node_item.node.get("id"))
+        for node_id, item in self._iter_live_node_items():
+            node = item.node
+            self._safe_scene_call(item, "setOpacity", 1.0 if node_id == source_id else 0.82)
+            for port in self._iter_live_ports(item):
+                if node_id == source_id and port is start_port:
+                    self._safe_scene_call(port, "set_preview_state", "highlight")
+                    continue
+                if not self.port_is_enabled(node, port.direction, port.port_type):
+                    self._safe_scene_call(port, "set_preview_state", "dim")
+                    continue
+                if start_port.direction == port.direction:
+                    self._safe_scene_call(port, "set_preview_state", "dim")
+                    continue
+                out_port = start_port if start_port.direction == "out" else port
+                in_port = port if port.direction == "in" else start_port
+                self._safe_scene_call(port, "set_preview_state", "highlight" if can_connect_ports(out_port.node_item.node, in_port.node_item.node, out_port.port_type, in_port.port_type) else "dim")
+
+    def clear_compatible_target_preview(self) -> None:
+        self._prune_stale_scene_items()
+        for _, item in self._iter_live_node_items():
+            self._safe_scene_call(item, "setOpacity", 1.0)
+            for port in self._iter_live_ports(item):
+                self._safe_scene_call(port, "set_preview_state", "normal")
+
+    def node_has_input_data(self, node: dict[str, Any], port_type: str | None = None) -> bool:
+        node_id = str(node.get("id", ""))
+        if not node_id:
+            return False
+        allowed_inputs = set(PORT_RULES.get(str(node.get("type")), {}).get("in", []))
+        if port_type:
+            allowed_inputs = {port_type} if port_type in allowed_inputs else set()
+        if not allowed_inputs:
+            return False
+        for edge in self.graph.get("edges", []):
+            if not isinstance(edge, dict):
+                continue
+            if str(edge.get("to", "")) != node_id:
+                continue
+            to_port = str(edge.get("to_port", ""))
+            if to_port in allowed_inputs:
+                return True
+        return False
+
+    def single_input_port_occupied(self, node: dict[str, Any], port_type: str, exclude_from: str | None = None) -> bool:
+        node_type = str(node.get("type", ""))
+        if port_type not in SINGLE_INPUT_PORT_RULES.get(node_type, set()):
+            return False
+        node_id = str(node.get("id", ""))
+        if not node_id:
+            return False
+        for edge in self.graph.get("edges", []):
+            if not isinstance(edge, dict):
+                continue
+            if str(edge.get("to", "")) != node_id:
+                continue
+            if str(edge.get("to_port", "")) != port_type:
+                continue
+            if exclude_from and str(edge.get("from", "")) == exclude_from:
+                continue
+            return True
+        return False
+
+    def port_is_enabled(self, node: dict[str, Any], direction: str, port_type: str) -> bool:
+        node_type = str(node.get("type"))
+        if direction == "in":
+            if port_type in SINGLE_INPUT_PORT_RULES.get(node_type, set()):
+                return not self.single_input_port_occupied(node, port_type)
+            return True
+        if direction == "out":
+            dependencies = OUTPUT_PORT_DEPENDENCIES.get(node_type, {}).get("out", {}).get(port_type)
+            if dependencies:
+                if node_type == "event.publisher":
+                    return all(self.node_has_input_data(node, dep) for dep in dependencies)
+                if node_type == "event.subscriber":
+                    return all(self.node_has_input_data(node, dep) for dep in dependencies) and bool(str(node.get("callback", "")).strip())
+                if node_type == "processor.custom":
+                    return bool(str(node.get("process", "")).strip()) and any(self.node_has_input_data(node, dep) for dep in dependencies)
+                if node_type == "algorithm.custom":
+                    return bool(str(node.get("run", "")).strip()) and any(self.node_has_input_data(node, dep) for dep in dependencies)
+                return any(self.node_has_input_data(node, dep) for dep in dependencies)
+        return True
 
     def port_scene_center(self, node_id: str | None, port_type: str | None, direction: str) -> QPointF | None:
         if not node_id or node_id not in self.node_items:
@@ -494,19 +1084,41 @@ class WorkbenchMixin:
                 pen.setStyle(style)
         return pen
 
-    def edge_pen_for_item(self, edge: dict[str, Any], selected: bool = False) -> QPen:
+    def edge_pen_for_item(self, edge: dict[str, Any], selected: bool = False, dash_offset: float | None = None) -> QPen:
+        kind = str(edge.get("kind", "generic"))
         pen = self.edge_pen(edge)
+        try:
+            pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+            pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        except AttributeError:
+            pen.setCapStyle(Qt.RoundCap)
+            pen.setJoinStyle(Qt.RoundJoin)
+
+        if kind == "data_flow":
+            pen.setStyle(Qt.PenStyle.DashLine if hasattr(Qt, "PenStyle") else Qt.DashLine)
+            pen.setDashPattern([10.0, 4.0])
+            pen.setWidthF(2.2)
+        if dash_offset is not None and kind in {"data_flow", "control_flow", "event"}:
+            pen.setDashOffset(dash_offset)
         if selected:
             pen.setColor(QColor("#ffd54f"))
-            pen.setWidth(max(4, pen.width() + 2))
+            pen.setWidthF(max(4.0, pen.widthF() + 2.0))
         return pen
 
     def select_edge(self, edge: dict[str, Any] | None) -> None:
         self.selected_edge_id = str(edge.get("id")) if edge else None
+        if edge is None and hasattr(self, "scene") and self.scene is not None:
+            self.scene.clearSelection()
+            self.clear_compatible_target_preview()
         if edge:
             self.current_node_id = None
+            self.focus_node_id = None
+            self.apply_focus_mode(None)
+        elif not self.focus_node_id:
+            self.apply_focus_mode(None)
         for item in self.edge_items:
-            item.setPen(self.edge_pen_for_item(item.edge, selected=str(item.edge.get("id")) == self.selected_edge_id))
+            is_selected = str(item.edge.get("id")) == self.selected_edge_id
+            item.refresh_pen()
 
     def selected_edge(self) -> dict[str, Any] | None:
         edge_id = getattr(self, "selected_edge_id", None)
@@ -519,18 +1131,6 @@ class WorkbenchMixin:
             self.scene.removeItem(edge)
         self.edge_items = []
         edges: list[dict[str, Any]] = [edge for edge in self.graph.get("edges", []) if isinstance(edge, dict)]
-        for flow in self.graph.get("flows", []):
-            if flow.get("type") == "control.line_follower":
-                sensor = flow.get("sensor")
-                sensor_node = self._find_node(sensor)
-                edges.extend([
-                    {"from": sensor_node.get("input") if sensor_node else self._line_input_id(), "from_port": "hal", "to": sensor, "to_port": "hal", "kind": "hardware_dependency"},
-                    {"from": sensor, "from_port": "sensor", "to": flow.get("pid"), "to_port": "sensor", "kind": "data_flow"},
-                    {"from": sensor, "from_port": "sensor", "to": flow.get("left_motor"), "to_port": "control", "kind": "control_flow"},
-                    {"from": sensor, "from_port": "sensor", "to": flow.get("right_motor"), "to_port": "control", "kind": "control_flow"},
-                    {"from": flow.get("pid"), "from_port": "algorithm", "to": flow.get("left_motor"), "to_port": "control", "kind": "control_flow"},
-                    {"from": flow.get("pid"), "from_port": "algorithm", "to": flow.get("right_motor"), "to_port": "control", "kind": "control_flow"},
-                ])
         for edge in edges:
             src = edge.get("from")
             dst = edge.get("to")
@@ -539,9 +1139,16 @@ class WorkbenchMixin:
                 b = self.port_scene_center(dst, edge.get("to_port"), "in")
                 if not a or not b:
                     continue
+                
+                # Determine port directions based on flip state
+                src_item = self.node_items.get(src)
+                dst_item = self.node_items.get(dst)
+                start_dir = "left" if (src_item and getattr(src_item, '_ports_flipped', False)) else "right"
+                end_dir = "right" if (dst_item and getattr(dst_item, '_ports_flipped', False)) else "left"
+                
                 line = EdgeItem(edge, self)
-                line.setLine(a.x(), a.y(), b.x(), b.y())
-                line.setPen(self.edge_pen_for_item(edge, selected=str(edge.get("id")) == getattr(self, "selected_edge_id", None)))
+                line.update_path(a, b, start_dir, end_dir)
+                line.refresh_pen()
                 kind_label = EDGE_KIND_LABELS.get(str(edge.get("kind", "generic")), str(edge.get("kind", "generic")))
                 effect = ""
                 src_node = self._find_node(src)
@@ -553,6 +1160,12 @@ class WorkbenchMixin:
                 line.setZValue(-1)
                 self.scene.addItem(line)
                 self.edge_items.append(line)
+
+    def tick_edge_animations(self) -> None:
+        for edge_item in getattr(self, "edge_items", []):
+            kind = str(edge_item.edge.get("kind", "generic"))
+            if kind in {"data_flow", "control_flow", "event"}:
+                edge_item.advance_flow(0.25 if kind == "data_flow" else 0.8)
 
     def refresh_json_editor(self) -> None:
         self.graph_json_editor.setPlainText(json.dumps(self.graph, ensure_ascii=False, indent=2))
@@ -602,11 +1215,24 @@ class WorkbenchMixin:
     def node_action_hint(self, node: dict[str, Any]) -> str:
         node_type = str(node.get("type"))
         contract = NODE_CONTRACTS.get(node_type, {})
+        runtime_summary = getattr(self, "_runtime_summary_cache", {})
         if node_type == "processor.custom":
             return "行动：实现 process(ctx, in, out)。当它位于 Sensor → Processor → Algorithm/Actuator 数据流上时，codegen 会生成周期执行链；连接到 project.module 只声明模块接口。"
         if node_type == "event.publisher":
-            return "行动：在 custom_files 的 task/module 回调中手写 efw_topic_publish()；该卡片只表达发布关系。"
+            runtime_item = next((item for item in runtime_summary.get("publishers", []) if item.get("id") == str(node.get("id"))), None) if isinstance(runtime_summary, dict) else None
+            mode = runtime_item.get("mode") if runtime_item else "manual"
+            stage = runtime_item.get("stage") if runtime_item else "unknown"
+            return f"行动：连接 topic 和 source 后，codegen 会生成 `app_publish_xxx(...)` 包装函数；若 payload 类型可推断，还会生成 typed/value 版本。当前模式={mode}，挂接阶段={stage}。你可以在 task/module/custom code 中直接调用这些包装函数。"
+        if node_type == "event.subscriber":
+            return "行动：填写 callback，codegen 会生成 efw_topic_subscribe(...) 绑定；业务逻辑写在订阅回调里。"
+        if node_type == "state.machine":
+            return "行动：进入状态机页面添加 State / Transition。codegen 会生成 `app_sm_xxx_tick()`、`app_sm_xxx_dispatch_event()`、`app_sm_xxx_transition_to()` 和 `app_sm_xxx_current_state()`。"
+        if node_type == "state.transition":
+            return "行动：填写 condition，必要时填写 action。event_trigger 必须写成 `topic:<event.topic节点id>` 或 `event:<事件名>`，这样状态机可以通过 `app_dispatch_event(...)` 或 `app_sm_xxx_dispatch_event(...)` 响应事件。"
         if node_type == "project.module":
+            runtime_item = next((item for item in runtime_summary.get("project_modules", []) if item.get("module_id") == str(node.get("id"))), None) if isinstance(runtime_summary, dict) else None
+            if runtime_item:
+                return f"行动：把节点归属到该模块以整理页面；同时会生成可运行的模块壳。当前挂接：自动发布者 {len(runtime_item.get('publishers', []))} 个，状态机 {len(runtime_item.get('state_machines', []))} 个。"
             return "行动：把节点归属到该模块以整理页面；inputs/outputs 会进入 contract registry 校验，但当前仍不会生成独立 app_xxx_module.c/.h。"
         if node_type == "actuator.motor":
             return "行动：host mock 可编译验证；真实板卡需在板级适配中把 speed/dir 接到 PWM/GPIO。"
@@ -620,25 +1246,58 @@ class WorkbenchMixin:
             return "行动：该节点不生成 C 运行代码，仅用于组织或说明。"
         return "行动：检查 Graph 引用和周期，校验通过后即可生成 application。"
 
+    def node_tooltip_text(self, node: dict[str, Any]) -> str:
+        node_id = str(node.get("id", ""))
+        node_type = str(node.get("type", ""))
+        lines = [f"{node_id} [{TYPE_LABELS.get(node_type, node_type)}]"]
+        display_name = str(node.get("display_name", "")).strip()
+        if display_name:
+            lines.append(f"显示名称：{display_name}")
+        description = str(node.get("description", "")).strip()
+        if description:
+            lines.append(description)
+        if node_type == "event.publisher":
+            runtime_summary = getattr(self, "_runtime_summary_cache", {})
+            runtime_item = next((item for item in runtime_summary.get("publishers", []) if item.get("id") == node_id), None) if isinstance(runtime_summary, dict) else None
+            mode = runtime_item.get("mode") if runtime_item else ("expr/size" if node.get("data_expr") and node.get("size_expr") else ("source-auto" if node.get("source") else "manual"))
+            stage = runtime_item.get("stage") if runtime_item else ("module.poll" if node.get("module") else "root app_update_1ms")
+            lines.append(f"自动发布模式：{mode}")
+            lines.append(f"挂接阶段：{stage}")
+            lines.append(f"最小间隔：{int((runtime_item or {}).get('interval_ms', node.get('interval_ms', 0)) or 0)} ms")
+            source_id = (runtime_item or {}).get("source_id") if runtime_item else node.get("source")
+            if source_id:
+                lines.append(f"来源：{source_id}")
+            if node.get("topic"):
+                lines.append(f"Topic：{node.get('topic')}")
+        lines.append("")
+        lines.append(self.node_action_hint(node))
+        return "\n".join(lines)
+
     def select_node(self, node_id: str | None) -> None:
         if node_id is not None:
             self.selected_edge_id = None
             for item in self.edge_items:
                 item.setPen(self.edge_pen_for_item(item.edge, selected=False))
+            self.clear_compatible_target_preview()
+            if hasattr(self, "right_dock") and self.right_dock.isHidden():
+                self.right_dock.show()
+            if hasattr(self, "right_tabs"):
+                self.right_tabs.setCurrentIndex(0)
+        self.focus_node_id = node_id
         self.current_node_id = node_id
+        self.apply_focus_mode(self.focus_node_id)
         node = self._find_node(node_id) if node_id else None
         if not node and node_id is None:
             node = self.page_source_node()
-            if node:
-                self.current_node_id = node.get("id")
         if not node:
             if node_id is not None:
                 self.current_node_id = None
+                self.focus_node_id = None
+                self.apply_focus_mode(None)
             self.selected_label.setText("未选择卡片")
-            if hasattr(self, "ports_label"):
-                self.ports_label.setText("端口：未选择")
             self.node_json_editor.clear()
-            self.property_table.setRowCount(0)
+            if hasattr(self, "clear_property_tables"):
+                self.clear_property_tables()
             if hasattr(self, "callback_preview_output"):
                 self.callback_preview_output.clear()
             if hasattr(self, "callback_select"):
@@ -646,11 +1305,36 @@ class WorkbenchMixin:
             return
         prefix = "页面属性" if node.get("id") == self.active_page().get("id") else "已选择"
         self.selected_label.setText(f"{prefix}: {node.get('id')} ({TYPE_LABELS.get(node.get('type'), node.get('type'))})")
-        if hasattr(self, "ports_label"):
-            self.ports_label.setText(self.node_port_summary(node) + "\n" + self.node_contract_summary(node))
         self.node_json_editor.setPlainText(json.dumps(node, ensure_ascii=False, indent=2))
         self.populate_property_form(node)
         self.refresh_callback_selector(node)
+        self._update_tabs_for_node_type(node)
+
+    def _update_tabs_for_node_type(self, node: dict[str, Any]) -> None:
+        """Show/hide tabs based on node type."""
+        if not hasattr(self, "right_tabs"):
+            return
+        
+        node_type = str(node.get("type", ""))
+        
+        # Define which tabs to hide for each node type category
+        hidden_tabs = set()
+        
+        # Hardware nodes: HAL, Sensor, Actuator - show all tabs
+        hardware_types = {"hal.custom", "hal.gpio_line_input", "sensor.custom", "sensor.line_tracking", 
+                         "actuator.custom", "actuator.motor"}
+        
+        # Non-hardware nodes: hide pin planner
+        if node_type not in hardware_types:
+            hidden_tabs.add("引脚配置")
+        
+        # Data types: hide code tab
+        data_types = {"data.enum", "data.struct", "custom.card", "custom.interface_card"}
+        if node_type in data_types:
+            hidden_tabs.add("节点代码")
+        
+        # Rebuild inspector nav with hidden tabs
+        self.rebuild_inspector_nav(hidden_tabs)
 
     def page_for_node_location(self, node: dict[str, Any] | None) -> dict[str, str] | None:
         if not node:
@@ -794,15 +1478,15 @@ class WorkbenchMixin:
         if node_type not in NODE_TEMPLATES:
             return
         template = copy.deepcopy(NODE_TEMPLATES[node_type])
+        self._normalize_display_fields(template)
         if not self.apply_page_ownership(template):
             return
-        base_id = template["id"]
+        display_name = self._prompt_display_name(node_type, self._default_display_name(template, node_type))
+        if display_name is None:
+            return
         existing = {node.get("id") for node in self.graph.get("nodes", [])}
-        suffix = 1
-        new_id = base_id
-        while new_id in existing:
-            suffix += 1
-            new_id = f"{base_id}_{suffix}"
+        template["display_name"] = display_name
+        new_id = self._derive_node_id(display_name, str(template.get("id", node_type)), existing, node_type, template)
         template["id"] = new_id
         self.push_undo()
         self.graph.setdefault("nodes", []).append(template)

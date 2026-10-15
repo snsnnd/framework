@@ -48,13 +48,14 @@
  * @param out 指向 float (速度值写入)
  * @return EFW_OK / EFW_ERR_INVALID
  */
-efw_status_t efw_encoder_speed_run(void *ctx, const void *in, void *out) {
-    efw_encoder_speed_t *est = (efw_encoder_speed_t *)ctx;             /* ctx → 估算器 */
-    const efw_encoder_speed_input_t *input = (const efw_encoder_speed_input_t *)in;  /* 输入 */
-    float *speed = (float *)out;                                        /* 输出 */
-    int32_t diff;           /* 脉冲计数变化量 */
-
-    /* 参数校验：指针非空 + dt>0 + pulses_per_unit 已设置 */
+efw_status_t efw_encoder_speed_run(void *ctx, const void *in, uint16_t in_size, void *out, uint16_t out_size) {
+    efw_encoder_speed_t *est = (efw_encoder_speed_t *)ctx;
+    const efw_encoder_speed_input_t *input = (const efw_encoder_speed_input_t *)in;
+    float *speed = (float *)out;
+    int32_t diff;
+    uint32_t modular_diff;
+    if (!est || !input || !speed) return EFW_ERR_INVALID;
+    if (in_size < sizeof(efw_encoder_speed_input_t) || out_size < sizeof(float)) return EFW_ERR_RANGE;
     if (!est || !input || !speed || input->dt <= 0.0f || est->pulses_per_unit == 0.0f)
         return EFW_ERR_INVALID;
 
@@ -67,7 +68,13 @@ efw_status_t efw_encoder_speed_run(void *ctx, const void *in, void *out) {
     }
 
     /* 计算脉冲差 + 更新上次值 */
-    diff = input->count - est->prev_count;  /* 两次采样间的脉冲变化量 */
+    modular_diff = (uint32_t)input->count - (uint32_t)est->prev_count;
+    if (modular_diff <= (uint32_t)INT32_MAX) {
+        diff = (int32_t)modular_diff;
+    } else {
+        uint32_t magnitude = 0u - modular_diff;
+        diff = magnitude == 0x80000000u ? INT32_MIN : -(int32_t)magnitude;
+    }
     est->prev_count = input->count;         /* 保存供下次差分 */
 
     /* 速度 = (脉冲差 / 每单位脉冲数) / 时间 */

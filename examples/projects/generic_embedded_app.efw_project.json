@@ -3,6 +3,6 @@
   "name": "generic_embedded_app",
   "graph_path": "examples/graphs/generic_embedded_app.json",
   "output_dir": "application/generated_generic_embedded_app",
-  "board_profile": "generic-mock",
-  "notes": "Open with python3 tools/efw.py studio. Generate application/, then replace or add board-specific glue through graph.board_adapters for the real board."
+  "board_profile": "stm32-basic",
+  "notes": "Open with `python3 tools/efw.py studio` or use `python3 tools/efw.py project generate examples/projects/generic_embedded_app.efw_project.json --dry-run`. Real hardware I/O belongs in board_adapters."
 }

@@ -58,18 +58,30 @@ typedef enum {
  *              in 和 out 是 void* 类型，调用方需确保类型匹配
  */
 typedef struct {
-    const char *name;       /**< 全局唯一名称 */
-    efw_algo_type_t type;   /**< 算法类型 */
-    void *ctx;              /**< 算法上下文 (私有状态数据) */
-    efw_status_t (*run)(void *ctx, const void *in, void *out); /**< 执行函数 */
+    const char *name;
+    efw_algo_type_t type;
+    void *ctx;
+    efw_status_t (*run)(void *ctx, const void *in, uint16_t in_size, void *out, uint16_t out_size);
 } efw_algo_ops_t;
 
-/* ====== 算法注册表 API ====== */
+/** @brief 遍历算法注册表的回调。 */
+typedef void (*efw_algo_enumerate_fn)(const efw_algo_ops_t *ops, void *user);
 
+/** @brief 使用默认静态池清空算法注册表。 */
 efw_status_t efw_algo_registry_init(void);
+/** @brief 使用调用方提供的指针池清空算法注册表。 */
 efw_status_t efw_algo_registry_init_pool(const efw_algo_ops_t **pool, size_t capacity);
+/** @brief 注册算法；name 和 ctx 的生命周期由调用方管理。 */
 efw_status_t efw_algo_register(const efw_algo_ops_t *ops);
+/** @brief 按名称查找算法。 */
 efw_status_t efw_algo_get(const char *name, const efw_algo_ops_t **out_ops);
-efw_status_t efw_algo_run(const char *name, const void *in, void *out);
+/** @brief 移除算法，不释放 ctx。 */
+efw_status_t efw_algo_unregister(const char *name);
+/** @brief 按名称查找并调用算法 run 回调。 */
+efw_status_t efw_algo_run(const char *name, const void *in, uint16_t in_size, void *out, uint16_t out_size);
+/** @brief 返回已注册算法数量。 */
+size_t efw_algo_count(void);
+/** @brief 遍历算法注册表。 */
+void efw_algo_enumerate(efw_algo_enumerate_fn fn, void *user);
 
 #endif

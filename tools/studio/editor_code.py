@@ -94,65 +94,65 @@ class CodeEditorMixin:
             self.code_editor.setPlainText(formatted)
 
     def format_c_like_code(self, text: str) -> str:
+        """Simple C code formatter that fixes indentation."""
+        import re
+        
+        # Protect strings and comments from formatting
         protected: list[str] = []
-
+        
         def protect(match: Any) -> str:
             protected.append(match.group(0))
             return f"__PROTECTED_{len(protected) - 1}__"
-
-        import re
-
-        text = text.replace("\r\n", "\n").replace("\t", "  ")
+        
+        text = text.replace("\r\n", "\n")
+        
+        # Protect block comments
         text = re.sub(r"/\*.*?\*/", protect, text, flags=re.S)
+        # Protect line comments
         text = re.sub(r"//[^\n]*", protect, text)
+        # Protect strings
         text = re.sub(r'"(?:[^"\\]|\\.)*"', protect, text)
-        text = re.sub(r"'(?:[^'\\]|\\.)'", protect, text)
-        text = re.sub(r"\s*([{};])\s*", r"\1\n", text)
-        text = re.sub(r"\n\s*\n+", "\n", text)
-        raw_lines = []
-        for line in text.splitlines():
-            stripped = line.strip()
-            if not stripped:
-                raw_lines.append("")
-                continue
-            if stripped.startswith("#"):
-                raw_lines.append(stripped)
-                continue
-            if stripped in {"{", "}", ";"}:
-                raw_lines.append(stripped)
-                continue
-            raw_lines.append(stripped)
-
+        text = re.sub(r"'(?:[^'\\]|\\.)*'", protect, text)
+        
+        # Split into lines
+        lines = text.split("\n")
         result: list[str] = []
         indent = 0
-        previous_blank = False
-        for line in raw_lines:
-            if not line.startswith("__PROTECTED_") and not line:
-                if not previous_blank:
-                    result.append("")
-                previous_blank = True
+        
+        for line in lines:
+            stripped = line.strip()
+            
+            # Skip empty lines (preserve them)
+            if not stripped:
+                result.append("")
                 continue
-            previous_blank = False
-            if line.startswith("}"):
+            
+            # Handle closing braces - decrease indent before
+            if stripped.startswith("}"):
                 indent = max(0, indent - 1)
-            if line == ";":
-                if result:
-                    result[-1] = result[-1].rstrip() + ";"
-                continue
-            if line == "{":
-                if result and not result[-1].strip().startswith("#") and not result[-1].strip().startswith("__PROTECTED_"):
-                    result[-1] = result[-1].rstrip() + " {"
-                else:
-                    result.append("  " * indent + "{")
+            
+            # Add indentation
+            formatted_line = "    " * indent + stripped
+            result.append(formatted_line)
+            
+            # Handle opening braces - increase indent after
+            if stripped.endswith("{"):
                 indent += 1
-                continue
-            result.append("  " * indent + line)
-            if line.endswith("{"):
-                indent += 1
-        formatted = "\n".join(result).strip()
-        for index, comment in enumerate(protected):
-            formatted = formatted.replace(f"__PROTECTED_{index}__", comment)
-        return formatted + "\n"
+            
+            # Handle preprocessor directives (no indent)
+            if stripped.startswith("#"):
+                # Remove indent for preprocessor
+                result[-1] = stripped
+        
+        # Restore protected content
+        formatted = "\n".join(result)
+        for index, content in enumerate(protected):
+            formatted = formatted.replace(f"__PROTECTED_{index}__", content)
+        
+        # Clean up multiple blank lines
+        formatted = re.sub(r"\n{3,}", "\n\n", formatted)
+        
+        return formatted.strip() + "\n"
 
     def delete_code_file(self) -> None:
         if self.current_code_index is None:

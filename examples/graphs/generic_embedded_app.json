@@ -45,6 +45,16 @@
       "ctx": "0",
       "init": "app_health_service_init",
       "poll": "app_health_service_poll",
+      "primary_input_port": "event",
+      "trigger_policy": "primary_only",
+      "input_ports": {
+        "event": {
+          "contract": "float",
+          "type": "float",
+          "size": 4,
+          "align": 4
+        }
+      },
       "module": "system_core"
     },
     {
@@ -68,8 +78,7 @@
       "module": "system_core",
       "topic": "topic_battery",
       "source": "battery_sensor",
-      "data_expr": "&battery_voltage",
-      "size_expr": "sizeof(battery_voltage)"
+      "interval_ms": 20
     },
     {
       "id": "subscribe_battery",
@@ -93,11 +102,11 @@
   "custom_files": [
     {
       "path": "app_custom.c",
-      "content": "#include \"efw/efw.h\"\n\nefw_status_t app_uart_debug_init(void *ctx) { EFW_UNUSED(ctx); return EFW_OK; }\nefw_status_t app_uart_debug_write(void *ctx, const void *buf, uint16_t len, uint16_t *actual) { EFW_UNUSED(ctx); EFW_UNUSED(buf); if (actual) *actual = len; return EFW_OK; }\nefw_status_t app_battery_sensor_read(void *ctx, void *out) { EFW_UNUSED(ctx); if (out) *(float *)out = 7.4f; return EFW_OK; }\nefw_status_t app_status_led_write(void *ctx, const void *cmd) { EFW_UNUSED(ctx); EFW_UNUSED(cmd); return EFW_OK; }\nefw_status_t app_health_service_init(void *ctx) { EFW_UNUSED(ctx); return EFW_OK; }\nefw_status_t app_health_service_poll(void *ctx) { EFW_UNUSED(ctx); return EFW_OK; }\nefw_status_t app_heartbeat_100ms(void) { return EFW_OK; }\nefw_status_t app_battery_sample_20ms(void) { return EFW_OK; }\nvoid app_on_battery_topic(uint16_t topic_id, const void *data, uint16_t size, void *user) { EFW_UNUSED(topic_id); EFW_UNUSED(data); EFW_UNUSED(size); EFW_UNUSED(user); }\n"
+      "content": "#include \"efw/efw.h\"\n\nefw_status_t app_uart_debug_init(void *ctx) { EFW_UNUSED(ctx); return EFW_OK; }\nefw_status_t app_uart_debug_write(void *ctx, const void *buf, uint16_t len, uint16_t *actual) { EFW_UNUSED(ctx); EFW_UNUSED(buf); if (actual) *actual = len; return EFW_OK; }\nefw_status_t app_battery_sensor_read(void *ctx, void *out, uint16_t out_size) { EFW_UNUSED(ctx); EFW_UNUSED(out_size); if (out) *(float *)out = 7.4f; return EFW_OK; }\nefw_status_t app_status_led_write(void *ctx, const void *cmd, uint16_t cmd_size) { EFW_UNUSED(ctx); EFW_UNUSED(cmd); EFW_UNUSED(cmd_size); return EFW_OK; }\nefw_status_t app_health_service_init(void *ctx) { EFW_UNUSED(ctx); return EFW_OK; }\nefw_status_t app_health_service_poll(void *ctx, const efw_app_multi_input_t *in) { EFW_UNUSED(ctx); EFW_UNUSED(in); return EFW_OK; }\nefw_status_t app_heartbeat_100ms(void) { return EFW_OK; }\nefw_status_t app_battery_sample_20ms(void) { return EFW_OK; }\nvoid app_on_battery_topic(uint16_t topic_id, const void *data, uint16_t size, void *user) { EFW_UNUSED(topic_id); EFW_UNUSED(data); EFW_UNUSED(size); EFW_UNUSED(user); }\n"
     }
   ],
   "board": {
-    "profile": "generic-mock",
+    "profile": "stm32f103c8",
     "pin_plan": []
   },
   "ui": {
@@ -134,12 +143,12 @@
           1762.0
         ],
         "publish_battery": [
-          -180.0,
-          1999.0
+          101.0,
+          1968.0
         ],
         "subscribe_battery": [
-          252.0,
-          2158.0
+          722.0,
+          1695.0
         ]
       },
       "comm:topic_battery": {
@@ -156,6 +165,9 @@
           481.0
         ]
       }
+    },
+    "flipped_ports": {
+      "publish_battery": true
     }
   },
   "edges": [

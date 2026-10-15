@@ -1,0 +1,10 @@
+﻿
+    LCD controller ID=0x00009325
+[PERF] LCD_Clear = 21 ms (76800 px)
+[PERF] LCD_FillArea 100x200 = 6013 us
+[PERF] LCD text line = 2022 us
+[TEST] lcd_panel ......... PASS
+==== QUICK SELFTEST: 8/8 PASS ====
+[ARCADE] booted, menu up
+[BKP] boot# 0 (FAIL!)
+[ARCADE] hiscore readback = 0 / 0

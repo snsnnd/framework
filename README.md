@@ -27,8 +27,10 @@ EFW 是一个面向裸机和轻量 RTOS 的嵌入式 C 框架，可直接作为�
 - `include/efw/module/`：模块生命周期接口
 - `include/efw/state/`：状态机接口
 - `src/`：库源码，按功能分层，可按需加入 Keil、STM32CubeIDE、ESP-IDF 或 CMake 工程
-- `application/`：接近真实工程结构的应用示例（`simple_blink/` 是最小例，`smart_environment_controller/` 展示多组件组合，`line_tracking_car/` 展示领域应用）
-- `docs/`：设计说明和环境需求
+- `application/`：手写应用示例（`simple_blink/`、`smart_environment_controller/`、`line_tracking_car/`）
+- `tools/`：CLI、API、Studio、codegen、debug、compiler、simulator 等工具层
+- `examples/`：项目描述和 Graph 示例，生成产物不入库
+- `docs/`：当前架构、CLI、Graph、codegen 和环境说明
 
 ## 快速接入
 1. 把 `include/` 加入头文件路径。
@@ -83,16 +85,35 @@ STATE：src/state/state_machine_registry.c
 - `application/smart_environment_controller/`：复杂一点的环境控制器，组合 ADC/I2C/GPIO HAL、自定义温湿度传感器、IMU、滑动均值、互补滤波、事件总线、状态机、继电器和告警 LED，用来展示 EFW 作为通用嵌入式开发工具的组织方式。
 - `application/line_tracking_car/`：循迹车示例，保留为机器人/控制类项目的领域模板。
 
-## 代码生成器第一阶段
-可视化蓝图系统的第一步已经落到 CLI：`tools/efw.py codegen` 可读取图描述 JSON，并生成可复制到真实项目的 `application/` 目录。当前定位为通用嵌入式 application 生成工具：支持自定义 HAL/SENSOR/ACTUATOR/ALGORITHM/MODULE/TASK 卡片，也保留循迹车 LineFollower 作为一个内置示例 flow。
+## Project-first CLI
+
+推荐用项目描述文件 `.efw_project.json` 管理 Graph、输出目录和目标板卡。CLI 和 Studio 都通过 `tools.api.*` 使用同一套工具能力。
 
 ```bash
-python3 tools/efw.py codegen examples/graphs/generic_embedded_app.json \
-  -o application/generated_generic_embedded_app \
-  --force
+python3 tools/efw.py project create demo --chip STM32F407VGT6 --board Discovery_F407
+python3 tools/efw.py project validate demo
+python3 tools/efw.py project generate demo --dry-run
+python3 tools/efw.py project build demo --generate
+python3 tools/efw.py project simulate demo --duration 1000
 ```
 
-生成代码仍然只依赖 EFW 的 application runtime 和 bind/update 句柄模式；真实项目可把 STM32 HAL、ESP-IDF、MSPM0 DriverLib 或自有 BSP glue 放进 `board_adapters`，生成器会检查回调函数存在、签名匹配并加入 CMake 片段。第二阶段增加统一 PyQt 工作台：`python3 tools/efw.py studio`，在同一窗口内管理 graph、输出目录、板级 profile、notes、蓝图画布、Connect Selected 连线、节点属性和 Code 区自定义 `.c/.h` 文件。自定义算法、模块和周期任务会与可视化卡片一起生成 application。更多说明见 `docs/codegen.md`，环境需求见 `docs/environment.md`。
+`project graph` 只提供读取、导出和格式化能力。Graph 的结构化编辑由 Studio 或 `tools.api.graph` 内部 API 完成；用户也可以直接编辑 `graph.json`。
+
+手写 Graph JSON 时先看标准格式协议：`docs/graph_json_format.md`。它说明顶层字段、节点类型、连线、数据契约、custom_files、board_adapters 和校验流程。
+
+底层 `codegen` 仍可直接使用：
+
+```bash
+python3 tools/efw.py codegen examples/graphs/generic_embedded_app.json -o /tmp/efw_app --dry-run
+```
+
+真实项目可把 STM32 HAL、ESP-IDF、MSPM0 DriverLib 或自有 BSP glue 放进 `board_adapters`。生成代码调用 board adapter，不再伪装真实硬件 mock。
+
+在线调试的 UART/USB CDC 传输适配文件可由工具生成：
+
+```bash
+python3 tools/efw.py debug transport-template litetune --transport uart -o board_adapters/efw_litetune_transport_port.c
+```
 
 ## 可视化工具环境
 代码生成器只依赖 Python 标准库；PyQt 可视化编辑器和项目管理界面需要安装 Qt 绑定：
@@ -102,7 +123,7 @@ python3 -m pip install -r tools/requirements-visual.txt
 python3 tools/efw.py studio
 ```
 
-`examples/projects/generic_embedded_app.efw_project.json` 是一个项目管理界面可直接打开的示例项目文件。仓库还包含 `.devcontainer/`，在 GitHub Codespaces 中可通过 6080 端口打开 noVNC 桌面来运行 PyQt 项目管理器，并可用 `bash .devcontainer/check-vnc.sh` 自检 VNC/noVNC/PyQt；详见 `docs/environment.md`。
+`examples/projects/generic_embedded_app.efw_project.json` 是 Studio 和 CLI 都可打开的示例项目文件。仓库还包含 `.devcontainer/`，在 GitHub Codespaces 中可通过 6080 端口打开 noVNC 桌面来运行 PyQt 项目管理器，并可用 `bash .devcontainer/check-vnc.sh` 自检 VNC/noVNC/PyQt；详见 `docs/environment.md`。
 
 ## 分发与打包
 
@@ -114,7 +135,7 @@ python3 tools/efw.py studio
 ### 一次生成最终对外分发包
 
 ```bash
-python3 tools/package_release.py
+python3 packaging/package_release.py
 ```
 
 输出：
@@ -125,7 +146,7 @@ python3 tools/package_release.py
 ### 单独生成 Runtime SDK
 
 ```bash
-python3 tools/package_efw.py
+python3 packaging/package_efw.py
 ```
 
 输出：
@@ -137,7 +158,7 @@ python3 tools/package_efw.py
 如果仓库内已经存在 Windows `.venv/`（包含 `Scripts/python.exe` 和 PyQt 依赖），可以直接生成便携目录：
 
 ```bash
-python3 tools/package_studio_portable.py
+python3 packaging/package_studio_portable.py
 ```
 
 输出：
@@ -241,6 +262,8 @@ cmake --build build-min
 - 内置 PID 与滑动均值算法
 - 循迹便捷控制：`efw_line_tracking_follow_diff()` 一次完成读取、误差、PID、左右电机差速输出
 - STATE MACHINE 注册和查找
+- 固定相位协作式 Scheduler：迟到跳过、无追赶风暴、任务级 lateness/runtime/missed/overrun 统计
+- Graph 生成应用统一使用核心 Scheduler，不再维护独立的取模调度语义
 
 ## 示例
 - `application/line_tracking_car/`：基础 5 路循迹小车应用结构，拆分为平台适配、组件注册、应用逻辑和入口文件。
@@ -316,6 +339,8 @@ efw_topic_publish(1, &data, sizeof(data));
 ```
 
 当前内置竞赛算法包括 PID、滑动均值、低通滤波、斜坡限速、编码器测速和互补滤波姿态解算。
+
+调度器默认按注册顺序执行同一时刻到期的任务。平台可在注册任务前用 `efw_scheduler_set_time_providers()` 注入毫秒时钟和微秒计时器，并通过 `efw_scheduler_get()` 或 LiteTune scheduler trace 查看启动延迟、跳过周期、运行时间和 overrun。所有任务仍是协作式任务，callback 必须有界且不可阻塞。
 
 简单验证或低频脚本可以使用字符串便捷 API：
 
